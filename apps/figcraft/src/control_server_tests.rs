@@ -14,6 +14,10 @@ fn pair() -> (TcpStream, TcpStream) {
     (client, listener.accept().unwrap().0)
 }
 
+fn token() -> figcraft_collab_net::control_auth::ControlToken {
+    figcraft_collab_net::control_auth::ControlToken::new("test_control_token_with_32_chars").unwrap()
+}
+
 fn queue() -> Queue {
     Arc::new(Mutex::new(Vec::new()))
 }
@@ -38,7 +42,7 @@ fn rejects_an_oversized_unterminated_frame_without_dispatch() {
     let (mut client, server) = pair();
     let pending = queue();
     let q = pending.clone();
-    let worker = std::thread::spawn(move || serve(server, q, context(), Duration::from_secs(5)));
+    let worker = std::thread::spawn(move || serve(server, token(), q, context(), Duration::from_secs(5)));
     // Generate bytes as they are written; no giant input string and no terminating newline.
     std::io::copy(&mut std::io::repeat(b' ').take((MAX_LINE + 1) as u64), &mut client).unwrap();
     let mut reader = BufReader::new(client);
@@ -53,8 +57,8 @@ fn valid_frames_keep_their_order_ids_and_parameters() {
     let (mut client, server) = pair();
     let pending = queue();
     let q = pending.clone();
-    let worker = std::thread::spawn(move || serve(server, q, context(), Duration::from_secs(5)));
-    client.write_all(b"\r\n{\"id\":\"test\",\"method\":\"engine.execute\",\"params\":{\"command\":\"shape.rectangle\"}}\r\n").unwrap();
+    let worker = std::thread::spawn(move || serve(server, token(), q, context(), Duration::from_secs(5)));
+    client.write_all(b"\r\n{\"id\":\"test\",\"method\":\"engine.execute\",\"params\":{\"command\":\"shape.rectangle\"},\"token\":\"test_control_token_with_32_chars\"}\r\n").unwrap();
     let mut reader = BufReader::new(client);
     let start = Instant::now();
     let r = loop {
@@ -69,6 +73,28 @@ fn valid_frames_keep_their_order_ids_and_parameters() {
     assert_eq!(r.params, json!({"command": "shape.rectangle"}));
     r.reply.send(figcraft_ui_egui::ControlReply { id: r.id, result: Ok(json!({"id": 42})) }).unwrap();
     assert_eq!(reply(&mut reader), json!({"id": "test", "ok": true, "result": {"id": 42}}));
+    reader.get_mut().write_all(b"{\"id\":2,\"method\":\"engine.execute\",\"token\":\"test_control_token_with_32_chars\"}\n").unwrap();
+    let start = Instant::now();
+    let r = loop {
+        if let Some(r) = pending.lock().unwrap().pop() {
+            break r;
+        }
+        assert!(start.elapsed() < Duration::from_secs(5));
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    r.reply.send(figcraft_ui_egui::ControlReply { id: r.id, result: Err("ordinary command failure".into()) }).unwrap();
+    assert_eq!(reply(&mut reader), json!({"id": 2, "ok": false, "error": "ordinary command failure"}));
+    reader.get_mut().write_all(b"{\"id\":3,\"method\":\"ui.inspect\",\"token\":\"test_control_token_with_32_chars\"}\n").unwrap();
+    let start = Instant::now();
+    let r = loop {
+        if let Some(r) = pending.lock().unwrap().pop() {
+            break r;
+        }
+        assert!(start.elapsed() < Duration::from_secs(5));
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    r.reply.send(figcraft_ui_egui::ControlReply { id: r.id, result: Ok(json!({"stillConnected": true})) }).unwrap();
+    assert_eq!(reply(&mut reader), json!({"id": 3, "ok": true, "result": {"stillConnected": true}}));
     reader.get_ref().shutdown(Shutdown::Write).unwrap();
     worker.join().unwrap().unwrap();
 }
@@ -79,7 +105,7 @@ fn a_line_that_is_not_json_ends_the_connection_before_anything_after_it_runs() {
     let (mut client, server) = pair();
     let pending = queue();
     let q = pending.clone();
-    let worker = std::thread::spawn(move || serve(server, q, context(), Duration::from_secs(5)));
+    let worker = std::thread::spawn(move || serve(server, token(), q, context(), Duration::from_secs(5)));
     let body = "{\"id\":1,\"method\":\"engine.execute\",\"params\":{\"command\":\"file.save\"}}\n";
     let http = format!("POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{body}", body.len());
     client.write_all(http.as_bytes()).unwrap();
@@ -88,6 +114,78 @@ fn a_line_that_is_not_json_ends_the_connection_before_anything_after_it_runs() {
     assert_eq!(reader.read(&mut [0]).unwrap(), 0, "the connection is closed");
     worker.join().unwrap().unwrap();
     assert!(pending.lock().unwrap().is_empty(), "nothing was dispatched");
+}
+
+fn missing_or_wrong_token_never_dispatches_and_closes() {
+    for request in [
+        br#"{"id":1,"method":"engine.execute"}"#.as_slice(),
+        br#"{"id":1,"method":"engine.execute","token":"wrong_control_token_with_32_chars"}"#.as_slice(),
+    ] {
+        let (mut client, server) = pair();
+        let pending = queue();
+        let q = pending.clone();
+        let worker = std::thread::spawn(move || serve(server, token(), q, context(), Duration::from_secs(5)));
+        client.write_all(request).unwrap();
+        client.write_all(b"\n{\"id\":2,\"method\":\"engine.execute\",\"token\":\"test_control_token_with_32_chars\"}\n").unwrap();
+        let mut reader = BufReader::new(client);
+        assert_eq!(reply(&mut reader), json!({"id": null, "ok": false, "error": "unauthorized"}));
+        assert_eq!(reader.read(&mut [0]).unwrap(), 0);
+        assert!(pending.lock().unwrap().is_empty());
+        worker.join().unwrap().unwrap();
+    }
+}
+
+#[test]
+fn a_missing_token_after_an_authenticated_request_is_rejected() {
+    let (mut client, server) = pair();
+    let pending = queue();
+    let q = pending.clone();
+    let worker = std::thread::spawn(move || serve(server, token(), q, context(), Duration::from_secs(5)));
+    client.write_all(b"{\"id\":1,\"method\":\"ui.inspect\",\"token\":\"test_control_token_with_32_chars\"}\n").unwrap();
+    let mut reader = BufReader::new(client);
+    let start = Instant::now();
+    let r = loop {
+        if let Some(r) = pending.lock().unwrap().pop() {
+            break r;
+        }
+        assert!(start.elapsed() < Duration::from_secs(5));
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    r.reply.send(figcraft_ui_egui::ControlReply { id: r.id, result: Ok(json!({})) }).unwrap();
+    assert_eq!(reply(&mut reader)["ok"], true);
+    reader.get_mut().write_all(b"{\"id\":2,\"method\":\"engine.execute\"}\n").unwrap();
+    assert_eq!(reply(&mut reader), json!({"id": null, "ok": false, "error": "unauthorized"}));
+    assert_eq!(reader.read(&mut [0]).unwrap(), 0);
+    assert!(pending.lock().unwrap().is_empty());
+    worker.join().unwrap().unwrap();
+}
+
+#[test]
+fn invalid_utf8_replies_then_closes_without_dispatch() {
+    let (mut client, server) = pair();
+    let pending = queue();
+    let q = pending.clone();
+    let worker = std::thread::spawn(move || serve(server, token(), q, context(), Duration::from_secs(5)));
+    client.write_all(b"\xff\n{\"id\":1,\"method\":\"engine.execute\",\"token\":\"test_control_token_with_32_chars\"}\n").unwrap();
+    let mut reader = BufReader::new(client);
+    assert_eq!(reply(&mut reader)["error"], "bad JSON");
+    assert_eq!(reader.read(&mut [0]).unwrap(), 0);
+    assert!(pending.lock().unwrap().is_empty());
+    worker.join().unwrap().unwrap();
+}
+
+#[test]
+fn malformed_json_replies_then_closes() {
+    let (mut client, server) = pair();
+    let pending = queue();
+    let q = pending.clone();
+    let worker = std::thread::spawn(move || serve(server, token(), q, context(), Duration::from_secs(5)));
+    client.write_all(b"{bad JSON}\n{\"id\":1,\"method\":\"engine.execute\",\"token\":\"test_control_token_with_32_chars\"}\n").unwrap();
+    let mut reader = BufReader::new(client);
+    assert!(reply(&mut reader)["error"].as_str().unwrap().starts_with("bad JSON"));
+    assert_eq!(reader.read(&mut [0]).unwrap(), 0);
+    assert!(pending.lock().unwrap().is_empty());
+    worker.join().unwrap().unwrap();
 }
 
 #[test]
@@ -103,8 +201,8 @@ fn full_queue_rejects_before_dispatch_and_ui_queue_stays_bounded() {
     drain_queue(&pending, &mut ui_queue);
     assert_eq!(pending.lock().unwrap().len(), MAX_QUEUED_REQUESTS);
     let q = pending.clone();
-    let worker = std::thread::spawn(move || serve(server, q, context(), Duration::from_secs(5)));
-    client.write_all(b"{\"id\":1,\"method\":\"engine.execute\"}\n").unwrap();
+    let worker = std::thread::spawn(move || serve(server, token(), q, context(), Duration::from_secs(5)));
+    client.write_all(b"{\"id\":1,\"method\":\"engine.execute\",\"token\":\"test_control_token_with_32_chars\"}\n").unwrap();
     let mut reader = BufReader::new(client);
     assert_eq!(reply(&mut reader), json!({"id": 1, "ok": false, "error": "control request queue is full"}));
     assert_eq!(pending.lock().unwrap().len(), MAX_QUEUED_REQUESTS);
@@ -169,7 +267,7 @@ fn idle_and_partial_frame_connections_expire() {
         let (done, finished) = mpsc::channel();
         let pending = queue();
         let q = pending.clone();
-        let worker = std::thread::spawn(move || done.send(serve(server, q, context(), Duration::from_millis(50))));
+        let worker = std::thread::spawn(move || done.send(serve(server, token(), q, context(), Duration::from_millis(50))));
         client.write_all(bytes).unwrap();
         let err = finished.recv_timeout(Duration::from_secs(5)).unwrap().unwrap_err();
         assert!(matches!(err.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut));
@@ -198,12 +296,12 @@ fn connection_limit_rejects_excess_clients_and_reuses_finished_slots() {
     let mut clients = Vec::new();
     for _ in 0..MAX_CONNECTIONS {
         let (client, server) = pair();
-        spawn_connection(server, pending.clone(), ctx.clone(), &mut workers, Duration::from_secs(5));
+        spawn_connection(server, token(), pending.clone(), ctx.clone(), &mut workers, Duration::from_secs(5));
         clients.push(client);
     }
     assert_eq!(workers.len(), MAX_CONNECTIONS);
     let (mut extra, server) = pair();
-    spawn_connection(server, pending.clone(), ctx.clone(), &mut workers, Duration::from_secs(5));
+    spawn_connection(server, token(), pending.clone(), ctx.clone(), &mut workers, Duration::from_secs(5));
     assert_eq!(extra.read(&mut [0]).unwrap(), 0);
     assert_eq!(workers.len(), MAX_CONNECTIONS);
     for client in clients {
@@ -215,7 +313,7 @@ fn connection_limit_rejects_excess_clients_and_reuses_finished_slots() {
         std::thread::sleep(Duration::from_millis(1));
     }
     let (mut client, server) = pair();
-    spawn_connection(server, pending, ctx, &mut workers, Duration::from_secs(5));
+    spawn_connection(server, token(), pending, ctx, &mut workers, Duration::from_secs(5));
     assert_eq!(workers.len(), 1);
     client.write_all(b"invalid\n").unwrap();
     assert_eq!(reply(&mut BufReader::new(client.try_clone().unwrap()))["ok"], false);
@@ -233,8 +331,8 @@ fn a_client_that_stops_reading_cannot_hold_a_worker() {
     let pending = queue();
     let q = pending.clone();
     let (done, finished) = mpsc::channel();
-    let worker = std::thread::spawn(move || done.send(serve(server, q, context(), Duration::from_millis(100))));
-    client.write_all(b"{\"id\":1,\"method\":\"document.inspect\"}\n").unwrap();
+    let worker = std::thread::spawn(move || done.send(serve(server, token(), q, context(), Duration::from_millis(100))));
+    client.write_all(b"{\"id\":1,\"method\":\"document.inspect\",\"token\":\"test_control_token_with_32_chars\"}\n").unwrap();
     let start = Instant::now();
     let r = loop {
         if let Some(r) = pending.lock().unwrap().pop() {
@@ -254,8 +352,8 @@ fn a_limit_sized_frame_is_accepted_at_eof() {
     let (mut client, server) = pair();
     let pending = queue();
     let q = pending.clone();
-    let worker = std::thread::spawn(move || serve(server, q, context(), Duration::from_secs(5)));
-    let message = b"{\"id\":1,\"method\":\"ui.inspect\"}";
+    let worker = std::thread::spawn(move || serve(server, token(), q, context(), Duration::from_secs(5)));
+    let message = b"{\"id\":1,\"method\":\"ui.inspect\",\"token\":\"test_control_token_with_32_chars\"}";
     client.write_all(message).unwrap();
     std::io::copy(&mut std::io::repeat(b' ').take((MAX_LINE - message.len()) as u64), &mut client).unwrap();
     client.shutdown(Shutdown::Write).unwrap();
@@ -291,8 +389,8 @@ fn timed_out_requests_release_a_full_deferred_ui_queue() {
     for id in 0..MAX_QUEUED_REQUESTS {
         let (mut client, server) = pair();
         let q = pending.clone();
-        workers.push(std::thread::spawn(move || serve(server, q, context(), Duration::from_secs(1))));
-        writeln!(client, "{}", json!({"id": id, "method": "engine.execute", "params": {"window": window, "command": "file.new"}})).unwrap();
+        workers.push(std::thread::spawn(move || serve(server, token(), q, context(), Duration::from_secs(1))));
+        writeln!(client, "{}", json!({"id": id, "method": "engine.execute", "params": {"window": window, "command": "file.new"}, "token": "test_control_token_with_32_chars"})).unwrap();
         clients.push(BufReader::new(client));
     }
     let start = Instant::now();
@@ -317,8 +415,8 @@ fn timed_out_requests_release_a_full_deferred_ui_queue() {
     }));
     let (mut client, server) = pair();
     let q = pending.clone();
-    workers.push(std::thread::spawn(move || serve(server, q, context(), Duration::from_secs(5))));
-    client.write_all(b"{\"id\":100,\"method\":\"window.list\",\"params\":{\"window\":0}}\n").unwrap();
+    workers.push(std::thread::spawn(move || serve(server, token(), q, context(), Duration::from_secs(5))));
+    client.write_all(b"{\"id\":100,\"method\":\"window.list\",\"params\":{\"window\":0},\"token\":\"test_control_token_with_32_chars\"}\n").unwrap();
     let start = Instant::now();
     while !pending.lock().unwrap().iter().any(|r| r.id == 100) {
         assert!(start.elapsed() < Duration::from_secs(5));

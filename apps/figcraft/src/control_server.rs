@@ -1,4 +1,4 @@
-//! Localhost JSON-lines control server: each line `{"id", "method", "params"}` is queued for the UI
+//! Localhost JSON-lines control server: each line `{"id", "method", "params", "token"}` is authenticated then queued for the UI
 //! thread; the reply line `{"id", "ok", "result" | "error"}` is written when the frame handled it.
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -58,7 +58,7 @@ pub fn drain_queue(queue: &Queue, target: &mut Vec<ControlRequest>) {
     target.extend(queue.drain(..count));
 }
 
-pub fn start(port: u16, queue: Queue, ctx: CtxSlot) {
+pub fn start(port: u16, token: figcraft_collab_net::control_auth::ControlToken, queue: Queue, ctx: CtxSlot) {
     let listener = match TcpListener::bind(("127.0.0.1", port)) {
         Ok(l) => l,
         Err(e) => {
@@ -71,7 +71,7 @@ pub fn start(port: u16, queue: Queue, ctx: CtxSlot) {
     let spawned = std::thread::Builder::new().name("figcraft-control".into()).spawn(move || {
         let mut workers = Vec::new();
         for stream in accepted(listener.incoming(), || std::thread::sleep(ACCEPT_RETRY)) {
-            spawn_connection(stream, queue.clone(), ctx.clone(), &mut workers, TIMEOUT);
+            spawn_connection(stream, token.clone(), queue.clone(), ctx.clone(), &mut workers, TIMEOUT);
         }
     });
     if let Err(e) = spawned {
@@ -84,13 +84,21 @@ fn accepted<T>(incoming: impl Iterator<Item = std::io::Result<T>>, mut wait: imp
     incoming.filter_map(move |stream| stream.map_err(|_| wait()).ok())
 }
 
-fn spawn_connection(stream: TcpStream, queue: Queue, ctx: CtxSlot, workers: &mut Vec<std::thread::JoinHandle<()>>, timeout: Duration) {
+fn spawn_connection(
+    stream: TcpStream,
+    token: figcraft_collab_net::control_auth::ControlToken,
+    queue: Queue,
+    ctx: CtxSlot,
+    workers: &mut Vec<std::thread::JoinHandle<()>>,
+    timeout: Duration,
+) {
+
     workers.retain(|worker| !worker.is_finished());
     if workers.len() >= MAX_CONNECTIONS {
         return;
     }
     match std::thread::Builder::new().name("figcraft-control-conn".into()).spawn(move || {
-        let _ = serve(stream, queue, ctx, timeout);
+        let _ = serve(stream, token, queue, ctx, timeout);
     }) {
         Ok(worker) => workers.push(worker),
         Err(e) => log::error!("control connection thread: {e}"),
@@ -100,7 +108,13 @@ fn spawn_connection(stream: TcpStream, queue: Queue, ctx: CtxSlot, workers: &mut
 /// Serve one control connection: read bounded JSON lines, reject oversized frames and a
 /// full queue, queue one request, wait under its gate, and write one reply. Non-JSON input
 /// answers with an error and closes the connection so HTTP body lines cannot become commands.
-fn serve(mut out: TcpStream, queue: Queue, ctx: CtxSlot, timeout: Duration) -> std::io::Result<()> {
+fn serve(
+    mut out: TcpStream,
+    token: figcraft_collab_net::control_auth::ControlToken,
+    queue: Queue,
+    ctx: CtxSlot,
+    timeout: Duration,
+) -> std::io::Result<()> {
     out.set_read_timeout(Some(timeout))?;
     out.set_write_timeout(Some(timeout))?;
     let mut reader = BufReader::new(out.try_clone()?);
@@ -117,12 +131,19 @@ fn serve(mut out: TcpStream, queue: Queue, ctx: CtxSlot, timeout: Duration) -> s
             writeln!(out, "{}", json!({"id": null, "ok": false, "error": "message too large"}))?;
             break;
         }
-        let Ok(line) = std::str::from_utf8(&line) else { break };
+        let Ok(line) = std::str::from_utf8(&line) else {
+            writeln!(out, "{}", json!({"id": null, "ok": false, "error": "bad JSON"}))?;
+            break;
+        };
         if line.trim().is_empty() {
             continue;
         }
         let reply = match serde_json::from_str::<Value>(line) {
             Ok(v) => {
+                if !v.get("token").and_then(Value::as_str).is_some_and(|presented| token.matches(presented)) {
+                    writeln!(out, "{}", json!({"id": null, "ok": false, "error": "unauthorized"}))?;
+                    break;
+                }
                 let id = v.get("id").cloned().unwrap_or(Value::Null);
                 let method = v.get("method").and_then(Value::as_str).unwrap_or("").to_string();
                 let params = v.get("params").cloned().unwrap_or(json!({}));

@@ -235,7 +235,7 @@ figcraft-cli mcp
 figcraft-cli mcp --attach 47800
 ```
 
-The desktop app also offers a loopback-only control channel (`figcraft --control <port>`) for inspecting UI state, driving tools with pointer and key events, and taking screenshots. See [`docs/control-protocol.md`](docs/control-protocol.md), [`docs/mcp.md`](docs/mcp.md) and [`docs/cli.md`](docs/cli.md).
+The desktop app also offers a token-authenticated loopback-only control channel (`figcraft --control <port>`, token from `FIGCRAFT_CONTROL_TOKEN` or a per-user file) for inspecting UI state, driving tools with pointer and key events, and taking screenshots. See [`docs/control-protocol.md`](docs/control-protocol.md), [`docs/mcp.md`](docs/mcp.md) and [`docs/cli.md`](docs/cli.md).
 
 ## Under the hood
 

@@ -3,8 +3,8 @@
 //! Usage: `figcraft [--control <port>] [files…] [figcraft://join?…]` (an invite link joins that
 //! live session; the app registers itself as the opener of such links: `collab.registerLinks`).
 //!
-//! `--control <port>` (or `FIGCRAFT_CONTROL_PORT`) starts a localhost JSON-lines control server:
-//! `{"id":1,"method":"engine.execute","params":{"command":"shape.rectangle","params":{"x":0,"y":0,"width":100,"height":100}}}`
+//! `--control <port>` (or `FIGCRAFT_CONTROL_PORT`) starts a token-authenticated localhost JSON-lines control server. The token is `FIGCRAFT_CONTROL_TOKEN` when set, else a random one written to the per-user file `figcraft/control-token-<port>` (docs/control-protocol.md):
+//! `{"id":1,"method":"engine.execute","params":{"command":"shape.rectangle","params":{"x":0,"y":0,"width":100,"height":100}},"token":"<FIGCRAFT_CONTROL_TOKEN>"}`
 //! → `{"id":1,"ok":true,"result":{…}}`. Methods: `figcraft_ui_egui::control`.
 //!
 //! `--automation-read-root <dir>` / `--automation-write-root <dir>` (each repeatable) confine the
@@ -167,6 +167,16 @@ fn main() -> eframe::Result {
         }
     };
     let port = args.control.or_else(|| std::env::var("FIGCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok()));
+    let control_token = match port {
+        Some(p) => match figcraft_collab_net::control_auth::ControlToken::for_server(p) {
+            Ok(token) => Some(token),
+            Err(e) => {
+                eprintln!("FigCraft control server not started: {e}");
+                std::process::exit(2);
+            }
+        },
+        None => None,
+    };
     // System fonts: index them in the background, then wake the UI (an idle window draws no frames)
     // to lay text out again with them.
     let ctx_slot: Arc<Mutex<Option<egui::Context>>> = Arc::new(Mutex::new(None));
@@ -233,8 +243,8 @@ fn main() -> eframe::Result {
         figcraft_ui_egui::live::open_invite(&mut fig, link);
     }
     let queue: Arc<Mutex<Vec<ControlRequest>>> = Arc::new(Mutex::new(Vec::new()));
-    if let Some(p) = port {
-        control_server::start(p, queue.clone(), ctx_slot.clone());
+    if let (Some(p), Some(token)) = (port, control_token) {
+        control_server::start(p, token, queue.clone(), ctx_slot.clone());
     }
     let icon = services::window_icon();
     // The app id is the Wayland app_id and the X11 window class on Linux: the desktop entry's name

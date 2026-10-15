@@ -218,7 +218,7 @@ machines.
 ### `mcp [--attach PORT] [--automation-read-root DIR]… [--automation-write-root DIR]…`
 
 Serve MCP on stdio: headless by default, or attached to a running app started with
-`figcraft --control PORT`. See [mcp.md](mcp.md). The automation roots (each repeatable; existing
+`figcraft --control PORT` (the app writes a per-user token file that the CLI reads; see [mcp.md](mcp.md)). The automation roots (each repeatable; existing
 folders) confine the files the agent's calls read (inside a read or write root) and write (inside a
 write root); everything else is refused ([mcp.md › Confining file access](mcp.md#confining-file-access)).
 They apply to the headless session only, and that is why `--attach` refuses them: an attached server
