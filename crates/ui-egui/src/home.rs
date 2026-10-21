@@ -196,6 +196,8 @@ fn dropped(app: &mut FigApp, ctx: &egui::Context) {
     }
 }
 
+/// The sidebar on the left of the home screen: the app icon and wordmark, search,
+/// navigation sections, and preferences at the bottom.
 fn sidebar(app: &mut FigApp, ui: &mut Ui, t: &Tokens, left: Rect) {
     let mut y = left.min.y + 20.0;
     crate::theme::paint_app_icon(ui, Rect::from_min_size(pos2(left.min.x + 12.0, y - 4.0), vec2(32.0, 32.0)));

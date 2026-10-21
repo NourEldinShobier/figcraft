@@ -854,6 +854,8 @@ fn dropping_an_unsupported_file_on_the_home_screen_opens_nothing() {
     assert_eq!(u.app.ui.toast.as_ref().map(|t| t.0.as_str()), Some("Drop a .figcraft, .fig, .json, .svg or image file."));
 }
 
+/// The Preferences dialog can be opened and toggled from the home screen via
+/// the `Cmd/Ctrl + ,` shortcut as well as by clicking Preferences in the sidebar.
 #[test]
 fn home_screen_preferences_shortcut_and_sidebar_access() {
     let mut u = first_run();
