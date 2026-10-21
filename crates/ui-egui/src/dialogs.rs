@@ -148,6 +148,10 @@ pub fn keys(app: &mut FigApp, ctx: &Context) {
     if egui::Popup::is_any_open(ctx) {
         return;
     }
+    if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Comma) || i.consume_key(egui::Modifiers::CTRL, egui::Key::Comma)) {
+        app.ui.preferences = !app.ui.preferences;
+        return;
+    }
     let u = &mut app.ui;
     let open = u.color_profile.is_some()
         || u.menu_input.is_some()
