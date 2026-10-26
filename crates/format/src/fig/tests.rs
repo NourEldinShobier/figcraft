@@ -9,7 +9,7 @@ use serde_json::Value;
 use super::kiwi::{Def, Field, Kind, Kv, Schema, Type, encode};
 use super::*;
 
-/// The fixture schema: `enum Name A B …`, `struct|message Name type field, type field[] …`.
+/// The fixture schema: `enum Name A B â€¦`, `struct|message Name type field, type field[] â€¦`.
 /// Message field ids count from 1; enum values from 0.
 const SCHEMA: &str = "
 enum NodeType NONE DOCUMENT CANVAS GROUP FRAME BOOLEAN_OPERATION VECTOR STAR LINE ELLIPSE RECTANGLE REGULAR_POLYGON ROUNDED_RECTANGLE TEXT SLICE SYMBOL INSTANCE STICKY VARIABLE VARIABLE_SET SHAPE_WITH_TEXT CONNECTOR TABLE
@@ -150,7 +150,7 @@ fn triangle_blob() -> Vec<u8> {
     b
 }
 
-/// A 2×1 PNG.
+/// A 2Ã—1 PNG.
 pub(super) fn png() -> Vec<u8> {
     let img = image::RgbaImage::from_pixel(2, 1, image::Rgba([255, 0, 0, 255]));
     let mut out = Vec::new();
@@ -607,7 +607,7 @@ fn kiwi_scalars() {
         w.var_uint(5);
         w.var_uint64(u64v);
         w.var_uint(6);
-        w.string("héllo");
+        w.string("hÃ©llo");
         w.var_uint(7);
         w.byte(1);
         w.var_uint(0);
@@ -619,7 +619,7 @@ fn kiwi_scalars() {
         assert_eq!(got.get("u"), Some(&Kv::Uint(u64::from(uv))));
         assert_eq!(got.get("i64"), Some(&Kv::Int(i64v)));
         assert_eq!(got.get("u64"), Some(&Kv::Uint(u64v)));
-        assert_eq!(got.get("s"), Some(&s("héllo")));
+        assert_eq!(got.get("s"), Some(&s("hÃ©llo")));
         assert_eq!(got.get("b"), Some(&Kv::Bool(true)));
     }
 }
@@ -973,7 +973,7 @@ fn instances_inside_their_own_main_stop() {
     assert!(doc.nodes().any(|n| n.name == "Self"));
 }
 
-/// A collection from a library is named by its asset key, not a guid — also in the explicit mode
+/// A collection from a library is named by its asset key, not a guid â€” also in the explicit mode
 /// map of the frames, components and instances set it on, and in the variables' collection link.
 #[test]
 fn modes_of_collections_named_by_asset_import() {
@@ -1254,3 +1254,5 @@ fn fields_the_import_never_reads_are_not_kept_in_the_tree() {
     let back = schema.decode_message(0, &bytes).unwrap();
     assert_eq!(back, Kv::Object(vec![("name", Kv::Str("kept".into())), ("size", Kv::Uint(3))]));
 }
+#[path = "board_import_tests.rs"]
+mod board;
