@@ -173,7 +173,7 @@ in the table. `crates/ui-egui/src/shortcut_keys_tests.rs` drives the keys a look
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-26 | trivial | Window size and maximized state survive restarts at any interface size; standard caption buttons on GNOME Wayland (storytold/egui#3) |
+| 2026-10-26 | trivial | Window size and maximized state survive restarts at any interface size, except under `--control`; caption buttons on the GNOME Wayland system frame, `FIGCRAFT_TITLEBAR=system` (storytold/egui#3) |
 | 2026-10-25 | minor | Context menus: the Menu key is no longer an egui limitation at 0.37 (egui-winit maps the native Menu/ContextMenu key to egui's `Key::Menu`), but FigCraft normalizes no binding for `Menu`, so it does not open a context menu yet; Shift+F10 still does, with the same behaviour. The row moves from done to partial. Numbers unchanged |
 | 2026-10-24 | minor | Selection colors: a row's Styles menu also lists the document's color variables, and picking one binds it to every fill and stroke the row stands for, replacing a color style there (`selection.bindColorVariable`; a text range with fills of its own takes the variable's value); a row linked to a style or variable has a Detach button that unlinks it and keeps the color (`selection.detachColor`). Still partial: no library styles or variables, no new style or variable from a row |
 | 2026-10-24 | minor | The Text on a path tool (`tool.textOnPath`, in the Text flyout): a click on a shape's or vector's path puts new text on it, starting at the click, with the path's fill (when one shows) and effects, as the help center's Guide to text describes; the path layer is removed, and an edit left empty puts it back with no undo step (`draw_tools_tests`, `cursor_tests`) |

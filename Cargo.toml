@@ -142,20 +142,20 @@ panic = "abort"
 
 # Keep the complete egui family and native event bridge on reviewed fork commits.
 [patch.crates-io]
-ecolor = { git = "https://github.com/storytold/egui.git", rev = "ba04bd7de66afaba82fd44aa235aa1d060559ee7" }
-emath = { git = "https://github.com/storytold/egui.git", rev = "ba04bd7de66afaba82fd44aa235aa1d060559ee7" }
-epaint = { git = "https://github.com/storytold/egui.git", rev = "ba04bd7de66afaba82fd44aa235aa1d060559ee7" }
-epaint_default_fonts = { git = "https://github.com/storytold/egui.git", rev = "ba04bd7de66afaba82fd44aa235aa1d060559ee7" }
-egui = { git = "https://github.com/storytold/egui.git", rev = "ba04bd7de66afaba82fd44aa235aa1d060559ee7" }
-egui-winit = { git = "https://github.com/storytold/egui.git", rev = "ba04bd7de66afaba82fd44aa235aa1d060559ee7" }
-egui-wgpu = { git = "https://github.com/storytold/egui.git", rev = "ba04bd7de66afaba82fd44aa235aa1d060559ee7" }
-egui_glow = { git = "https://github.com/storytold/egui.git", rev = "ba04bd7de66afaba82fd44aa235aa1d060559ee7" }
-egui_extras = { git = "https://github.com/storytold/egui.git", rev = "ba04bd7de66afaba82fd44aa235aa1d060559ee7" }
-egui_kittest = { git = "https://github.com/storytold/egui.git", rev = "ba04bd7de66afaba82fd44aa235aa1d060559ee7" }
-egui_system_font_provider = { git = "https://github.com/storytold/egui.git", rev = "ba04bd7de66afaba82fd44aa235aa1d060559ee7" }
-eframe = { git = "https://github.com/storytold/egui.git", rev = "ba04bd7de66afaba82fd44aa235aa1d060559ee7" }
-egui_demo_lib = { git = "https://github.com/storytold/egui.git", rev = "ba04bd7de66afaba82fd44aa235aa1d060559ee7" }
-egui_inspection = { git = "https://github.com/storytold/egui.git", rev = "ba04bd7de66afaba82fd44aa235aa1d060559ee7" }
+ecolor = { git = "https://github.com/storytold/egui.git", rev = "69750b71a97dc4672e2fbb70863b838e6795c910" }
+emath = { git = "https://github.com/storytold/egui.git", rev = "69750b71a97dc4672e2fbb70863b838e6795c910" }
+epaint = { git = "https://github.com/storytold/egui.git", rev = "69750b71a97dc4672e2fbb70863b838e6795c910" }
+epaint_default_fonts = { git = "https://github.com/storytold/egui.git", rev = "69750b71a97dc4672e2fbb70863b838e6795c910" }
+egui = { git = "https://github.com/storytold/egui.git", rev = "69750b71a97dc4672e2fbb70863b838e6795c910" }
+egui-winit = { git = "https://github.com/storytold/egui.git", rev = "69750b71a97dc4672e2fbb70863b838e6795c910" }
+egui-wgpu = { git = "https://github.com/storytold/egui.git", rev = "69750b71a97dc4672e2fbb70863b838e6795c910" }
+egui_glow = { git = "https://github.com/storytold/egui.git", rev = "69750b71a97dc4672e2fbb70863b838e6795c910" }
+egui_extras = { git = "https://github.com/storytold/egui.git", rev = "69750b71a97dc4672e2fbb70863b838e6795c910" }
+egui_kittest = { git = "https://github.com/storytold/egui.git", rev = "69750b71a97dc4672e2fbb70863b838e6795c910" }
+egui_system_font_provider = { git = "https://github.com/storytold/egui.git", rev = "69750b71a97dc4672e2fbb70863b838e6795c910" }
+eframe = { git = "https://github.com/storytold/egui.git", rev = "69750b71a97dc4672e2fbb70863b838e6795c910" }
+egui_demo_lib = { git = "https://github.com/storytold/egui.git", rev = "69750b71a97dc4672e2fbb70863b838e6795c910" }
+egui_inspection = { git = "https://github.com/storytold/egui.git", rev = "69750b71a97dc4672e2fbb70863b838e6795c910" }
 winit = { git = "https://github.com/storytold/winit.git", rev = "a517b3846ee8457d84ee4975110bfda6797c44dc" }
 
 # craft-libs' vendored krilla 0.8.2: decoded PNGs are capped at 1 GiB and reserved fallibly, and a

@@ -280,7 +280,10 @@ fn main() -> eframe::Result {
     #[cfg(target_os = "macos")]
     let apple_events = &apple_events;
     let run = |fallback: bool| {
-        let mut options = eframe::NativeOptions { viewport: viewport.clone(), renderer: eframe::Renderer::Wgpu, ..Default::default() };
+        // Control-channel runs neither restore nor save the native window, so their screenshots start
+        // from the same window every time.
+        let mut options =
+            eframe::NativeOptions { viewport: viewport.clone(), renderer: eframe::Renderer::Wgpu, persist_window: port.is_none(), ..Default::default() };
         graphics::configure(&mut options.wgpu_options, fallback);
         let (queue, ctx_slot, recovery) = (queue.clone(), ctx_slot.clone(), recovery.clone());
         eframe::run_native(
