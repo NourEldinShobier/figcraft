@@ -67,6 +67,11 @@ struct App {
 }
 
 impl eframe::App for App {
+    // App preferences already persist separately; only the native window belongs in eframe storage.
+    fn persist_egui_memory(&self) -> bool {
+        false
+    }
+
     /// Native eframe logic callback: store the first context, drain control requests, run
     /// guarded background work, poll macOS open events, handle close requests and title
     /// changes, and schedule recovery repaints on the app clock.

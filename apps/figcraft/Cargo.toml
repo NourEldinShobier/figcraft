@@ -21,7 +21,7 @@ figcraft-text = { workspace = true }
 # craft-libs#217 branch and must be repointed to a merged `rev` before this PR is mergeable.
 craft-window = { workspace = true }
 egui = { workspace = true }
-eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "clipboard", "wayland", "x11"] }
+eframe = { workspace = true, features = ["persistence", "default_fonts", "wgpu", "accesskit", "clipboard", "wayland", "x11"] }
 serde_json = { workspace = true }
 log = { workspace = true }
 rfd = { workspace = true }
