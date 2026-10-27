@@ -310,7 +310,7 @@ fn text_mut<'a>(cmd: &str, n: &'a mut Node) -> Result<&'a mut TextData> {
 }
 
 fn ensure_layout(n: &mut Node) -> &mut AutoLayout {
-    n.layout.get_or_insert_with(|| AutoLayout { padding: [0.0; 4], gap: 0.0, ..Default::default() })
+    n.layout.get_or_insert_with(|| Box::new(AutoLayout { padding: [0.0; 4], gap: 0.0, ..Default::default() }))
 }
 
 /// The keys that set a frame's auto layout (through [`layout_mut`]).
@@ -664,7 +664,7 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
             }
             "absolute" | "ignoreAutoLayout" => {
                 let on = bool_of(v).ok_or_else(|| bad(cmd, "`absolute` must be a boolean"))?;
-                let cl = &mut doc.get_mut(id)?.child_layout;
+                let cl = &mut *doc.get_mut(id)?.child_layout;
                 cl.absolute = on;
                 // An absolute child can't fill: it keeps its current size.
                 if on {
@@ -703,7 +703,7 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                             as u32)
                     }
                 };
-                let cl = &mut doc.get_mut(id)?.child_layout;
+                let cl = &mut *doc.get_mut(id)?.child_layout;
                 if k.starts_with("gridColumn") {
                     cl.grid_column = val;
                 } else {
@@ -716,7 +716,7 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                     Value::String(s) if s.eq_ignore_ascii_case("auto") => None,
                     other => Some(enum_of(other).ok_or_else(|| bad(cmd, format!("`{k}`: min|center|max|auto")))?),
                 };
-                let cl = &mut doc.get_mut(id)?.child_layout;
+                let cl = &mut *doc.get_mut(id)?.child_layout;
                 if k.contains('H') {
                     cl.grid_align_h = val;
                 } else {
@@ -725,7 +725,7 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
             }
             "gridColumnSpan" | "gridRowSpan" => {
                 let span = f64_of(v).ok_or_else(|| bad(cmd, format!("`{k}` must be a number")))?.clamp(1.0, 1000.0) as u32;
-                let cl = &mut doc.get_mut(id)?.child_layout;
+                let cl = &mut *doc.get_mut(id)?.child_layout;
                 if k == "gridColumnSpan" {
                     cl.grid_column_span = span;
                 } else {

@@ -418,7 +418,7 @@ pub fn scale_node(doc: &mut Document, id: NodeId, k: f64) -> Result<()> {
         let n = doc.get_mut(*i)?;
         tiles(&mut n.fills);
         tiles(&mut n.strokes);
-        let cl = &mut n.child_layout;
+        let cl = &mut *n.child_layout;
         for v in [&mut cl.min_w, &mut cl.max_w, &mut cl.min_h, &mut cl.max_h].into_iter().flatten() {
             *v *= k;
         }

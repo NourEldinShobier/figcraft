@@ -287,8 +287,8 @@ fn serde_roundtrip_and_repair() {
     let mut d = Document::new("x");
     let p = page(&d);
     let f = d.create(p, NodeKind::Frame, "F", 0.0, 0.0, 100.0, 100.0).unwrap();
-    d.get_mut(f).unwrap().layout = Some(AutoLayout::default());
-    d.create(f, NodeKind::Text(TextData::new("Hi")), "Hi", 0.0, 0.0, 10.0, 10.0).unwrap();
+    d.get_mut(f).unwrap().layout = Some(Box::new(AutoLayout::default()));
+    d.create(f, NodeKind::Text(Box::new(TextData::new("Hi"))), "Hi", 0.0, 0.0, 10.0, 10.0).unwrap();
     d.create(f, NodeKind::Star { count: 5, inner_ratio: 0.4 }, "S", 0.0, 0.0, 10.0, 10.0).unwrap();
     let j = serde_json::to_string(&d).unwrap();
     let back: Document = serde_json::from_str(&j).unwrap();

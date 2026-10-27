@@ -268,7 +268,7 @@ impl Gen {
                     };
                     let hug = (self.r.chance(30), self.r.chance(30));
                     let n = self.doc.node_mut(id).unwrap();
-                    n.layout = Some(l);
+                    n.layout = Some(Box::new(l));
                     n.clip = self.r.chance(50);
                     if hug.0 {
                         n.child_layout.sizing_h = Sizing::Hug;
@@ -342,7 +342,7 @@ impl Gen {
             }
             9 => {
                 let td = text_data(&mut self.r);
-                self.node(parent, NodeKind::Text(td), "Text")
+                self.node(parent, NodeKind::Text(Box::new(td)), "Text")
             }
             10 if on_page => {
                 let id = self.doc.alloc_id();
@@ -412,7 +412,7 @@ impl Gen {
     fn components(&mut self, page: NodeId) {
         let comp = self.node(page, NodeKind::Component { description: "A button".into(), props: BTreeMap::new() }, "Button");
         let icon = self.node(comp, NodeKind::Rectangle, "Icon");
-        let label = self.node(comp, NodeKind::Text(TextData::new("Label")), "Label");
+        let label = self.node(comp, NodeKind::Text(Box::new(TextData::new("Label"))), "Label");
         {
             let n = self.doc.node_mut(comp).unwrap();
             if let NodeKind::Component { props, .. } = &mut n.kind {
@@ -451,7 +451,7 @@ impl Gen {
         // the nested button.
         let card = self.node(page, NodeKind::Component { description: String::new(), props: BTreeMap::new() }, "Card");
         // A grid whose second cell holds the nested button.
-        self.doc.node_mut(card).unwrap().layout = Some(AutoLayout { mode: LayoutMode::Grid, grid_columns: 2, grid_rows: 1, ..AutoLayout::default() });
+        self.doc.node_mut(card).unwrap().layout = Some(Box::new(AutoLayout { mode: LayoutMode::Grid, grid_columns: 2, grid_rows: 1, ..AutoLayout::default() }));
         let nested = self.instance(comp, card, BTreeMap::new());
         self.doc.node_mut(nested).unwrap().child_layout.grid_column = Some(1);
         let outer = self.instance(card, page, BTreeMap::new());
@@ -601,7 +601,7 @@ fn normalize(n: &mut Node, ix: &dyn Fn(NodeId) -> NodeId) {
     // A text's resize mode is its sizing (the editor keeps them together; generated documents
     // don't): auto width hugs both axes, auto height its height.
     if let NodeKind::Text(t) = &n.kind {
-        let cl = &mut n.child_layout;
+        let cl = &mut *n.child_layout;
         let hug = |s: &mut Sizing| *s = if *s == Sizing::Fixed { Sizing::Hug } else { *s };
         match t.auto_resize {
             TextAutoResize::WidthAndHeight => [&mut cl.sizing_h, &mut cl.sizing_v].into_iter().for_each(hug),
@@ -1040,14 +1040,14 @@ fn grid_track_sizes_round_trip() {
     let grid = doc.create(page, NodeKind::Frame, "Grid", 0.0, 0.0, 400.0, 200.0).unwrap();
     {
         let node = doc.node_mut(grid).unwrap();
-        node.layout = Some(AutoLayout {
+        node.layout = Some(Box::new(AutoLayout {
             mode: LayoutMode::Grid,
             grid_columns: 3,
             grid_rows: 2,
             column_tracks: vec![GridTrack::fixed(120.0), GridTrack::fill(2.0), GridTrack::hug()],
             row_tracks: vec![GridTrack::fill(1.0), GridTrack::fixed(50.0)],
             ..AutoLayout::default()
-        });
+        }));
     }
     let (bytes, warnings) = export(&doc, None).unwrap();
     assert!(warnings.is_empty(), "{warnings:?}");
@@ -1084,14 +1084,14 @@ fn instance_grid_tracks_clear_the_mains_sizes() {
         column_tracks: vec![GridTrack::fixed(120.0); 2],
         ..AutoLayout::default()
     };
-    doc.node_mut(grid).unwrap().layout = Some(layout.clone());
+    doc.node_mut(grid).unwrap().layout = Some(Box::new(layout.clone()));
     let inst = doc.alloc_id();
     let mut n = doc.node(main).unwrap().clone();
     (n.id, n.kind, n.parent, n.children) = (inst, NodeKind::Instance { component: main, props: BTreeMap::new() }, None, Vec::new());
     doc.insert(n, page, None).unwrap();
     let mut layer = doc.node(grid).unwrap().clone();
     (layer.id, layer.parent, layer.source) = (doc.alloc_id(), None, Some(grid));
-    layer.layout = Some(AutoLayout { column_tracks: Vec::new(), ..layout });
+    layer.layout = Some(Box::new(AutoLayout { column_tracks: Vec::new(), ..layout }));
     doc.insert(layer, inst, None).unwrap();
     let (bytes, _) = export(&doc, None).unwrap();
     let (back, _) = import(&bytes, "File").unwrap();
@@ -1120,7 +1120,7 @@ fn frame_size_limits_survive_without_auto_layout_parent() {
     let page = doc.first_page().unwrap();
     let id = doc.create(page, NodeKind::Frame, "Subject", 0.0, 0.0, 100.0, 100.0).unwrap();
     let node = doc.node_mut(id).unwrap();
-    node.layout = Some(AutoLayout::default());
+    node.layout = Some(Box::new(AutoLayout::default()));
     node.child_layout.min_w = Some(80.0);
     node.child_layout.max_w = Some(150.0);
     node.child_layout.min_h = Some(60.0);
@@ -1129,7 +1129,7 @@ fn frame_size_limits_survive_without_auto_layout_parent() {
 
     let mut nested = doc.clone();
     let wrapper = nested.create(page, NodeKind::Frame, "Wrapper", 0.0, 0.0, 300.0, 300.0).unwrap();
-    nested.node_mut(wrapper).unwrap().layout = Some(AutoLayout::default());
+    nested.node_mut(wrapper).unwrap().layout = Some(Box::new(AutoLayout::default()));
     nested.reparent(id, wrapper, None).unwrap();
     assert_eq!(limits(&nested), expected, "auto layout parent");
     nested.node_mut(wrapper).unwrap().layout = None;
@@ -1178,7 +1178,7 @@ fn local_samples_round_trip() {
             let ids: Vec<NodeId> = d.ids().collect();
             for id in ids {
                 if let Some(n) = d.node_mut(id) {
-                    n.styles = StyleRefs::default();
+                    n.styles = Default::default();
                     n.bound.clear();
                     n.var_modes.clear();
                 }
@@ -1238,7 +1238,7 @@ fn an_axis_without_a_maximum_size_is_written_as_infinite() {
     let page = doc.first_page().unwrap();
     let id = doc.create(page, NodeKind::Frame, "Subject", 0.0, 0.0, 100.0, 100.0).unwrap();
     let node = doc.node_mut(id).unwrap();
-    node.layout = Some(AutoLayout::default());
+    node.layout = Some(Box::new(AutoLayout::default()));
     node.child_layout.max_w = Some(1200.0);
     node.child_layout.min_h = Some(40.0);
     let (bytes, _) = export(&doc, None).unwrap();
@@ -1293,7 +1293,7 @@ fn set_with_properties() -> (Document, NodeId) {
             ("Show icon".to_string(), PropDef::Boolean { default: true }),
         ]);
         let v = doc.create(set, NodeKind::Component { description: String::new(), props }, name, 0.0, 60.0 * i as f64, 120.0, 40.0).unwrap();
-        let label = doc.create(v, NodeKind::Text(TextData::new("Button")), "Label", 0.0, 0.0, 60.0, 20.0).unwrap();
+        let label = doc.create(v, NodeKind::Text(Box::new(TextData::new("Button"))), "Label", 0.0, 0.0, 60.0, 20.0).unwrap();
         doc.node_mut(label).unwrap().prop_refs.insert("characters".into(), "Label".into());
         // The icon is an instance placed in the variant: like the editor's, its `source` is its
         // main, which the binding doesn't belong to.
@@ -1440,14 +1440,14 @@ fn grid_track_sizes_are_written_and_read_back() {
     let page = doc.first_page().unwrap();
     let id = doc.create(page, NodeKind::Frame, "Row", 0.0, 0.0, 720.0, 70.0).unwrap();
     let columns = vec![GridTrack::fixed(320.0), GridTrack::hug(), GridTrack { sizing: Sizing::Fill, value: 2.0 }, GridTrack::fixed(34.0)];
-    doc.node_mut(id).unwrap().layout = Some(AutoLayout {
+    doc.node_mut(id).unwrap().layout = Some(Box::new(AutoLayout {
         mode: LayoutMode::Grid,
         grid_columns: 4,
         grid_rows: 1,
         column_tracks: columns.clone(),
         row_tracks: vec![GridTrack::fixed(69.0)],
         ..AutoLayout::default()
-    });
+    }));
     let (bytes, warnings) = export(&doc, None).unwrap();
     assert!(warnings.is_empty(), "{warnings:?}");
     let archive = Archive::open(&bytes).unwrap();

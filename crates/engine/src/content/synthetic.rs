@@ -15,7 +15,7 @@ pub const SCREEN_GAP: f64 = 80.0;
 pub const PER_SCREEN: usize = 50;
 
 fn text(content: &str) -> NodeKind {
-    NodeKind::Text(figcraft_doc::TextData::new(content))
+    NodeKind::Text(Box::new(figcraft_doc::TextData::new(content)))
 }
 
 fn ellipse() -> NodeKind {
@@ -31,7 +31,7 @@ fn fill(doc: &mut Document, id: NodeId, c: Color) {
 fn add_screen_header(doc: &mut Document, screen: NodeId, s: usize) -> DocResult<()> {
     let header = doc.create(screen, NodeKind::Frame, "Header", 0.0, 0.0, SCREEN_W, 40.0)?;
     if let Some(n) = doc.node_mut(header) {
-        n.layout = Some(AutoLayout { gap: 8.0, padding: [8.0; 4], ..AutoLayout::default() });
+        n.layout = Some(Box::new(AutoLayout { gap: 8.0, padding: [8.0; 4], ..AutoLayout::default() }));
         n.fills = vec![Paint::solid(Color::from_rgb8_const(0xF5, 0xF5, 0xF5))];
     }
     doc.create(header, text(&format!("Screen {}", s + 1)), "Title", 0.0, 0.0, 120.0, 16.0)?;

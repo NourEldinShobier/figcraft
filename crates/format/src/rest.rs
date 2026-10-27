@@ -398,7 +398,7 @@ fn restore_stroke(n: &mut Node, original: &Value) -> bool {
     sp.dashes.truncate(64);
     o.fills.truncate(64);
     o.strokes.truncate(64);
-    (n.kind, n.fills, n.strokes, n.stroke) = (o.kind, o.fills, o.strokes, o.stroke);
+    (n.kind, n.fills, n.strokes, n.stroke) = (o.kind, o.fills, o.strokes, o.stroke.into());
     true
 }
 
@@ -699,7 +699,7 @@ impl<'a> Ctx<'a> {
                     _ => BoolOp::Union,
                 },
             },
-            "TEXT" => NodeKind::Text(text::text_data(self, j)),
+            "TEXT" => NodeKind::Text(Box::new(text::text_data(self, j))),
             "COMPONENT" => NodeKind::Component { description: description(&self.component_meta, j), props: BTreeMap::new() },
             "COMPONENT_SET" => NodeKind::ComponentSet { description: description(&self.set_meta, j) },
             "SLICE" => NodeKind::Slice,
@@ -780,10 +780,10 @@ impl<'a> Ctx<'a> {
             if let Some(c) = flag(j, "clipsContent") {
                 n.clip = c;
             }
-            n.layout = props::auto_layout(j, self.fig_sources.is_some());
+            n.layout = props::auto_layout(j, self.fig_sources.is_some()).map(Box::new);
             n.grids = props::layout_grids(j);
         }
-        n.child_layout = props::child_layout(j, n.layout.as_ref().map(|l| l.mode), parent_mode);
+        n.child_layout = props::child_layout(j, n.layout.as_ref().map(|l| l.mode), parent_mode).into();
         n.exports = props::export_settings(j);
         for (field, prop) in j.get("componentPropertyReferences").and_then(Value::as_object).into_iter().flatten() {
             let supported = matches!(field.as_str(), "visible" | "characters" | "mainComponent") || (field == "slot" && self.fig_sources.is_some());
@@ -972,7 +972,7 @@ impl<'a> Ctx<'a> {
                     "grid"
                 }
                 StyleKind::Text { .. } => {
-                    sample.kind = NodeKind::Text(text::text_data(self, node));
+                    sample.kind = NodeKind::Text(Box::new(text::text_data(self, node)));
                     "text"
                 }
             };
@@ -1015,7 +1015,7 @@ impl<'a> Ctx<'a> {
     fn styles_take_bindings(&mut self) {
         let ids: Vec<NodeId> = self.doc.nodes().filter(|n| !n.styles.is_empty() && !n.bound.is_empty()).map(|n| n.id).collect();
         for id in ids {
-            let Some((refs, bound)) = self.doc.node(id).map(|n| (n.styles.clone(), n.bound.clone())) else { continue };
+            let Some((refs, bound)) = self.doc.node(id).map(|n| (n.styles.clone().into_inner(), n.bound.clone())) else { continue };
             let mut moved: Vec<String> = Vec::new();
             for (slot, sid) in [("fill", refs.fill), ("stroke", refs.stroke), ("effect", refs.effect), ("grid", refs.grid), ("text", refs.text)] {
                 let Some(sid) = sid else { continue };

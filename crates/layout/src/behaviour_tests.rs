@@ -113,7 +113,7 @@ fn build(c: &Case<'_>) -> (Document, NodeId, Vec<NodeId>, FakeMeasure) {
     let id = d.create(page, NodeKind::Frame, "F", 0.0, 0.0, f.size.0, f.size.1).unwrap();
     {
         let n = d.get_mut(id).unwrap();
-        n.layout = Some(AutoLayout {
+        n.layout = Some(Box::new(AutoLayout {
             mode: f.mode,
             wrap: f.wrap,
             gap: f.gap,
@@ -128,7 +128,7 @@ fn build(c: &Case<'_>) -> (Document, NodeId, Vec<NodeId>, FakeMeasure) {
             strokes_included: f.strokes_included,
             reverse_z: false,
             content_align: ContentAlign::Auto,
-        });
+        }));
         (n.child_layout.sizing_h, n.child_layout.sizing_v) = f.sizing;
         (n.child_layout.min_w, n.child_layout.min_h) = f.min;
         (n.child_layout.max_w, n.child_layout.max_h) = f.max;
@@ -142,7 +142,7 @@ fn build(c: &Case<'_>) -> (Document, NodeId, Vec<NodeId>, FakeMeasure) {
     let mut texts = HashMap::new();
     let mut ids = Vec::new();
     for k in c.kids {
-        let kind = if k.text.is_some() { NodeKind::Text(TextData::new("T")) } else { NodeKind::Rectangle };
+        let kind = if k.text.is_some() { NodeKind::Text(Box::new(TextData::new("T"))) } else { NodeKind::Rectangle };
         let kid = d.create(id, kind, "K", k.at.0, k.at.1, k.size.0, k.size.1).unwrap();
         let n = d.get_mut(kid).unwrap();
         if let (Some(t), NodeKind::Text(td)) = (k.text, &mut n.kind) {

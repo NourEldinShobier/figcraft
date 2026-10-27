@@ -288,3 +288,5 @@ impl Variables {
         None
     }
 }
+
+crate::cold_default!(StyleRefs);

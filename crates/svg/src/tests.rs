@@ -95,7 +95,7 @@ fn two_colour_text() -> (Document, figcraft_doc::NodeId) {
     style.fills = Some(vec![Paint::solid(Color::from_hex("00FF00").unwrap())]);
     text.runs.push(StyleRun { start: 1, end: 2, style });
     text.normalize();
-    let id = d.create(page, NodeKind::Text(text), "Text", 0.0, 0.0, 100.0, 40.0).unwrap();
+    let id = d.create(page, NodeKind::Text(Box::new(text)), "Text", 0.0, 0.0, 100.0, 40.0).unwrap();
     d.get_mut(id).unwrap().fills = vec![Paint::solid(Color::BLACK)];
     (d, id)
 }
@@ -129,7 +129,7 @@ fn title_case_does_not_restart_words_across_fill_runs_in_live_text() {
     style.fills = Some(vec![Paint::solid(Color::from_hex("00FF00").unwrap())]);
     text.runs.push(StyleRun { start: 2, end: 3, style });
     text.normalize();
-    let id = d.create(page, NodeKind::Text(text), "Text", 0.0, 0.0, 200.0, 40.0).unwrap();
+    let id = d.create(page, NodeKind::Text(Box::new(text)), "Text", 0.0, 0.0, 200.0, 40.0).unwrap();
     d.get_mut(id).unwrap().fills = vec![Paint::solid(Color::BLACK)];
     let svg = export_svg(&d, &[id], &SvgOptions { outline_text: false, ..SvgOptions::default() }).unwrap();
     assert!(svg.contains(">He</tspan>") && svg.contains(">l</tspan>") && svg.contains(">lo</tspan>"), "{svg}");
@@ -152,7 +152,7 @@ fn live_text_export_drops_xml_forbidden_control_characters() {
             text.runs.push(StyleRun { start: 5, end: 12, style });
             text.normalize();
         }
-        let id = d.create(page, NodeKind::Text(text), "Text", 0.0, 0.0, 600.0, 40.0).unwrap();
+        let id = d.create(page, NodeKind::Text(Box::new(text)), "Text", 0.0, 0.0, 600.0, 40.0).unwrap();
         d.get_mut(id).unwrap().fills = vec![Paint::solid(Color::BLACK)];
         let svg = export_svg(&d, &[id], &SvgOptions { outline_text: false, ..SvgOptions::default() }).unwrap();
         assert!(!svg.contains('\u{b}') && !svg.contains('\u{1}'), "{svg:?}");

@@ -9,6 +9,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod board;
+pub mod cold;
 pub mod colors;
 pub mod comments;
 pub mod facilitation;
@@ -1263,6 +1264,7 @@ mod handoff_tests;
 mod ids_tests;
 #[cfg(test)]
 mod print_tests;
+mod size_tests;
 #[cfg(test)]
 mod proto_expr_mode_tests;
 #[cfg(test)]

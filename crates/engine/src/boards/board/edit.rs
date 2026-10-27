@@ -32,7 +32,7 @@ pub(super) fn set_label(doc: &mut Document, id: NodeId, text: &str) -> Result<Op
         n.fills = vec![Paint::solid(Color::WHITE)];
         n.corners.radii = [4.0; 4];
         n.clip = false;
-        n.layout = Some(AutoLayout { padding: [3.0, 6.0, 3.0, 6.0], ..AutoLayout::default() });
+        n.layout = Some(Box::new(AutoLayout { padding: [3.0, 6.0, 3.0, 6.0], ..AutoLayout::default() }));
         n.child_layout.sizing_h = Sizing::Hug;
         n.child_layout.sizing_v = Sizing::Hug;
         n.board = Some(BoardItem::Label { connector: id });

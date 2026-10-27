@@ -70,7 +70,7 @@ fn shown(s: &Session, n: NodeId, kind: &str) -> String {
 }
 
 fn link(s: &Session, n: NodeId, kind: &str) -> Option<String> {
-    let r = node(s, n).styles;
+    let r = node(s, n).styles.clone().into_inner();
     match kind {
         "paint" => r.fill,
         "stroke" => r.stroke,

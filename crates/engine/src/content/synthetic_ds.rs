@@ -119,7 +119,7 @@ fn component() -> NodeKind {
 }
 
 fn text(chars: &str) -> NodeKind {
-    NodeKind::Text(TextData::new(chars))
+    NodeKind::Text(Box::new(TextData::new(chars)))
 }
 
 /// Pick a (capped) prefix of a value list.
@@ -141,7 +141,7 @@ fn bind(doc: &mut Document, id: NodeId, field: &str, var: &str) {
 
 fn auto_layout(doc: &mut Document, id: NodeId, mode: LayoutMode, gap: f64, pad: f64) {
     set_node(doc, id, |n| {
-        n.layout = Some(AutoLayout { mode, gap, padding: [pad; 4], cross_align: CrossAlign::Center, ..AutoLayout::default() });
+        n.layout = Some(Box::new(AutoLayout { mode, gap, padding: [pad; 4], cross_align: CrossAlign::Center, ..AutoLayout::default() }));
         n.child_layout.sizing_h = Sizing::Hug;
         n.child_layout.sizing_v = Sizing::Hug;
     });

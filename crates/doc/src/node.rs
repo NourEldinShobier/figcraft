@@ -1,6 +1,7 @@
 //! Nodes: one struct with the properties every node can have, and a kind with per-type data.
 
 use crate::NodeId;
+use crate::cold::Cold;
 use crate::props::*;
 use crate::proto::{Interaction, Overflow, ScrollPosition};
 use crate::styles::{CollectionId, ModeId, StyleRefs, VariableId};
@@ -102,7 +103,7 @@ pub enum NodeKind {
     Vector {
         network: VectorNetwork,
     },
-    Text(TextData),
+    Text(Box<TextData>),
     BooleanOp {
         op: BoolOp,
     },
@@ -446,7 +447,7 @@ pub struct Node {
     #[serde(default, skip_serializing_if = "is_default")]
     pub strokes: Vec<Paint>,
     #[serde(default, skip_serializing_if = "is_default")]
-    pub stroke: StrokeProps,
+    pub stroke: Cold<StrokeProps>,
     #[serde(default, skip_serializing_if = "is_default")]
     pub effects: Vec<Effect>,
     #[serde(default, skip_serializing_if = "is_default")]
@@ -455,9 +456,9 @@ pub struct Node {
     pub constraints: Constraints,
     /// Auto layout (frame-like nodes only).
     #[serde(default, skip_serializing_if = "is_default")]
-    pub layout: Option<AutoLayout>,
+    pub layout: Option<Box<AutoLayout>>,
     #[serde(default, skip_serializing_if = "is_default")]
-    pub child_layout: ChildLayout,
+    pub child_layout: Cold<ChildLayout>,
     /// Clip content (frames).
     #[serde(default, skip_serializing_if = "is_default")]
     pub clip: bool,
@@ -481,7 +482,7 @@ pub struct Node {
     #[serde(default, skip_serializing_if = "is_default")]
     pub scroll_position: ScrollPosition,
     #[serde(default, skip_serializing_if = "is_default")]
-    pub styles: StyleRefs,
+    pub styles: Cold<StyleRefs>,
     /// Variable bindings: field name ("fills/0/color", "width", "cornerRadius", "characters", …) → id.
     #[serde(default, skip_serializing_if = "is_default")]
     pub bound: BTreeMap<String, VariableId>,
@@ -618,12 +619,12 @@ impl Node {
             height: height.max(0.0),
             fills,
             strokes,
-            stroke,
+            stroke: stroke.into(),
             effects: Vec::new(),
             corners,
             constraints: Constraints::default(),
             layout: None,
-            child_layout: ChildLayout::default(),
+            child_layout: Default::default(),
             clip,
             is_mask: false,
             mask_type: MaskType::Alpha,
@@ -633,7 +634,7 @@ impl Node {
             interactions: Vec::new(),
             overflow: Default::default(),
             scroll_position: Default::default(),
-            styles: StyleRefs::default(),
+            styles: Default::default(),
             bound: BTreeMap::new(),
             var_modes: BTreeMap::new(),
             bool_op: None,
@@ -679,7 +680,7 @@ impl Node {
 
     /// A board object selected and moved as a whole (a sticky, a shape with text, a stamp…).
     pub fn is_board_atom(&self) -> bool {
-        self.board.as_ref().is_some_and(crate::BoardItem::is_atom)
+        self.board.as_ref().is_some_and(|b| b.is_atom())
     }
 
     /// A section whose contents are hidden: only its name and outline show; its children are

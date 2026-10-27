@@ -279,7 +279,7 @@ fn create_merged(doc: &mut Document, style: Part, area: &BezPath) -> Result<Node
     let mut src = doc.get(style.id)?.clone();
     if style.stroke {
         src.fills = std::mem::take(&mut src.strokes);
-        src.stroke = StrokeProps::default();
+        src.stroke = Default::default();
         src.styles.fill = src.styles.stroke.take();
     }
     let style = style.id;
