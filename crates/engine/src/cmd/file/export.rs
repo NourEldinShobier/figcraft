@@ -98,7 +98,8 @@ pub(super) fn export(s: &mut Session, p: &Value) -> Result<Value> {
         None => num_or(p, "scale", 1.0).clamp(0.01, ExportSize::MAX_SCALE),
     };
     let format = setting.format;
-    let (bytes, warnings) = export_file(doc, &ids, &setting, scale)?;
+    let icon = icon_preset_param(cmd, p)?;
+    let (bytes, warnings) = export_one(doc, &ids, &setting, scale, icon.as_ref())?;
     let mut out = match string(p, "path") {
         Some(path) => {
             write(&path, &bytes)?;
@@ -341,6 +342,154 @@ pub(super) fn export_layers(s: &mut Session, p: &Value) -> Result<Value> {
     if zip {
         let archive = figcraft_format::zip_files(members.iter().map(|(n, b)| (*n, b.as_slice()))).map_err(|e| EngineError::Other(e.to_string()))?;
         r["data"] = json!(base64::engine::general_purpose::STANDARD.encode(&archive));
+    }
+    Ok(r)
+}
+
+/// The SVG icon preset (`iconPreset: true`): baked transforms, no needless groups or view clips,
+/// numbers to 3 decimals, the frame's box as the view box, and `currentColor` for the colour
+/// `currentColor` names (`true`: the icon's only colour; or a hex colour).
+pub(in crate::cmd) struct IconPreset {
+    current_color: Option<String>,
+}
+
+pub(in crate::cmd) fn icon_preset_param(cmd: &str, p: &Value) -> Result<Option<IconPreset>> {
+    let on = match get(p, "iconPreset") {
+        None | Some(Value::Null) => false,
+        Some(v) => bool_of(v).ok_or_else(|| bad(cmd, "iconPreset: true or false"))?,
+    };
+    let current_color = match get(p, "currentColor") {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => None,
+        Some(Value::Bool(true)) => Some("auto".to_string()),
+        Some(v) => Some(color_of(v).ok_or_else(|| bad(cmd, "currentColor: true, or a colour like \"#111111\""))?.to_css_hex()),
+    };
+    if current_color.is_some() && !on {
+        return Err(bad(cmd, "`currentColor` needs `iconPreset: true`"));
+    }
+    Ok(on.then_some(IconPreset { current_color }))
+}
+
+/// [`export_file`], with the icon preset applied to an SVG.
+pub(in crate::cmd) fn export_one(doc: &Document, ids: &[NodeId], setting: &ExportSetting, scale: f64, icon: Option<&IconPreset>) -> Result<(Vec<u8>, Vec<String>)> {
+    match icon {
+        Some(icon) if setting.format == ExportFormat::Svg => {
+            let setting = ExportSetting { include_bounding_box: true, ..setting.clone() };
+            let (bytes, warnings) = export_file(doc, ids, &setting, scale)?;
+            let svg = figcraft_svg::icon_preset(&String::from_utf8_lossy(&bytes), icon.current_color.as_deref());
+            Ok((svg.into_bytes(), warnings))
+        }
+        _ => export_file(doc, ids, setting, scale),
+    }
+}
+
+const MAX_MANY_FILES: usize = 1000;
+
+/// A scale as it reads in a file name: `2`, `1.5`.
+fn scale_label(scale: f64) -> String {
+    if scale.fract() == 0.0 { format!("{}", scale as i64) } else { format!("{scale}") }
+}
+
+/// `name` made unique among `taken` by numbering it before the extension (`icon 2.png`).
+fn unique_name(name: String, taken: &mut std::collections::HashSet<String>) -> String {
+    if taken.insert(name.clone()) {
+        return name;
+    }
+    let (stem, dot_ext) = match name.rfind('.') {
+        Some(i) => name.split_at(i),
+        None => (name.as_str(), ""),
+    };
+    (2..)
+        .map(|n| format!("{stem} {n}{dot_ext}"))
+        .find(|candidate| taken.insert(candidate.clone()))
+        .unwrap_or(name)
+}
+
+/// Each layer of `ids` on its own in every format and scale, no per-layer export settings needed.
+pub(super) fn export_many(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "file.exportMany";
+    let doc = s.doc()?;
+    let mut ids = targets(s, p);
+    if ids.is_empty() {
+        ids = doc.get(s.page()?)?.children.clone();
+    }
+    let formats: Vec<ExportFormat> = match get(p, "formats") {
+        None | Some(Value::Null) => vec![ExportFormat::Png],
+        Some(Value::Array(a)) if !a.is_empty() && a.len() <= 8 => a
+            .iter()
+            .map(|f| {
+                f.as_str()
+                    .and_then(ExportFormat::from_ext)
+                    .ok_or_else(|| bad(cmd, "`formats` entries: png|jpg|svg|pdf|webp|xml"))
+            })
+            .collect::<Result<_>>()?,
+        Some(_) => return Err(bad(cmd, "`formats` must be a list of 1 to 8 of png|jpg|svg|pdf|webp|xml")),
+    };
+    let scales: Vec<f64> = match get(p, "scales") {
+        None | Some(Value::Null) => vec![1.0],
+        Some(Value::Array(a)) if !a.is_empty() && a.len() <= 16 => a
+            .iter()
+            .map(|v| f64_of(v).filter(|n| n.is_finite() && *n > 0.0 && *n <= ExportSize::MAX_SCALE))
+            .collect::<Option<_>>()
+            .ok_or_else(|| bad(cmd, format!("`scales` entries must be numbers above 0 and up to {}", ExportSize::MAX_SCALE)))?,
+        Some(_) => return Err(bad(cmd, "`scales` must be a list of 1 to 16 numbers")),
+    };
+    let naming = match get(p, "naming") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(v.as_str().ok_or_else(|| bad(cmd, "`naming` must be a string like \"{name}@{scale}x.{ext}\""))?.to_string()),
+    };
+    let base = export_setting(cmd, ExportSetting::default(), p)?;
+    let icon = icon_preset_param(cmd, p)?;
+    let jobs_per_layer: usize = formats.iter().map(|f| if f.is_vector() { 1 } else { scales.len() }).sum();
+    if ids.len().saturating_mul(jobs_per_layer) > MAX_MANY_FILES {
+        return Err(bad(cmd, format!("more than {MAX_MANY_FILES} files; export fewer layers, formats or scales")));
+    }
+    let dir = string(p, "dir");
+    let mut taken = std::collections::HashSet::new();
+    let (mut files, mut data) = (Vec::new(), serde_json::Map::new());
+    for &layer in &ids {
+        let node = doc.get(layer)?;
+        for &format in &formats {
+            // SVG and PDF don't scale: one file.
+            let own_scales = if format.is_vector() { &scales[..1] } else { &scales[..] };
+            for &scale in own_scales {
+                let template = naming.clone().unwrap_or_else(|| {
+                    if !format.is_vector() && scales.len() > 1 { "{name}@{scale}x.{ext}" } else { "{name}.{ext}" }.to_string()
+                });
+                let shown = if format.is_vector() { 1.0 } else { scale };
+                let name = template
+                    .replace("{name}", &node.name)
+                    .replace("{id}", &layer.to_string())
+                    .replace("{scale}", &scale_label(shown))
+                    .replace("{format}", format.ext())
+                    .replace("{ext}", format.ext());
+                let name = unique_name(export_path(&name), &mut taken);
+                let setting = ExportSetting { format, ..base.clone() };
+                let (bytes, warnings) = export_one(doc, &[layer], &setting, scale, icon.as_ref())?;
+                let mut f = json!({"name": name, "id": layer, "format": format.ext(), "scale": shown, "bytes": bytes.len()});
+                if format == ExportFormat::VectorDrawable {
+                    f["warnings"] = json!(warnings);
+                }
+                match &dir {
+                    Some(d) => {
+                        let path = std::path::Path::new(d).join(&name);
+                        if let Some(parent) = path.parent() {
+                            let _ = crate::file_access::create_dir_all(parent);
+                        }
+                        let path = path.to_string_lossy().to_string();
+                        write(&path, &bytes)?;
+                        f["path"] = json!(path);
+                    }
+                    None => {
+                        data.insert(name, json!(base64::engine::general_purpose::STANDARD.encode(&bytes)));
+                    }
+                }
+                files.push(f);
+            }
+        }
+    }
+    let mut r = json!({"files": files});
+    if dir.is_none() {
+        r["data"] = Value::Object(data);
     }
     Ok(r)
 }

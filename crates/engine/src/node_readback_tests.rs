@@ -1,4 +1,4 @@
-﻿//! What `node.set` accepts, `node.get` reports back (literal expected values).
+//! What `node.set` accepts, `node.get` reports back (literal expected values).
 
 use serde_json::{Value, json};
 
@@ -39,4 +39,17 @@ fn text_and_frame_settings_read_back() {
     assert_eq!(n["paragraphSpacing"], 6.0);
     assert_eq!(n["paragraphIndent"], 4.0);
     assert_eq!(n["constrainProportions"], true);
+}
+
+#[test]
+fn imported_path_vertices_carry_no_float_noise() {
+    let mut s = Session::new();
+    let id = ex(&mut s, "node.create", json!({"type": "vector", "path": "M0.1 0.2L0.3 0.7L10.1 10.2Z"}))["id"].clone();
+    let doc = s.doc().unwrap();
+    let node = doc.node(crate::params::id_of(&id).unwrap()).unwrap();
+    let figcraft_doc::NodeKind::Vector { network } = &node.kind else { panic!("not a vector") };
+    let mut points: Vec<(f64, f64)> = network.vertices.iter().map(|v| (v.x, v.y)).collect();
+    points.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert_eq!(points, vec![(0.0, 0.0), (0.2, 0.5), (10.0, 10.0)]);
+    assert_eq!((node.width, node.height), (10.0, 10.0));
 }

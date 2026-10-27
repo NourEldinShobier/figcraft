@@ -1091,6 +1091,32 @@ fn text_run_paths(n: &Node) -> Option<Vec<(BezPath, Vec<Paint>)>> {
     )
 }
 
+mod icon;
+pub use icon::icon_preset;
+
+/// `v` to a millionth, so `2.000000000000001` and `8.9e-16` from float arithmetic read as `2` and `0`.
+pub fn snap(v: f64) -> f64 {
+    if v.is_finite() { (v * 1e6).round() / 1e6 } else { v }
+}
+
+/// `path` with every coordinate [`snap`]ped: the same shape to a millionth of a unit.
+pub fn snap_path(path: &BezPath) -> BezPath {
+    use figcraft_geom::kurbo::PathEl::*;
+    let p = |q: figcraft_geom::Point| figcraft_geom::Point::new(snap(q.x), snap(q.y));
+    BezPath::from_vec(
+        path.elements()
+            .iter()
+            .map(|el| match *el {
+                MoveTo(a) => MoveTo(p(a)),
+                LineTo(a) => LineTo(p(a)),
+                QuadTo(a, b) => QuadTo(p(a), p(b)),
+                CurveTo(a, b, c) => CurveTo(p(a), p(b), p(c)),
+                ClosePath => ClosePath,
+            })
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod depth_tests;
 #[cfg(test)]

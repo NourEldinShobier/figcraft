@@ -196,11 +196,13 @@ pub(crate) fn path_network(cmd: &str, d: &str, width: Option<f64>, height: Optio
     if sx != 1.0 || sy != 1.0 {
         path.apply_affine(figcraft_geom::Affine::scale_non_uniform(sx, sy));
     }
-    let network = VectorNetwork::from_path(&path);
+    // Float noise from the shift and scale (`2.000000000000001`) is rounded away.
+    let network = VectorNetwork::from_path(&figcraft_svg::snap_path(&path));
     if network.segments.is_empty() {
         return Err(empty());
     }
-    Ok(PathShape { network, width: bb.width() * sx, height: bb.height() * sy, offset: (bb.x0, bb.y0) })
+    let snap = figcraft_svg::snap;
+    Ok(PathShape { network, width: snap(bb.width() * sx), height: snap(bb.height() * sy), offset: (snap(bb.x0), snap(bb.y0)) })
 }
 
 /// How much a vector's path is scaled to take the size asked for: with both sides, each scales
