@@ -120,6 +120,8 @@ pub const TOOL_NAMES: &[&str] = &[
     "lint_icons",
     "export_tokens",
     "check_contrast",
+    "history",
+    "auto_name_layers",
 ];
 
 /// All tools, in `tools/list` order.
@@ -478,6 +480,32 @@ pub fn tool_definitions() -> Vec<Value> {
                 &[],
             ),
             true,
+            "history",
+            "Undo history",
+            "The active document's undo stack as data (engine `history.list`, `history.revertTo`, `history.hash`). Default: list the newest `limit` steps, oldest first: `{entries: [{index, label, changedIds, changedCount, time, kind, applied}], applied, total, hash}`; a `batch` step carries its `label`. `revertTo` = an entry `index` undoes (or redoes) back to the state just before that entry as one operation and returns the new `hash` (refused across a version restore). `hash: true` returns just `{hash}`, a content hash of the document, to verify that two states are equal.",
+            obj(
+                json!({
+                    "limit": int("Most entries to list (default 20, max 200)"),
+                    "revertTo": int("Go to the state just before this history index (`total` = the latest state)"),
+                    "hash": boolean("Return only the document content hash"),
+                }),
+                &[],
+            ),
+            false,
+        ),
+        tool(
+            "auto_name_layers",
+            "Rename generic layers",
+            "Rename generic layer names (Vector, Rectangle 12, Frame 5, Group 3, Text 2) from context with fixed rules (engine `layer.autoName`): icon-like vectors in an icon frame become `icon/<parent>`, a shape filling a button `button/bg`, other shapes `<parent>/<shape>`, a text layer its content, a frame or group holding one text layer that text. One undo step. Use `dryRun` to see `{renames: [{id, from, to}], count}` without changing anything.",
+            obj(
+                json!({
+                    "ids": ids_schema("Layers whose subtrees are renamed (default: the selection)"),
+                    "scope": string("selection | page | document (default selection; the current page when nothing is selected)"),
+                    "dryRun": boolean("Only return the proposed renames"),
+                }),
+                &[],
+            ),
+            false,
         ),
     ]
 }
@@ -621,6 +649,8 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
         "lint_icons" => lint_icons(b, &a),
         "export_tokens" => export_tokens(b, &a),
         "check_contrast" => check_contrast(b, &a),
+        "history" => history(b, &a),
+        "auto_name_layers" => auto_name_layers(b, &a),
         other => Err(format!("unknown tool `{other}` (tools/list has: {})", TOOL_NAMES.join(", "))),
     };
     r.unwrap_or_else(ToolResult::error)
@@ -1120,6 +1150,28 @@ fn cvd_arg(a: &Map<String, Value>) -> Result<Option<figcraft_render::cvd::Cvd>, 
     s_arg(a, "cvd")?
         .map(|s| figcraft_render::cvd::Cvd::parse(s).ok_or_else(|| format!("unknown cvd `{s}` (protanopia|deuteranopia|tritanopia|achromatopsia)")))
         .transpose()
+}
+
+fn history(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let v = if let Some(i) = n_arg(a, "revertTo")? {
+        exec(b, "history.revertTo", json!({"index": i}))?
+    } else if a.get("hash").and_then(Value::as_bool) == Some(true) {
+        exec(b, "history.hash", json!({}))?
+    } else {
+        let mut params = a.clone();
+        params.retain(|k, v| k == "limit" && !v.is_null());
+        exec(b, "history.list", Value::Object(params))?
+    };
+    Ok(ToolResult::json(&v))
+}
+
+fn auto_name_layers(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let mut params = a.clone();
+    params.retain(|_, v| !v.is_null());
+    if let Some(ids) = ids_arg(a, "ids")? {
+        params.insert("ids".into(), json!(ids));
+    }
+    exec(b, "layer.autoName", Value::Object(params)).map(|v| ToolResult::json(&v))
 }
 
 fn export_many(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {

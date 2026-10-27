@@ -123,7 +123,7 @@ impl Session {
             return Ok(self.live_travel(true));
         }
         let Some(e) = ds.history.undo.pop() else { return Ok(false) };
-        let redo = HistoryEntry { label: e.label.clone(), doc: ds.doc.clone(), selection: ds.selection.clone(), page: ds.page };
+        let redo = HistoryEntry { label: e.label.clone(), doc: ds.doc.clone(), selection: ds.selection.clone(), page: ds.page, time: e.time, kind: e.kind };
         ds.doc = e.doc;
         cmd::facilitate::keep(&redo.doc, &mut ds.doc);
         ds.history.redo.push(redo);
@@ -160,7 +160,7 @@ impl Session {
             return Ok(self.live_travel(false));
         }
         let Some(e) = ds.history.redo.pop() else { return Ok(false) };
-        let undo = HistoryEntry { label: e.label.clone(), doc: ds.doc.clone(), selection: ds.selection.clone(), page: ds.page };
+        let undo = HistoryEntry { label: e.label.clone(), doc: ds.doc.clone(), selection: ds.selection.clone(), page: ds.page, time: e.time, kind: e.kind };
         ds.doc = e.doc;
         cmd::facilitate::keep(&undo.doc, &mut ds.doc);
         ds.history.undo.push(undo);
@@ -277,7 +277,13 @@ impl Session {
             }
             if let Some(label) = label {
                 for (uid, doc, selection, page) in changed {
+                    let len = self.docs.iter().find(|d| d.uid == uid).map_or(0, |d| d.history.undo.len());
                     self.record(uid, Some(label), doc, selection, page);
+                    if let Some(ds) = self.docs.iter_mut().find(|d| d.uid == uid).filter(|d| d.history.undo.len() > len)
+                        && let Some(e) = ds.history.undo.last_mut()
+                    {
+                        e.kind = "batch";
+                    }
                 }
             }
         }

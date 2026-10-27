@@ -145,8 +145,44 @@ fn layer(cmd: &str, s: &crate::Session, p: &Value, page_default: bool) -> crate:
     Ok(id)
 }
 
-fn matches(hay: &str, q: &str) -> bool {
-    hay.to_lowercase().contains(q)
+/// How well `q` (lower case) matches `hay`, 0-100, or `None`: exact 100, prefix 90, a match at a
+/// word start 80, any substring 70, else a case-insensitive subsequence scored by how tightly the
+/// letters sit (`row` in "Rounded Window" scores low; spread over more than 5x the query is no match).
+fn fuzzy(hay: &str, q: &str) -> Option<f64> {
+    if q.is_empty() {
+        return Some(1.0);
+    }
+    let h = hay.to_lowercase();
+    if h == q {
+        return Some(100.0);
+    }
+    if let Some(pos) = h.find(q) {
+        let word_start = h[..pos].chars().last().is_none_or(|c| !c.is_alphanumeric());
+        return Some(if pos == 0 { 90.0 } else if word_start { 80.0 } else { 70.0 });
+    }
+    let want: Vec<char> = q.chars().collect();
+    let (mut next, mut first, mut last) = (0usize, 0usize, 0usize);
+    for (i, c) in h.chars().enumerate() {
+        if want.get(next) == Some(&c) {
+            if next == 0 {
+                first = i;
+            }
+            last = i;
+            next += 1;
+        }
+    }
+    let span = (last - first + 1) as f64;
+    (next == want.len()).then(|| 50.0 * want.len() as f64 / span).filter(|s| *s >= 10.0)
+}
+
+/// The best of several fields: (score, field name).
+fn best<'a>(fields: impl IntoIterator<Item = (&'static str, &'a str, f64)>, q: &str) -> Option<(f64, &'static str)> {
+    fields.into_iter().filter_map(|(f, text, weight)| fuzzy(text, q).map(|s| (s * weight, f))).max_by(|a, b| a.0.total_cmp(&b.0))
+}
+
+fn ranked(mut hits: Vec<(f64, Value)>, limit: usize) -> Vec<Value> {
+    hits.sort_by(|a, b| b.0.total_cmp(&a.0));
+    hits.into_iter().take(limit).map(|h| h.1).collect()
 }
 
 fn hits(p: &Value, kind: &str) -> bool {
@@ -225,7 +261,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "inspect.searchDesignSystem",
             "Search design system",
-            "{query (case-insensitive substring of the name or description; empty lists everything), types? (\"component\"|\"variable\"|\"style\" or a list; default all), limit? (1-200 per type; default 25)} → {components: [{id, name, type, description}], variables: [{id, name, collection, type, value}], styles: [{id, name, type, description}], total}  `total` counts every match",
+            "{query (fuzzy, case-insensitive: substring, word start or letters in order, against names and descriptions, and a component set's variant names like \"State=Default\"; empty lists everything), types? (\"component\"|\"variable\"|\"style\" or a list; default all), limit? (1-200 per type; default 25)} → {components: [{id, name, type, description, score, matchedOn (name|description|variant), matchedVariant}], variables: [{id, name, collection, type, value, score, matchedOn}], styles: [{id, name, type, description, score, matchedOn}], total, semantic}  best score first (0-100); `total` counts every match; `semantic` is always false: no embedding search",
             false,
             |s, p| {
                 let cmd = "inspect.searchDesignSystem";
@@ -235,20 +271,30 @@ pub fn specs() -> Vec<CommandSpec> {
                     Some(v) => f64_of(v).filter(|n| (1.0..=MAX_HITS as f64).contains(n)).map(|n| n as usize).ok_or_else(|| bad(cmd, "`limit` must be 1 to 200"))?,
                 };
                 let doc = s.doc()?;
-                let mut total = 0usize;
                 let mut components = Vec::new();
                 if hits(p, "component") {
                     for n in doc.nodes() {
                         let (NodeKind::Component { description, .. } | NodeKind::ComponentSet { description }) = &n.kind else { continue };
-                        // Variants come with their set.
+                        // Variants are found through their set.
                         if n.parent.and_then(|pp| doc.node(pp)).is_some_and(|pp| matches!(pp.kind, NodeKind::ComponentSet { .. })) {
                             continue;
                         }
-                        if matches(&n.name, &q) || matches(description, &q) {
-                            total += 1;
-                            if components.len() < limit {
-                                components.push(json!({"id": n.id, "name": n.name, "type": n.kind.type_name(), "description": description}));
+                        let variants: Vec<&Node> = if matches!(n.kind, NodeKind::ComponentSet { .. }) { n.children.iter().filter_map(|c| doc.node(*c)).collect() } else { Vec::new() };
+                        let mut found = best([("name", n.name.as_str(), 1.0), ("description", description.as_str(), 0.5)], &q);
+                        let mut variant = None;
+                        for v in &variants {
+                            if let Some((sc, _)) = best([("variant", v.name.as_str(), 0.9)], &q)
+                                && found.is_none_or(|(f, _)| sc > f)
+                            {
+                                found = Some((sc, "variant"));
+                                variant = Some(json!({"id": v.id, "name": v.name}));
                             }
+                        }
+                        if let Some((score, on)) = found {
+                            components.push((
+                                score,
+                                json!({"id": n.id, "name": n.name, "type": n.kind.type_name(), "description": description, "score": round(score), "matchedOn": on, "matchedVariant": variant}),
+                            ));
                         }
                     }
                 }
@@ -256,28 +302,32 @@ pub fn specs() -> Vec<CommandSpec> {
                 if hits(p, "variable") {
                     let none = BTreeMap::new();
                     for v in &doc.variables.variables {
-                        if matches(&v.name, &q) || matches(&v.description, &q) {
-                            total += 1;
-                            if variables.len() < limit {
-                                let collection = doc.variables.collection(&v.collection).map(|c| c.name.clone());
-                                let value = doc.variables.resolve(&v.id, &none).map(|x| show(&x));
-                                variables.push(json!({"id": v.id, "name": v.name, "collection": collection, "type": v.kind.id(), "value": value}));
-                            }
+                        if let Some((score, on)) = best([("name", v.name.as_str(), 1.0), ("description", v.description.as_str(), 0.5)], &q) {
+                            let collection = doc.variables.collection(&v.collection).map(|c| c.name.clone());
+                            let value = doc.variables.resolve(&v.id, &none).map(|x| show(&x));
+                            variables.push((
+                                score,
+                                json!({"id": v.id, "name": v.name, "collection": collection, "type": v.kind.id(), "value": value, "score": round(score), "matchedOn": on}),
+                            ));
                         }
                     }
                 }
                 let mut styles = Vec::new();
                 if hits(p, "style") {
                     for st in &doc.styles {
-                        if matches(&st.name, &q) || matches(&st.description, &q) {
-                            total += 1;
-                            if styles.len() < limit {
-                                styles.push(json!({"id": st.id, "name": st.name, "type": st.kind.type_name(), "description": st.description}));
-                            }
+                        if let Some((score, on)) = best([("name", st.name.as_str(), 1.0), ("description", st.description.as_str(), 0.5)], &q) {
+                            styles.push((
+                                score,
+                                json!({"id": st.id, "name": st.name, "type": st.kind.type_name(), "description": st.description, "score": round(score), "matchedOn": on}),
+                            ));
                         }
                     }
                 }
-                Ok(json!({"components": components, "variables": variables, "styles": styles, "total": total}))
+                let total = components.len() + variables.len() + styles.len();
+                Ok(json!({
+                    "components": ranked(components, limit), "variables": ranked(variables, limit), "styles": ranked(styles, limit),
+                    "total": total, "semantic": false,
+                }))
             }
         ),
     ]

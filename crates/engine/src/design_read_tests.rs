@@ -113,7 +113,7 @@ fn search_finds_components_variables_and_styles_by_text() {
     s.execute("component.create", &json!({"ids": [f]})).unwrap();
     s.execute("style.create", &json!({"type": "paint", "name": "Brand/Blue", "from": f})).ok();
     let all = s.execute("inspect.searchDesignSystem", &json!({"query": "BRAND"})).unwrap();
-    assert_eq!(all["variables"], json!([{"id": all["variables"][0]["id"], "name": "color/brand", "collection": "Tokens", "type": "color", "value": "#3366FF"}]));
+    assert_eq!(all["variables"], json!([{"id": all["variables"][0]["id"], "name": "color/brand", "collection": "Tokens", "type": "color", "value": "#3366FF", "score": 80.0, "matchedOn": "name"}]));
     assert_eq!(all["components"].as_array().unwrap().len(), 0);
     let comps = s.execute("inspect.searchDesignSystem", &json!({"query": "card", "types": ["component"]})).unwrap();
     assert_eq!((comps["components"].as_array().unwrap().len(), comps["variables"].as_array().unwrap().len(), comps["total"].as_u64()), (1, 0, Some(1)));
