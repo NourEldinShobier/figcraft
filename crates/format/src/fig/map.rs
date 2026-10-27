@@ -248,6 +248,8 @@ struct Mapper<'a> {
     networks: Vec<Option<VectorNetwork>>,
     /// Index in `networks` by what a network is made from: its blob, its scale and its style table.
     network_ids: HashMap<(usize, u64, u64, usize), usize>,
+    /// SVG path data by geometry blob (`None`: damaged), shared by every layer that shows the blob.
+    svg_paths: HashMap<usize, Option<String>>,
 }
 
 impl<'a> Mapper<'a> {
@@ -322,6 +324,7 @@ impl<'a> Mapper<'a> {
             reserved: 0,
             networks: Vec::new(),
             network_ids: HashMap::new(),
+            svg_paths: HashMap::new(),
         }
     }
 

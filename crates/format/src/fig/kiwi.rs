@@ -350,7 +350,9 @@ impl<'s> Decoder<'s, '_> {
                         out.shrink_to_fit();
                         return Ok(Kv::Object(out));
                     }
-                    let f = d.fields.iter().find(|f| f.value == id).ok_or_else(|| KiwiError(format!("message: {} has no field {id}", d.name)))?;
+                    // Field ids usually run 1, 2, 3, …: try the slot before the scan of ~200 fields.
+                    let guess = (id as usize).checked_sub(1).and_then(|i| d.fields.get(i)).filter(|f| f.value == id);
+                    let f = guess.or_else(|| d.fields.iter().find(|f| f.value == id)).ok_or_else(|| KiwiError(format!("message: {} has no field {id}", d.name)))?;
                     out.push((f.name.as_str(), self.field(f, depth)?));
                 }
             }

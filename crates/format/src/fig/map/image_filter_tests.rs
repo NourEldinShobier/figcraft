@@ -1,5 +1,21 @@
 //! Malformed image paint filters are skipped with a warning.
 
+/// Geometry blobs become SVG path data; a damaged blob gives `None`.
+#[test]
+fn geometry_blob_path_data() {
+    let mut blob = vec![1u8];
+    for x in [1.0f32, 2.0] {
+        blob.extend(x.to_le_bytes());
+    }
+    blob.push(2);
+    for x in [3.5f32, -4.0] {
+        blob.extend(x.to_le_bytes());
+    }
+    blob.push(0);
+    assert_eq!(super::layer::svg_path(&blob).as_deref(), Some("M 1 2 L 3.5 -4 Z"));
+    assert_eq!(super::layer::svg_path(&[9]), None);
+}
+
 use super::*;
 
 #[test]

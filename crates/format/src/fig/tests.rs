@@ -624,6 +624,24 @@ fn kiwi_scalars() {
     }
 }
 
+/// Field ids that don't run 1, 2, 3 (the decoder tries the slot `id - 1` first) still find their field.
+#[test]
+fn kiwi_message_fields_with_gaps_and_order() {
+    let field = |name: &str, value: u32| Field { name: name.into(), ty: Some(Type::Uint), array: false, value };
+    let sc = Schema {
+        defs: vec![Def { name: "M".into(), kind: Kind::Message, fields: vec![field("a", 5), field("b", 1), field("c", 2), field("d", 40)] }],
+    };
+    let mut w = encode::Writer::default();
+    for (id, v) in [(2u32, 7u32), (5, 8), (40, 9), (1, 10)] {
+        w.var_uint(id);
+        w.var_uint(v);
+    }
+    w.var_uint(0);
+    let msg = sc.decode_message(0, &w.0).unwrap();
+    let get = |k: &str| msg.get(k).and_then(Kv::f64);
+    assert_eq!((get("a"), get("b"), get("c"), get("d")), (Some(8.0), Some(10.0), Some(7.0), Some(9.0)));
+}
+
 #[test]
 fn imports_the_fixture() {
     let bytes = fixture();
