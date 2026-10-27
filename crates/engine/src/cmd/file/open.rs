@@ -54,12 +54,44 @@ pub(super) fn open_recent(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"files": files}))
 }
 
+/// A file decoded ahead of `file.open` (on a worker thread, so the window stays responsive while a
+/// large file imports). Put in [`Session::preloaded`]; the next `file.open` for the same path (or
+/// `data` and `name`) uses it instead of reading the file, once. The result, errors included, is
+/// what `file.open` would have produced.
+pub struct Preloaded {
+    key: String,
+    result: Result<(figcraft_format::Loaded, bool, Option<crate::library::Stamp>)>,
+}
+
+fn data_key(name: &str) -> String {
+    format!("data:{name}")
+}
+
+/// Decode the file `file.open` would open for `p` (`path`, or `data` and `name`) with no session,
+/// so it can run on any thread. `None` when `p` names no file to decode (the command reports why).
+pub fn preload(p: &Value) -> Option<Preloaded> {
+    let variables = variables_param("file.open", p).ok()?;
+    if let Some(path) = string(p, "path") {
+        // Stamped before reading: a change made during the read makes the next save refuse.
+        let on_disk = crate::library::stat(&path).ok();
+        let result = load_path(&path, variables.as_ref()).map(|(l, rest)| (l, rest, on_disk));
+        return Some(Preloaded { key: format!("path:{path}"), result });
+    }
+    let (data, name) = (string(p, "data")?, string(p, "name")?);
+    let result = decode_data(&data, &name, variables.as_ref()).map(|(l, rest)| (l, rest, None));
+    Some(Preloaded { key: data_key(&name), result })
+}
+
 pub(super) fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let variables = variables_param("file.open", p)?;
+    // Consumed by this call, used or not.
+    let pre = s.preloaded.take();
     if string(p, "path").is_none()
         && let Some(d) = string(p, "data")
     {
-        return open_data(s, &d, p, variables.as_ref());
+        let name = req_string("file.open", p, "name")?;
+        let pre = pre.filter(|x| x.key == data_key(&name)).map(|x| x.result);
+        return open_data(s, &d, &name, variables.as_ref(), pre);
     }
     let path = req_string("file.open", p, "path")?;
     // Already open: switch to it.
@@ -68,9 +100,19 @@ pub(super) fn open(s: &mut Session, p: &Value) -> Result<Value> {
         remember(s, &path);
         return Ok(json!({"index": i}));
     }
-    // Stamped before reading: a change made during the read makes the next save refuse.
-    let on_disk = crate::library::stat(&path).ok();
-    let (loaded, rest) = load_path(&path, variables.as_ref())?;
+    let (loaded, rest, on_disk) = match pre.filter(|x| x.key == format!("path:{path}")) {
+        Some(pre) => {
+            // The read happened elsewhere: the roots an automation caller is confined to still apply.
+            crate::file_access::allow(&path, crate::file_access::Access::Read)?;
+            pre.result?
+        }
+        None => {
+            // Stamped before reading: a change made during the read makes the next save refuse.
+            let on_disk = crate::library::stat(&path).ok();
+            let (loaded, rest) = load_path(&path, variables.as_ref())?;
+            (loaded, rest, on_disk)
+        }
+    };
     remember(s, &path);
     let native = !rest && matches!(ext(&path).as_str(), "figcraft" | "json");
     let warnings = rest || ext(&path) == "svg";
@@ -97,18 +139,30 @@ pub(super) fn open(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// [`open`] for a file given as base64 `data` (a file dropped without a path on disk): `name` tells
 /// the format. It opens as a new document with no path, so the first save asks where to put it.
-fn open_data(s: &mut Session, data: &str, p: &Value, variables: Option<&Value>) -> Result<Value> {
-    let name = req_string("file.open", p, "name")?;
-    let data = data.split_once(',').map_or(data, |(_, b)| b);
-    let bytes = base64::engine::general_purpose::STANDARD.decode(data.trim()).map_err(|e| bad("file.open", e.to_string()))?;
-    let (loaded, rest) = load_with(&bytes, &name, variables, &figcraft_format::rest::no_images)?;
-    let warnings = rest || ext(&name) == "svg";
+fn open_data(
+    s: &mut Session,
+    data: &str,
+    name: &str,
+    variables: Option<&Value>,
+    pre: Option<Result<(figcraft_format::Loaded, bool, Option<crate::library::Stamp>)>>,
+) -> Result<Value> {
+    let (loaded, rest) = match pre {
+        Some(pre) => pre.map(|(l, rest, _)| (l, rest))?,
+        None => decode_data(data, name, variables)?,
+    };
+    let warnings = rest || ext(name) == "svg";
     let summary = import_summary(&loaded.doc);
     s.docs.push(DocState::new(loaded.doc, None).with_versions(loaded.versions).with_branches(loaded.branches));
     s.active = s.docs.len() - 1;
     let mut out = json!({"index": s.active, "summary": summary});
     out[if warnings { "warnings" } else { "repairs" }] = json!(loaded.issues);
     Ok(out)
+}
+
+fn decode_data(data: &str, name: &str, variables: Option<&Value>) -> Result<(figcraft_format::Loaded, bool)> {
+    let data = data.split_once(',').map_or(data, |(_, b)| b);
+    let bytes = base64::engine::general_purpose::STANDARD.decode(data.trim()).map_err(|e| bad("file.open", e.to_string()))?;
+    load_with(&bytes, name, variables, &figcraft_format::rest::no_images)
 }
 
 pub(super) fn import(s: &mut Session, p: &Value) -> Result<Value> {

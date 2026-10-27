@@ -30,7 +30,7 @@ use export::{export, export_frames_pdf, export_layers, pdf_bytes};
 pub(crate) use load::{installed_family, sketch_line};
 pub use load::{load, load_bytes, load_path};
 pub(crate) use load::{load_fig, read_capped, recovered, variables_param, write};
-pub use open::MAX_RECENT;
+pub use open::{MAX_RECENT, Preloaded, preload};
 #[cfg(test)]
 use open::append_pages;
 use open::{import, open, open_recent};

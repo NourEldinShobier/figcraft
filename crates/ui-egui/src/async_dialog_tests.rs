@@ -12,6 +12,18 @@ impl Services for OpenFile {
     }
 }
 
+/// Frames until the files the dialog queued are open (their decode runs on a worker thread).
+fn finish_opening(app: &mut FigApp) {
+    let ctx = egui::Context::default();
+    for _ in 0..500 {
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| crate::pending_open::pending_opens(app, &ui.ctx().clone()));
+        if app.ui.pending_opens.is_empty() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 #[test]
 fn open_dialog_finishes_after_the_async_picker_returns() {
     let dir = std::env::temp_dir().join(format!("figcraft-async-open-{}", std::process::id()));
@@ -27,6 +39,7 @@ fn open_dialog_finishes_after_the_async_picker_returns() {
     assert!(app.session.docs.is_empty(), "opening waits for the picker result");
 
     app.poll_dialog(&egui::Context::default());
+    finish_opening(&mut app);
     assert_eq!(app.session.docs.len(), 1);
     assert_eq!(app.session.docs[0].path.as_deref(), Some(path.to_string_lossy().as_ref()));
     assert!(!app.ui.home);
@@ -129,6 +142,7 @@ fn open_dialog_opens_picked_contents_as_a_new_unsaved_document() {
     app.open_dialog();
     assert!(app.session.docs.is_empty(), "opening waits for the picker result");
     app.poll_dialog(&egui::Context::default());
+    finish_opening(&mut app);
     assert_eq!(app.session.docs.len(), 1);
     assert_eq!(app.session.docs[0].path, None, "no path to save over");
     assert_eq!(app.session.docs[0].doc.name, "Picked");

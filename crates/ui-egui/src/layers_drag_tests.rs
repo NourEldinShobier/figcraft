@@ -28,6 +28,17 @@ impl Ui {
         self.frame_output(events);
     }
 
+    /// Frames until the files waiting behind the card are open (they decode on a worker thread).
+    pub(crate) fn finish_opens(&mut self) {
+        for _ in 0..500 {
+            if self.app.ui.pending_opens.is_empty() {
+                return;
+            }
+            self.frame(vec![]);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
     /// [`Self::frame`], returning what egui output (the AccessKit tree when it's enabled).
     pub(crate) fn frame_output(&mut self, events: Vec<Event>) -> egui::FullOutput {
         self.frame_with(events, Default::default())

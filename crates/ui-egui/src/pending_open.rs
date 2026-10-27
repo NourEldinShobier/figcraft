@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll, Waker};
 
 use figcraft_doc::NodeId;
+use figcraft_engine::cmd::file::Preloaded;
 use serde_json::{Value, json};
 
 use crate::i18n::{tr, trf, trn};
@@ -24,6 +25,90 @@ pub struct PendingOpen {
     pub target: Option<ImportTarget>,
     /// The file's contents still on their way; they go into `params` as `data` once read.
     pub read: Option<ReadFuture>,
+    /// The file being decoded off the UI thread (see [`Load`]).
+    pub load: Load,
+}
+
+/// Decoding a file on a worker thread, so the window keeps painting and answering input while a
+/// large file imports; the UI thread then only builds the document from the result.
+#[derive(Default)]
+pub enum Load {
+    /// Not started (or nothing to decode off-thread: other commands, browser builds, a confined caller).
+    #[default]
+    Idle,
+    Running {
+        rx: std::sync::mpsc::Receiver<Option<Preloaded>>,
+        since: std::time::Instant,
+    },
+    /// Finished: `file.open` gets the result (none: it reads the file itself).
+    Done(Option<Preloaded>),
+}
+
+/// Whether `command` with `params` is an open that [`Load`] can decode ahead of time.
+fn preloadable(command: &str, params: &Value) -> bool {
+    matches!(command, "file.open" | "file.openRecent") && (params.get("path").is_some() || (params.get("data").is_some() && params.get("name").is_some()))
+}
+
+/// Starts decoding the first pending open that is ready for it. Only one file decodes at a time.
+/// Where there are no threads (the browser) or file access is confined to automation roots (the
+/// worker would not honour them), nothing starts and the open reads the file itself, as before.
+#[cfg(not(target_arch = "wasm32"))]
+fn start_load(app: &mut FigApp, ctx: &egui::Context) {
+    if figcraft_engine::file_access::current().is_some() || app.ui.pending_opens.iter().any(|p| matches!(p.load, Load::Running { .. })) {
+        return;
+    }
+    let Some(pending) = app.ui.pending_opens.iter_mut().find(|p| {
+        matches!(p.load, Load::Idle) && p.read.is_none() && p.target.is_none() && preloadable(p.command, &p.params)
+    }) else {
+        return;
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (params, ctx) = (pending.params.clone(), ctx.clone());
+    let spawned = std::thread::Builder::new().name("open-file".into()).spawn(move || {
+        // A panic in a decoder only loses the preload: the open then reads the file on the UI thread,
+        // where the engine's guard turns it into an error.
+        let result = std::panic::catch_unwind(|| figcraft_engine::cmd::file::preload(&params)).unwrap_or(None);
+        let _ = tx.send(result);
+        ctx.request_repaint_of(egui::ViewportId::ROOT);
+    });
+    pending.load = if spawned.is_ok() { Load::Running { rx, since: std::time::Instant::now() } } else { Load::Done(None) };
+}
+
+/// Whether files can decode off-thread now.
+fn threaded() -> bool {
+    cfg!(not(target_arch = "wasm32")) && figcraft_engine::file_access::current().is_none()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn start_load(_: &mut FigApp, _: &egui::Context) {}
+
+/// Collects finished decodes. Whether any is still running.
+fn poll_loads(app: &mut FigApp) -> bool {
+    let mut running = false;
+    for pending in &mut app.ui.pending_opens {
+        if let Load::Running { rx, .. } = &pending.load {
+            match rx.try_recv() {
+                Ok(result) => pending.load = Load::Done(result),
+                Err(std::sync::mpsc::TryRecvError::Empty) => running = true,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => pending.load = Load::Done(None),
+            }
+        }
+    }
+    running
+}
+
+/// Queues `command` (`file.open`, `file.openRecent`) with `params` for the file picked by the user
+/// (Open dialog, recent files): it decodes on a worker thread behind the progress card, then runs
+/// as the same command. The label is the file's name.
+pub(crate) fn queue_open(app: &mut FigApp, command: &'static str, params: Value) {
+    let label = params
+        .get("path")
+        .and_then(Value::as_str)
+        .and_then(|p| std::path::Path::new(p).file_name())
+        .map(|n| n.to_string_lossy().to_string())
+        .or_else(|| params.get("name").and_then(Value::as_str).map(str::to_string))
+        .unwrap_or_default();
+    app.ui.pending_opens.push(PendingOpen { label, params, command, target: None, read: None, load: Load::Idle });
 }
 
 pub struct ImportTarget {
@@ -39,7 +124,7 @@ pub(crate) fn open_dropped(app: &mut FigApp, f: &egui::DroppedFileHandle) {
     let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     let (params, read) =
         if path.exists() { (json!({"path": path.to_string_lossy()}), None) } else { (json!({"name": name}), Some(crate::dropped_bytes(f, &name))) };
-    app.ui.pending_opens.push(PendingOpen { label: name, params, command: "file.open", target: None, read });
+    app.ui.pending_opens.push(PendingOpen { label: name, params, command: "file.open", target: None, read, load: Load::Idle });
 }
 
 fn run_pending(app: &mut FigApp, pending: PendingOpen) -> Option<Value> {
@@ -133,19 +218,34 @@ pub fn pending_opens(app: &mut FigApp, ctx: &egui::Context) {
         return;
     }
     ctx.request_repaint();
+    // Decoding starts once the card has been on screen (and a file's contents are read).
+    let threaded = threaded();
+    if threaded && app.ui.pending_open_frames >= 1 {
+        start_load(app, ctx);
+    }
+    let running = poll_loads(app);
+    let queued = threaded && app.ui.pending_opens.iter().any(|p| matches!(p.load, Load::Idle) && preloadable(p.command, &p.params));
+    let reading = reading || running || queued;
     if app.ui.pending_open_frames >= FRAMES_BEFORE_OPENING && !reading {
         app.ui.pending_open_frames = 0;
         // Files dropped together land side by side: each starts where the previous one ends.
         let mut next_x: Option<f64> = None;
         for mut pending in std::mem::take(&mut app.ui.pending_opens) {
             let command = pending.command;
+            app.session.preloaded = match std::mem::take(&mut pending.load) {
+                Load::Done(result) => result,
+                _ => None,
+            };
             let canvas = command == "file.import" && pending.params.get("x").is_some();
             if canvas && let Some(x) = next_x {
                 pending.params["x"] = json!(x);
             }
             let page = pending.target.as_ref().map(|t| (t.uid, t.page));
             let result = run_pending(app, pending);
-            if result.is_some() && command == "file.open" {
+            app.session.preloaded = None;
+            // `file.openRecent` also answers a bare list or a removal: only an opened file counts.
+            let opened = result.as_ref().is_some_and(|r| command == "file.open" || r.get("index").is_some());
+            if opened && command != "file.import" {
                 app.ui.home = false;
             }
             if canvas {
@@ -190,7 +290,15 @@ pub fn pending_opens(app: &mut FigApp, ctx: &egui::Context) {
             ui.add_space(16.0);
             ui.horizontal(|ui| {
                 ui.add(egui::Spinner::new().size(12.0));
-                ui.label(egui::RichText::new(tr("Opening the file…")).color(t.text_secondary));
+                let secs = pending.iter().find_map(|p| match &p.load {
+                    Load::Running { since, .. } => Some(since.elapsed().as_secs()),
+                    _ => None,
+                });
+                let text = match secs {
+                    Some(s) if s >= 1 => format!("{} {s} s", tr("Opening the file…")),
+                    _ => tr("Opening the file…").to_string(),
+                };
+                ui.label(egui::RichText::new(text).color(t.text_secondary));
             });
         },
     );

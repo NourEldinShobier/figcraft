@@ -10,6 +10,8 @@
 //! - `ui.pointer {kind: down|move|up|click|double|hover|drag, x, y (page) | sx, sy (screen), to?, shift?, alt?, cmd?}`
 //! - `ui.key {key, shift?, cmd?, alt?}` — a shortcut as if typed on the canvas
 //! - `ui.type {text}` — type into the text being edited
+//! - `ui.open {path}` — open a file as the Open dialog does: queued behind the progress card, decoded
+//!   on a worker thread (the window stays live; `ui.state` shows `pendingOpens` until it is done)
 //! - `ui.input {events: [{move|down|up: [x, y], button?} | {key, shift?, alt?, cmd?} | {text} | {leave}
 //!   | {hold: {alt?, shift?, cmd?}} | {gamepad: "A" | "Gamepad A" | 0}]}` — raw pointer and key events
 //!   for the next frame, as if from the window (panels, popovers); `hold` keeps modifier keys down
@@ -1104,6 +1106,12 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             let text = p.get("text").and_then(Value::as_str).ok_or("`text` required")?;
             figcraft_engine::textedit::insert(&mut app.session, text).map_err(|e| e.to_string())?;
             Ok(json!({"ok": true}))
+        }
+        "ui.open" => {
+            let path = p.get("path").and_then(Value::as_str).ok_or("`path` required")?;
+            crate::pending_open::queue_open(app, "file.open", json!({"path": path}));
+            ctx.request_repaint();
+            Ok(json!({"queued": true}))
         }
         "ui.menu.invoke" => {
             let id = p.get("id").and_then(Value::as_str).ok_or("`id` required")?;

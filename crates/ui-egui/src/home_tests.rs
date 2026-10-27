@@ -561,9 +561,7 @@ fn dropping_a_file_without_one_on_disk_opens_it_as_a_new_unsaved_document() {
     let file: egui::DroppedFileHandle = std::sync::Arc::new(DroppedBytes(path.clone(), svg));
     u.frame_raw(egui::RawInput { dropped_files: vec![file], ..Default::default() });
     assert_eq!(u.app.ui.pending_opens.len(), 1);
-    for _ in 0..3 {
-        u.frame(vec![]);
-    }
+    u.finish_opens();
     assert!(u.app.ui.pending_opens.is_empty());
     assert_eq!(u.app.ui.last_error, None);
     assert_eq!(u.app.session.docs.len(), 1, "the dropped contents open");
@@ -598,6 +596,7 @@ fn a_dropped_file_whose_contents_arrive_later_opens_once_they_do() {
         command: "file.open",
         target: None,
         read: Some(later(&arrived)),
+        load: Default::default(),
     });
     // egui lays a new card out invisibly on its first frame.
     u.frame(vec![]);
@@ -607,9 +606,7 @@ fn a_dropped_file_whose_contents_arrive_later_opens_once_they_do() {
     }
     assert!(u.app.session.docs.is_empty(), "nothing opens before the contents arrive");
     *arrived.borrow_mut() = Some(Ok(svg));
-    for _ in 0..3 {
-        u.frame(vec![]);
-    }
+    u.finish_opens();
     assert!(u.app.ui.pending_opens.is_empty());
     assert_eq!(u.app.ui.last_error, None);
     assert_eq!(u.app.session.docs.len(), 1, "the contents open");
@@ -629,6 +626,7 @@ fn a_dropped_file_that_cannot_be_read_says_so_and_opens_nothing() {
         command: "file.open",
         target: None,
         read: Some(later(&arrived)),
+        load: Default::default(),
     });
     for _ in 0..3 {
         u.frame(vec![]);
@@ -657,7 +655,7 @@ fn dropping_a_native_file_on_the_home_screen_opens_it() {
     assert_eq!(u.app.ui.pending_opens.len(), 1);
     assert!(u.app.session.docs.is_empty(), "the card is drawn first");
     assert_eq!(u.app.inspect()["pendingOpens"], 1);
-    u.frame(vec![]);
+    u.finish_opens();
     assert!(u.app.ui.pending_opens.is_empty());
     assert_eq!(u.app.session.docs.len(), 1);
     assert_eq!(u.app.session.docs[0].path.as_deref(), Some(path.to_string_lossy().as_ref()));
@@ -716,7 +714,7 @@ fn dropping_a_document_on_canvas_opens_it_as_a_new_file() {
     assert!(has_text(&s, "Drop to open"), "dragging a document over the canvas says it opens");
     let s = flat(&u.frame_output(vec![]).shapes);
     assert!(has_text(&s, "Opening as a new file"), "the card says so too");
-    u.frame(vec![]);
+    u.finish_opens();
     assert!(u.app.ui.pending_opens.is_empty());
     assert_eq!(u.app.session.docs.len(), 2, "a tab of its own");
     assert_eq!(u.app.session.ds().unwrap().path.as_deref(), Some(path.to_string_lossy().as_ref()), "in front");
@@ -736,9 +734,7 @@ fn a_document_dropped_on_canvas_without_a_file_on_disk_opens_as_a_new_file() {
     let pos = u.app.canvas.rect.center();
     let file: egui::DroppedFileHandle = std::sync::Arc::new(DroppedBytes("Shared.figcraft".into(), bytes));
     u.frame_raw(egui::RawInput { events: vec![Event::PointerMoved(pos)], dropped_files: vec![file], ..Default::default() });
-    for _ in 0..3 {
-        u.frame(vec![]);
-    }
+    u.finish_opens();
     assert!(u.app.ui.pending_opens.is_empty());
     assert_eq!(u.app.ui.last_error, None);
     assert_eq!(u.app.session.docs.len(), 2, "a tab of its own");

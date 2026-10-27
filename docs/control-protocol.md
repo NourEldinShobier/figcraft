@@ -253,6 +253,12 @@ Returns `{"command": id}` for shortcuts.
 Type into the text being edited (start editing with a double-click, `text.edit.begin {id}`, or the
 text tool).
 
+### `ui.open {path}`
+
+Open a file the way the Open dialog does: queued behind the progress card and decoded on a worker
+thread, so the window keeps painting while a large file imports (`engine.execute` `file.open` stays
+synchronous). Returns `{"queued": true}`; `ui.state` reports `pendingOpens` until the file is open.
+
 ### `ui.input {events}`
 
 Raw window input for the next frame, as if from the mouse and keyboard: it reaches the panels,
