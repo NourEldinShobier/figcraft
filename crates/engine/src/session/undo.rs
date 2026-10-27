@@ -6,6 +6,7 @@ struct GroupDocCheckpoint {
     selection: Vec<NodeId>,
     page: NodeId,
     undo_len: usize,
+    undo: Vec<HistoryEntry>,
     redo: Vec<HistoryEntry>,
     limit: usize,
 }
@@ -296,6 +297,8 @@ impl Session {
                 selection: ds.selection.clone(),
                 page: ds.page,
                 undo_len: ds.history.undo.len(),
+                // An undo inside pops undo steps; a failed group has to bring them back.
+                undo: ds.history.undo.clone(),
                 // An edit inside clears redo; a failed group has to bring it back.
                 redo: ds.history.redo.clone(),
                 limit: ds.history.limit,
@@ -329,7 +332,7 @@ impl Session {
                 ds.doc = saved.doc;
                 ds.selection = saved.selection;
                 ds.page = saved.page;
-                ds.history.undo.truncate(saved.undo_len);
+                ds.history.undo = saved.undo;
                 ds.history.limit = saved.limit;
             }
         }

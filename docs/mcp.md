@@ -287,7 +287,13 @@ Or in a project's `.mcp.json`:
   `null`), so a later `style.update` doesn't overwrite the edit; `style.apply` replaces variables
   bound to what the style sets; a text style goes on text layers only. In one call, a style link
   (`fillStyle`, `textStyle`…) wins over values it sets; set a deviation in a later call, which
-  unlinks it. Names are trimmed per `/` folder part. `style.move {styles, before?, folder?}`
+  unlinks it. Names are trimmed per `/` folder part. A `fill` or `stroke` can also bind a variable:
+  `node.create {type: "rectangle", props: {fill: {"$var": "Theme/surface"}}}` creates and binds in
+  one undo step, and `node.set` takes the same wrapper. `$var` takes an exact variable id first,
+  else an unambiguous exact name or `Collection/name` (names can contain `/`); unknown or ambiguous
+  names are errors. The wrapper is applied after literal values and style links, and clears that
+  paint's style link even when the colour is unchanged. Only `fill` and `stroke` take variables in
+  props; use `variable.bind` for other fields. `style.move {styles, before?, folder?}`
   reorders (and with `folder`, renames into it), `style.duplicate {style}` adds "<name> copy" right
   below, `style.renameFolder {folder, name}`.
 - **Variables**: `variable.bind` refuses a variable of a type the field doesn't take (a colour on
@@ -333,8 +339,8 @@ The SVG icon preset (`iconPreset: true` on `export` and `export_many`, with `cur
 | `batch {commands: [{command, params}], label?}` | Several commands as one undo step (`command.batch`); a failing step aborts with an error like `step 2 (node.set): no such node 999 (the whole batch was rolled back: nothing changed)`; all-or-nothing for open documents and their document state. Failed inner commands are removed from the journal; preferences, clipboard, tool state and UI requests are not rolled back. A step can use what an earlier step returned: name it with `"as": "card"` and `{"$ref": "card"}` anywhere in a later step's params becomes the `id` in its result (`{"$step": n}` does the same by zero-based position); `"field"` takes another key or a slash path such as `ids/0` (see Step references below). |
 | `create_node {type, x, y, width, height, parent, index, name, text, path, props}` | Create a frame, rectangle, ellipse, polygon, star, line, arrow, text, vector, section, component or slice; returns `{id, node}`. |
 | `set_properties {ids, props}` | `node.set` on layers (geometry, fills, strokes, effects, corner radius, auto layout, sizing, constraints, masks (`isMask`, `maskType: alpha\|vector\|luminance`), handoff status (`devStatus: none\|readyForDev\|completed`; marking again clears "Changed"), a section's `sectionContentsHidden`, text…); returns the updated layers. |
-| `inspect_document {depth, allPages}` | The document as JSON (layer tree, styles, selection, history). |
-| `get_node {id, depth}` | One layer as JSON (a stroked layer reports `strokeWeight`, `strokeAlign`, `strokeJoin` and `strokeCap`, or `startCap` and `endCap` when they differ; text reports `textAlignVertical`, `textCase`, `paragraphSpacing`, `paragraphIndent`; `constrainProportions` and `overflow` when set; `node.set` also takes `strokeWidth` as an alias of `strokeWeight`); `pluginData` (`{key: value}`, values as strings) when the layer or page has layer data written with `set_properties {props: {pluginData}}`. |
+| `inspect_document {depth, allPages, fields?, outline?}` | The document as JSON (layer tree, styles, selection, history); `fields` selects layer properties, `outline: true` gives a compact tree (below). |
+| `get_node {id, depth, fields?, outline?}` | One layer as JSON (a stroked layer reports `strokeWeight`, `strokeAlign`, `strokeJoin` and `strokeCap`, or `startCap` and `endCap` when they differ; text reports `textAlignVertical`, `textCase`, `paragraphSpacing`, `paragraphIndent`; `constrainProportions` and `overflow` when set; `node.set` also takes `strokeWidth` as an alias of `strokeWeight`); `pluginData` (`{key: value}`, values as strings) when the layer or page has layer data written with `set_properties {props: {pluginData}}`. Takes the same `fields` and `outline` options as `inspect_document`. |
 | `select {ids}` | Replace the selection (`[]` deselects). |
 | `export {ids, format, scale \| size, path?, bleed?, cropMarks?, bleedMarks?, cmyk?, contentsOnly?, includeBoundingBox?, svgOutlineText?, svgIdAttribute?, svgSimplifyStroke?, vdCompat?}` | png, jpg, svg, webp, pdf, xml (an Android Vector Drawable: `svgIdAttribute` writes `android:name`, `vdCompat` is `bestEffort` (default: approximated with a warning), `exact` (left out with a warning) or `ignore` (no warnings: overlapping layer opacity dropped, even-odd fills kept as `fillType="evenOdd"`, diamond gradients left out), and the result lists `warnings` for what was changed or left out), or `fig`: the whole file as `.fig`, experimental (see Exporting `.fig` files below); `size` is `2x`, `512w` or `512h`. The image covers what the layers paint (shadows towards their offset, strokes, unclipped children, a mask group's mask; hidden layers take no room; a slice is its area with everything under it, or only the frame or group it sits in while `contentsOnly` is on); `contentsOnly: false` also draws every other layer showing in that area, `includeBoundingBox` exports the layers' own boxes; SVG: `svgOutlineText: false` keeps `<text>`, `svgIdAttribute` writes unique ids from layer names, `svgSimplifyStroke: false` writes every stroke as an outline. The same options go in export settings (`export.add` / `export.update`). PDF: frames one page each (sized in points), anything else together on one page; print options: `bleed` (points or a length like `"3mm"`, `"0.125in"`), crop and bleed marks, CMYK colour (see Exports below), also taken by `file.export`, `file.exportLayers`, `file.exportFramesPdf` and stored per export setting by `export.add` / `export.update`; `run_command` `file.exportFramesPdf {page?, path?}` writes every top-level frame of a page. Without `path`, images come back as MCP image content, SVG as text, XML as text followed by `{format, bytes, warnings}`. Layers' own export settings: `run_command` with `export.add` / `export.update {index, size?, suffix?, format?}` / `export.remove` and `file.exportLayers {ids?, dir?, assets?}` (every layer once per setting, named `<layer><suffix>.<format>`, a slash in a layer name making a folder; `assets: true` exports the Inspect tab's assets instead: icons as SVG, images as PNG). |
 | `export_many {ids?, formats?, scales?, naming?, dir?, iconPreset?, currentColor?, ...}` | Engine `file.exportMany`. Each layer (default the selection, else the page's top-level layers) on its own, in every format of `formats` (png, jpg, webp, svg, pdf, xml; default png) at every scale of `scales` (default 1; svg, pdf and xml ignore them), with no export settings on the layers: 6 icons as png and svg at 1x/2x/4x is one call. `naming` is a template with `{name}`, `{id}`, `{scale}`, `{format}`, `{ext}` (default `{name}@{scale}x.{ext}` for raster with several scales, else `{name}.{ext}`; `/` makes folders, repeated names get ` 2`). With `dir` the files are written there and each entry has its `path`; without it they come back base64-encoded in `data` as `{name: base64}`. At most 1000 files. The SVG icon preset below applies to its SVGs. |
@@ -352,6 +358,32 @@ The SVG icon preset (`iconPreset: true` on `export` and `export_many`, with `cur
 | `search_design_system {query, types?, limit?}` | Components, variables and styles whose name or description contains `query` (case-insensitive; empty lists all). `types`: `component`, `variable`, `style` (default all); `limit` per kind 1–200 (default 25). Returns `{components, variables, styles, total}` (`total` counts every match; variants are listed under their set). Engine command `inspect.searchDesignSystem`. |
 
 These four mirror the read tools of the Figma MCP server (`nodeId` is a FigCraft layer id, an integer). `screenshot` is Figma's `get_screenshot`; writes go through `run_command` / `batch`. Not provided: Code Connect map tools, `whoami`.
+
+### Compact layer trees
+
+`inspect_document` and `get_node` accept `fields`, an array of exact, case-sensitive top-level node
+keys, applied to every layer and page. For example, `fields: ["name", "type", "width", "height"]`
+leaves out paints and text properties; `fields: []` keeps only ids and structure. `id`, `children`,
+depth-boundary `childCount` and the transport's `truncated` marker are always kept (`truncated` is
+not a selectable field). Unknown keys or wrong types
+are errors; an unknown key's error lists the valid keys. Document metadata stays unchanged.
+
+`outline: true` selects `id`, `name`, `type`, `characters`, `mainComponentName` and `visible`, plus
+structure. Text is cut after 120 characters, with ASCII `...` only when longer. Selecting
+`visible`, explicitly or through outline, reports a boolean even for visible layers and pages;
+without these options the output stays sparse. `outline: true` cannot be combined with `fields`;
+`outline: false` can. Both options keep the existing depth and response-size limits.
+
+`get_metadata` (`inspect.metadata`) overlaps with `outline: true` only in purpose: it returns a sparse
+XML outline with geometry (x, y, width, height) and an `omitted` child count, not JSON. Use
+`get_metadata` to see where layers sit; use `fields` / `outline` on `get_node` and
+`inspect_document` when you want JSON with chosen properties (for example `characters` or
+`mainComponentName`).
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"inspect_document","arguments":{"depth":6,"outline":true}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_node","arguments":{"id":3,"depth":2,"fields":["name","width","height"]}}}
+```
 
 ### Starter templates
 

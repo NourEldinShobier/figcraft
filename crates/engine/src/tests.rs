@@ -404,6 +404,11 @@ fn every_command_survives_junk_params() {
         json!({"variations": {"wght": 1e308, "": "x", "slnt": null}, "props": {"fontVariations": [1], "variationSettings": {"wdth": "-1e9"}}, "text": 7, "cursor": -3}),
         json!({"style": 3, "props": {"listStyle": 5, "indentation": 1e308, "listSpacing": "NaN", "hangingList": "yes", "start": -5, "end": 1e12,
                "textDecorationThickness": {"unit": "pixels", "value": "x"}, "textDecorationOffset": -1e308, "textDecorationColor": [1]}}),
+        // Paint variable props: malformed wrappers, unsupported fields and mixed references.
+        json!({"id": 2, "type": "rectangle", "props": {"fill": {"$var": null}, "stroke": {"$var": 7}}}),
+        json!({"id": 2, "type": "rectangle", "props": {"fill": {"$var": ""}, "stroke": {"$var": []}}}),
+        json!({"id": 2, "type": "rectangle", "props": {"fill": {"$var": "x", "extra": true}, "width": {"$var": "x"}}}),
+        json!({"id": 2, "type": "rectangle", "props": {"fill": {"$var": {"$ref": "x"}}, "stroke": {"$var": "x", "$ref": "x"}}}),
         // Templates and the Getting started tips as junk.
         json!({"template": {"id": 1}, "name": [1e308], "show": "yes"}),
         // Links (dev resources) and indexes as junk.
@@ -457,6 +462,12 @@ fn every_command_survives_junk_params() {
         // Layer search roots, filters and limits as junk.
         json!({"root": {"id": 2}, "name": [1], "type": "nope", "text": true, "component": [], "limit": -1}),
         json!({"root": 999999, "limit": 1e308}),
+        // Compact inspection: fields and outline with malformed types and unknown keys.
+        json!({"id": 2, "fields": "name", "outline": true}),
+        json!({"id": 2, "fields": ["name", 5]}),
+        json!({"id": 2, "fields": ["Name", "noSuchField"]}),
+        json!({"id": 2, "fields": null, "outline": []}),
+        json!({"id": 2, "outline": "yes"}),
         // Batch step names and reference paths as junk.
         json!({"commands": [{"command": "select.none", "as": "a"}, {"command": "select.none", "as": [1]}, {"command": "select.none", "as": "a"}]}),
         json!({"commands": [{"command": "select.all", "as": "\u{0}"}, {"command": "node.set", "params": {"ids": [
