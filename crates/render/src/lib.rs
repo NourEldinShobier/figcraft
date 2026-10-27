@@ -8,6 +8,7 @@
 pub mod backdrop;
 pub mod blur;
 pub mod boolean;
+mod bounds_cache;
 pub mod cvd;
 pub mod dots;
 pub mod draw;
@@ -134,7 +135,17 @@ pub fn render_view(doc: &Document, page: NodeId, view: &View, opts: &Options) ->
             return Some(p);
         }
     }
-    render_one(doc, page, view, opts)
+    let seed = bounds_cache::seed_for(doc);
+    let bounds = draw::Bounds::seeded(seed.clone());
+    let pix = render_one_in(doc, page, view, opts, &bounds);
+    let learned = bounds.into_learned();
+    bounds_cache::keep(doc, seed, vec![learned], lod_on(opts, view).then_some(view.scale.to_bits()));
+    pix
+}
+
+/// Whether a render of `view` approximates what is too small to see (see [`lod`]).
+fn lod_on(opts: &Options, view: &View) -> bool {
+    opts.lod && !opts.outline_mode && view.scale <= lod::MAX_SCALE
 }
 
 /// Render `view` as `bands` horizontal bands in parallel. Bands overlap by what background blurs
@@ -151,7 +162,8 @@ fn render_bands(doc: &Document, page: NodeId, view: &View, opts: &Options, bands
     }
     let overlap = overlap as u32;
     let s = view.scale.max(1e-9);
-    let parts: Vec<(u32, Option<Pixmap>)> = (0..bands)
+    let seed = bounds_cache::seed_for(doc);
+    let parts: Vec<(u32, Option<Pixmap>, draw::Learned)> = (0..bands)
         .into_par_iter()
         .map(|i| {
             let y0 = i * band_h;
@@ -159,14 +171,17 @@ fn render_bands(doc: &Document, page: NodeId, view: &View, opts: &Options, bands
             let top = y0.saturating_sub(overlap);
             let bottom = (y0 + h + overlap).min(view.height).max(y0 + h);
             let v = View { origin: (view.origin.0, view.origin.1 + f64::from(top) / s), scale: view.scale, width: view.width, height: bottom - top };
-            let part = render_one(doc, page, &v, opts);
+            let bounds = draw::Bounds::seeded(seed.clone());
+            let part = render_one_in(doc, page, &v, opts, &bounds);
             let own = tiny_skia::IntRect::from_xywh(0, (y0 - top) as i32, view.width.clamp(1, 16_384), h);
-            (y0, if overlap == 0 { part } else { part.zip(own).and_then(|(p, r)| p.clone_rect(r)) })
+            (y0, if overlap == 0 { part } else { part.zip(own).and_then(|(p, r)| p.clone_rect(r)) }, bounds.into_learned())
         })
         .collect();
     let mut out = new_pixmap(view.width, view.height)?;
     let row = out.width() as usize * 4;
-    for (y0, part) in parts {
+    let mut learned = Vec::new();
+    for (y0, part, l) in parts {
+        learned.push(l);
         let Some(part) = part else { continue };
         // Bands are as wide as the view: their rows go straight into place.
         let start = y0 as usize * row;
@@ -178,6 +193,7 @@ fn render_bands(doc: &Document, page: NodeId, view: &View, opts: &Options, bands
             d.copy_from_slice(s);
         }
     }
+    bounds_cache::keep(doc, seed, learned, lod_on(opts, view).then_some(view.scale.to_bits()));
     Some(out)
 }
 
@@ -189,6 +205,11 @@ pub fn render_view_single(doc: &Document, page: NodeId, view: &View, opts: &Opti
 
 /// [`render_view_single`] as part of a render already started (one of its bands).
 fn render_one(doc: &Document, page: NodeId, view: &View, opts: &Options) -> Option<Pixmap> {
+    render_one_in(doc, page, view, opts, &draw::Bounds::default())
+}
+
+/// [`render_one`] with the layer bounds worked out kept in `bounds`.
+fn render_one_in<'d>(doc: &'d Document, page: NodeId, view: &View, opts: &Options, bounds: &draw::Bounds<'d>) -> Option<Pixmap> {
     let mut pix = new_pixmap(view.width, view.height)?;
     let bg = opts.background.or_else(|| match doc.node(page).map(|p| &p.kind) {
         Some(NodeKind::Page { background, .. }) => Some(*background),
@@ -200,8 +221,7 @@ fn render_one(doc: &Document, page: NodeId, view: &View, opts: &Options) -> Opti
             dots::draw(&mut pix, view, d);
         }
     }
-    let lod = opts.lod && !opts.outline_mode && view.scale <= lod::MAX_SCALE;
-    let bounds = draw::Bounds::default();
+    let lod = lod_on(opts, view);
     let ctx = draw::Ctx {
         doc,
         scale: view.scale,
@@ -213,7 +233,7 @@ fn render_one(doc: &Document, page: NodeId, view: &View, opts: &Options) -> Opti
         magnified_image_pixels: opts.magnified_image_pixels,
         under: None,
         time: 0.0,
-        bounds: &bounds,
+        bounds,
     };
     let xf = view.transform();
     let Some(p) = doc.node(page) else { return Some(pix) };
@@ -472,6 +492,8 @@ mod band_tests;
 mod boolean_cache_tests;
 #[cfg(test)]
 mod bounds_memo_tests;
+#[cfg(test)]
+mod bounds_cache_tests;
 #[cfg(test)]
 mod dots_tests;
 #[cfg(test)]
