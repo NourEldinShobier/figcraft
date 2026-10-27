@@ -386,3 +386,38 @@ fn only_resolved_paths_count_as_the_apps_own_folder() {
     assert!(!super::within_app_folder(&install.join("missing.wasm"), &install));
     assert!(!super::within_app_folder(&install.join("in.txt"), &f.0.join("no-such-folder")));
 }
+
+#[test]
+fn network_and_device_paths_are_recognised_by_their_text() {
+    for p in [r"\\server\share\x", r"\\?\UNC\server\share\x", r"\\.\pipe\x", "//server/share/x"] {
+        assert!(super::is_network_or_device(Path::new(p)), "{p}");
+    }
+    for p in [r"C:\work\x", "work/x", "/work/x", "", r"\\?\C:\x"] {
+        assert!(!super::is_network_or_device(Path::new(p)), "{p}");
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn unc_and_device_paths_are_refused_before_any_resolution() {
+    let f = Fixture::new("unc");
+    let r = f.rw();
+    // 192.0.2.1 is reserved (TEST-NET-1): resolving it would hang, refusing returns at once.
+    for p in [r"\\192.0.2.1\share\a.txt", r"\\?\UNC\192.0.2.1\share\a.txt", r"\\.\C:\x", "//192.0.2.1/share/a.txt"] {
+        let e = r.check(Path::new(p), Access::Read).unwrap_err();
+        assert!(e.contains("network or device path"), "{p}: {e}");
+    }
+    // Case differences don't hide a path inside the root.
+    let upper = f.p("root/in.txt").to_uppercase();
+    assert!(r.check(Path::new(&upper), Access::Read).is_ok());
+}
+
+#[cfg(windows)]
+#[test]
+fn folding_compares_components_case_insensitively_and_whole() {
+    let (root, inside) = (Path::new(r"C:\Work\Root"), Path::new(r"C:\WORK\root\Sub\a.txt"));
+    assert!(super::is_inside(inside, root, true));
+    assert!(!super::is_inside(inside, root, false));
+    assert!(!super::is_inside(Path::new(r"C:\work\root2\a"), root, true));
+    assert!(!super::is_inside(Path::new(r"C:\work"), root, true));
+}

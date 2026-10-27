@@ -58,8 +58,14 @@ impl Roots {
             Access::Read => ([self.read.as_slice(), self.write.as_slice()].concat(), "read"),
             Access::Write => (self.write.clone(), "written"),
         };
+        // Canonicalizing a network or device path contacts the host first (#1094): refuse it up
+        // front unless a root is itself one.
+        if cfg!(windows) && is_network_or_device(path) && !roots.iter().any(|r| is_network_or_device(Path::new(&shown(r)))) {
+            return Err(format!("automation path rejected: {asked} is a network or device path"));
+        }
+        let fold = cfg!(windows);
         match resolve(path) {
-            Ok(resolved) if roots.iter().any(|r| resolved.starts_with(r)) => return Ok(resolved),
+            Ok(resolved) if roots.iter().any(|r| is_inside(&resolved, r, fold)) => return Ok(resolved),
             Ok(_) => {}
             // Why a path can't be resolved says what exists there: only told for paths inside a root.
             Err(why) if inside_as_far_as_it_exists(path, &roots) => return Err(format!("automation path rejected: {asked}: {why}")),
@@ -105,7 +111,27 @@ fn inside_as_far_as_it_exists(path: &Path, roots: &[PathBuf]) -> bool {
         rest.push(name);
         at = parent;
     };
-    roots.iter().any(|r| resolved.starts_with(r))
+    roots.iter().any(|r| is_inside(&resolved, r, cfg!(windows)))
+}
+
+/// A UNC (`\\server\share`), verbatim (`\\?\`) or device (`\\.\`) path, by its text: nothing on the
+/// disk is touched to tell.
+fn is_network_or_device(path: &Path) -> bool {
+    let s = path.to_string_lossy();
+    // `\\?\C:\...` is a local drive in verbatim form, not a network path.
+    let verbatim_drive = s.strip_prefix("\\\\?\\").map(str::as_bytes).is_some_and(|r| r.first().is_some_and(u8::is_ascii_alphabetic) && r.get(1) == Some(&b':'));
+    !verbatim_drive && ["\\\\", "//", "\\/", "/\\"].iter().any(|p| s.starts_with(p))
+}
+
+/// Whether `path` is `root` or below it, by whole components; with `fold` letters compare
+/// case-insensitively (Windows file names).
+fn is_inside(path: &Path, root: &Path, fold: bool) -> bool {
+    if !fold {
+        return path.starts_with(root);
+    }
+    let key = |c: Component| c.as_os_str().to_string_lossy().to_lowercase();
+    let mut p = path.components();
+    root.components().all(|r| p.next().is_some_and(|c| key(c) == key(r)))
 }
 
 /// Whether `path` lies in the app's own folder `folder`, both resolved (links and `..` followed);
