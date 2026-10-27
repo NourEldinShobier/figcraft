@@ -318,9 +318,7 @@ fn recent_menu(app: &mut FigApp, ui: &mut Ui, prefix: &str, key: &str, label: &s
     });
     let Some(params) = picked else { return false };
     // Through the user path, so an import report shows; `file.openRecent` also drops a file that is gone.
-    if app.run_user("file.openRecent", params).is_some_and(|r| r.get("index").is_some()) {
-        app.ui.home = false;
-    }
+    crate::pending_open::queue_open(app, "file.openRecent", params);
     true
 }
 

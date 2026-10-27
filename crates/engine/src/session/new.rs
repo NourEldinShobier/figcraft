@@ -28,6 +28,7 @@ impl Session {
             plugins: plugins::Runtime::default(),
             live: live::Lives::default(),
             background: background::Background::default(),
+            preloaded: None,
         }
     }
 

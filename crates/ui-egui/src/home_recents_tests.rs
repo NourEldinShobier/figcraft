@@ -332,6 +332,7 @@ fn a_click_selects_a_double_click_opens() {
     let border = s.iter().any(|s| matches!(s, Shape::Rect(r) if r.stroke.width == 2.0 && r.stroke.color == crate::theme::ACCENT));
     assert!(border, "a 2-point accent border");
     double_click(&mut u, at);
+    u.finish_opens();
     assert!(!u.app.ui.home, "a double-click opens");
     assert_eq!(u.app.session.ds().unwrap().path.as_deref(), Some(paths[0].as_str()));
 }
@@ -374,7 +375,7 @@ fn tab_reaches_the_cards_named_for_screen_readers_arrows_move_and_enter_opens() 
     assert!(crate::a11y::focused_name(&u.ctx).starts_with("pic, "), "{}", crate::a11y::focused_name(&u.ctx));
     assert!(u.app.ui.home, "nothing opened yet");
     press(&mut u, Key::Enter);
-    u.frame(vec![]);
+    u.finish_opens();
     assert!(!u.app.ui.home);
     assert_eq!(u.app.session.ds().unwrap().path.as_deref(), Some(paths[0].as_str()));
 }
@@ -411,6 +412,7 @@ fn the_context_menu_opens_shows_in_the_folder_and_removes() {
     click_with(&mut u, text_center(&s, "pic"), PointerButton::Secondary);
     let s = flat(&u.frame_output(vec![]).shapes);
     click(&mut u, text_center(&s, "Open"));
+    u.finish_opens();
     assert!(!u.app.ui.home);
     assert_eq!(u.app.session.ds().unwrap().path.as_deref(), Some(paths[0].as_str()));
 }

@@ -144,6 +144,8 @@ pub struct Session {
     pub live: live::Lives,
     /// Commands the UI runs without waiting on a server ([`Session::start_background`]).
     pub background: background::Background,
+    /// A file decoded off-thread for the next `file.open` ([`cmd::file::preload`]).
+    pub preloaded: Option<cmd::file::Preloaded>,
 }
 
 impl Default for Session {
@@ -352,6 +354,8 @@ mod node_set_refusals_tests;
 mod online_tests;
 #[cfg(test)]
 mod open_issues_tests;
+#[cfg(test)]
+mod preload_tests;
 #[cfg(test)]
 mod outline_options_tests;
 #[cfg(test)]
