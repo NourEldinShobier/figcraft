@@ -34,7 +34,20 @@ pub fn config_dir() -> Option<PathBuf> {
     let base = std::env::var_os("APPDATA").map(PathBuf::from);
     #[cfg(all(unix, not(target_os = "macos")))]
     let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
-    base.map(|b| b.join("FigCraft"))
+    portable_dir().or_else(|| base.map(|b| b.join("FigCraft")))
+}
+
+/// Portable mode (#1320): the folder of the executable when `figcraft-settings.ini` already sits
+/// next to it (create an empty one to switch it on). The settings then live in that file.
+pub fn portable_dir() -> Option<PathBuf> {
+    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    dir.join(PORTABLE).is_file().then_some(dir)
+}
+
+/// The preferences' file in `dir`: the portable settings file when it exists there.
+fn state_file(dir: &Path) -> PathBuf {
+    let ini = dir.join(PORTABLE);
+    if ini.is_file() { ini } else { dir.join(STATE) }
 }
 
 impl Desktop {
@@ -45,7 +58,7 @@ impl Desktop {
     /// With the preferences kept in `dir`.
     pub fn load_from(dir: Option<PathBuf>, recovery: crate::recovery::Shared) -> Self {
         let state: Value =
-            dir.as_ref().and_then(|d| std::fs::read_to_string(d.join(STATE)).ok()).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(json!({}));
+            dir.as_ref().and_then(|d| std::fs::read_to_string(state_file(d)).ok()).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(json!({}));
         let prefs = state.get("prefs").and_then(|p| serde_json::from_value::<Prefs>(p.clone()).ok()).map(|mut p| {
             // Recent files lived next to the preferences before they moved into them.
             if p.recent_files.is_empty()
@@ -263,6 +276,9 @@ fn reveal(path: &Path) -> std::io::Result<()> {
 /// The preferences' file in the config folder.
 const STATE: &str = "state.json";
 
+/// The portable-mode settings file next to the executable (same JSON as `state.json`).
+const PORTABLE: &str = "figcraft-settings.ini";
+
 /// Everything quitting keeps, all done when it returns (macOS then ends the process): the
 /// preferences in `dir`, this run's recovery copies ([`Recovery::quit`](crate::recovery::Recovery::quit))
 /// and the live sessions' ends (one this app hosts tells everyone and stops; a joined one leaves).
@@ -283,7 +299,7 @@ pub(crate) fn write_prefs(dir: &Path, prefs: &Prefs) {
     let tmp = dir.join("state.json.tmp");
     let written = std::fs::create_dir_all(dir)
         .and_then(|()| write_private(&tmp, json!({"prefs": prefs}).to_string().as_bytes()))
-        .and_then(|()| std::fs::rename(&tmp, dir.join(STATE)));
+        .and_then(|()| std::fs::rename(&tmp, state_file(dir)));
     if let Err(e) = written {
         log::warn!("preferences: couldn't save them in {}: {e}", dir.display());
     }
