@@ -82,7 +82,8 @@ impl Backend for Store {
     }
 
     fn manage(&mut self, key: &str) -> Result<(), String> {
-        match same_secret(key, &self.key) {
+        // Hashes have a fixed length, so the comparison doesn't reveal the key's length.
+        match same_secret(&hash(key), &hash(&self.key)) {
             true => Ok(()),
             false if self.cfg.hosting.open => {
                 Err("wrong server key (this server is open to the public: publish without a key, with an up-to-date FigCraft)".into())

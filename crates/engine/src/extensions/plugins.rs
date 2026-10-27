@@ -221,7 +221,13 @@ impl figcraft_plugin::Host for EngineHost<'_> {
         let ui_before = self.s.ui_requests.len();
         let r = self.s.grouped(command, |s| {
             let doc = s.ds()?.doc.clone();
-            let v = s.execute(command, &params)?;
+            let mut v = s.execute(command, &params)?;
+            // Plugins get no machine paths: `doc.list` also lists the files of the other open documents.
+            if command == "doc.list" {
+                for d in v.as_array_mut().into_iter().flatten().filter_map(Value::as_object_mut) {
+                    d.remove("path");
+                }
+            }
             let opened_ui = s.ui_requests.len() > ui_before;
             s.ui_requests.truncate(ui_before);
             if opened_ui {
@@ -672,6 +678,22 @@ mod refusal_tests {
         let m = Manifest::parse(r#"{"id":"x.y","name":"X","main":"plugin.wasm"}"#).unwrap();
         let r = refusal(&m, "library.publishToServer", &json!({}));
         assert!(r.is_some(), "library.publishToServer uploads the document and must be refused");
+    }
+
+    /// #1117. A command doesn't know its caller, so the plugin host strips `path` from `doc.list`;
+    /// CLI, MCP and UI callers (which run the command directly) keep it.
+    #[test]
+    fn doc_list_gives_plugins_no_file_paths() {
+        use figcraft_plugin::Host;
+        let m = Manifest::parse(r#"{"id":"x.y","name":"X","main":"plugin.wasm"}"#).unwrap();
+        let mut s = Session::new();
+        s.ds_mut().unwrap().path = Some("C:/Users/me/secret.figcraft".into());
+        let direct = s.execute("doc.list", &json!({})).unwrap();
+        assert_eq!(direct[0]["path"], "C:/Users/me/secret.figcraft");
+        let mut host = EngineHost { s: &mut s, manifest: &m, saves: 0 };
+        let via_plugin: Value = serde_json::from_str(&host.call("doc.list", "{}").unwrap()).unwrap();
+        assert_eq!(via_plugin[0]["name"], direct[0]["name"]);
+        assert!(via_plugin[0].get("path").is_none(), "{via_plugin}");
     }
 }
 
