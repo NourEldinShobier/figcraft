@@ -181,6 +181,8 @@ mod batch_rollback_tests;
 #[cfg(test)]
 mod batch_step_ref_tests;
 #[cfg(test)]
+mod node_readback_tests;
+#[cfg(test)]
 mod binding_lists_tests;
 #[cfg(test)]
 mod board_connector_tests;

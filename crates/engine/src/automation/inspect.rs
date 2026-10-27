@@ -52,9 +52,15 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
             if !n.stroke.dashes.is_empty() {
                 o.insert("dashes".into(), json!(n.stroke.dashes));
             }
-            if n.stroke.join != StrokeJoin::Miter {
-                o.insert("strokeJoin".into(), json!(n.stroke.join));
-            } else if n.stroke.miter_limit != 4.0 {
+            // Always reported (even the defaults), so a linter or agent can read back what `node.set` wrote.
+            o.insert("strokeJoin".into(), json!(n.stroke.join));
+            if n.stroke.cap_start == n.stroke.cap_end {
+                o.insert("strokeCap".into(), json!(n.stroke.cap_start));
+            } else {
+                o.insert("startCap".into(), json!(n.stroke.cap_start));
+                o.insert("endCap".into(), json!(n.stroke.cap_end));
+            }
+            if n.stroke.join == StrokeJoin::Miter && n.stroke.miter_limit != 4.0 {
                 o.insert("miterAngle".into(), json!((n.stroke.miter_angle() * 100.0).round() / 100.0));
             }
             if let Some(p) = n.stroke.profile() {
@@ -112,6 +118,12 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
         }
         if n.kind.is_frame_like() {
             o.insert("clip".into(), json!(n.clip));
+        }
+        if n.constrain_proportions {
+            o.insert("constrainProportions".into(), json!(true));
+        }
+        if n.overflow != Default::default() {
+            o.insert("overflow".into(), json!(n.overflow));
         }
         if !n.dev_status.is_none() {
             o.insert("devStatus".into(), json!(n.dev_status.id()));
@@ -188,6 +200,16 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
             o.insert("letterSpacing".into(), json!(t.style.letter_spacing.label()));
             o.insert("textAlign".into(), json!(t.align_h));
             o.insert("textAutoResize".into(), json!(t.auto_resize));
+            o.insert("textAlignVertical".into(), json!(t.align_v));
+            if t.style.case != figcraft_doc::TextCase::default() {
+                o.insert("textCase".into(), json!(t.style.case));
+            }
+            if t.paragraph_spacing != 0.0 {
+                o.insert("paragraphSpacing".into(), json!(t.paragraph_spacing));
+            }
+            if t.paragraph_indent != 0.0 {
+                o.insert("paragraphIndent".into(), json!(t.paragraph_indent));
+            }
             if t.max_lines > 0 {
                 o.insert("maxLines".into(), json!(t.max_lines));
             }
