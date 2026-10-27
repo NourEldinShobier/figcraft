@@ -165,7 +165,7 @@ pub fn import(v: &Value, images: ImageResolver) -> Result<(Document, Vec<String>
 /// in the file JSON (a `meta` with `variableCollections`, or `variableCollections` and
 /// `variables` at the top level) are read too; the first definition of an id wins.
 pub fn import_with(v: &Value, variables: Option<&Value>, images: ImageResolver) -> Result<(Document, Vec<String>), FormatError> {
-    import_parts(v, variables, images, Vec::new(), MAX_NODES, false)
+    import_parts(v, variables, images, Vec::new(), MAX_NODES, false, None)
 }
 
 /// Internal .fig JSON path: GUID provenance is not part of the public REST import contract.
@@ -178,13 +178,14 @@ pub(crate) fn import_fig(v: &Value, images: ImageResolver) -> Result<(Document, 
 /// [`import_fig`] for the `.fig` import's JSON, whose vectors name their networks by
 /// `vectorNetworkRef`, an index in `networks` (built once each, and far smaller than as JSON).
 /// `max_nodes`: the layer cap, set by the `.fig` import in place of [`MAX_NODES`].
+#[cfg(test)]
 pub(crate) fn import_with_networks(
     v: &Value,
     images: ImageResolver,
     networks: Vec<Option<VectorNetwork>>,
     max_nodes: usize,
 ) -> Result<(Document, Vec<String>), FormatError> {
-    import_parts(v, None, images, networks, max_nodes, true)
+    import_parts(v, None, images, networks, max_nodes, true, None)
 }
 
 /// [`import_with_networks`] for imports other than `.fig` (no `.fig` source identities): the
@@ -195,9 +196,69 @@ pub(crate) fn import_with_networks_plain(
     networks: Vec<Option<VectorNetwork>>,
     max_nodes: usize,
 ) -> Result<(Document, Vec<String>), FormatError> {
-    import_parts(v, None, images, networks, max_nodes, false)
+    import_parts(v, None, images, networks, max_nodes, false, None)
 }
 
+/// The layers of a `.fig` file's REST JSON, each serialized as it was mapped: the tree of
+/// `serde_json::Value`s takes several times the memory of its text, and the layers are built one
+/// at a time, so only the one being built is ever a tree. `v`'s `document` holds no pages.
+#[derive(Default)]
+pub(crate) struct Packed {
+    pub pages: Vec<PackedPage>,
+    /// Library copies (see [`FIG_LIBRARY_CONTEXTS_FIELD`]), each as one serialized layer.
+    pub contexts: Vec<Vec<u8>>,
+}
+
+/// A page without its layers, and its top-level layers.
+pub(crate) struct PackedPage {
+    pub header: Value,
+    pub children: Vec<Vec<u8>>,
+}
+
+/// A layer serialized by the mapper and deflated (the text of a design file repeats itself about
+/// ten-fold). Numbers round-trip exactly (`float_roundtrip`).
+pub(crate) fn pack(v: &Value) -> Vec<u8> {
+    use std::io::Write;
+    // Serialized in one piece: the encoder is slow when fed token by token.
+    let Ok(text) = serde_json::to_vec(v) else { return Vec::new() };
+    let mut out = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::fast());
+    if out.write_all(&text).is_err() {
+        return Vec::new();
+    }
+    out.finish().unwrap_or_default()
+}
+
+fn unpack(bytes: &[u8]) -> Result<Value, FormatError> {
+    use std::io::Read;
+    let corrupt = |e: &dyn std::fmt::Display| FormatError::Corrupt(format!("packed layer: {e}"));
+    let mut text = Vec::new();
+    flate2::read::DeflateDecoder::new(bytes).read_to_end(&mut text).map_err(|e| corrupt(&e))?;
+    let mut de = serde_json::Deserializer::from_slice(&text);
+    // Layers nest up to MAX_DEPTH levels; the mapper wrote them, so the default limit isn't needed.
+    de.disable_recursion_limit();
+    serde::Deserialize::deserialize(&mut de).map_err(|e| corrupt(&e))
+}
+
+/// `j` without its children: what the passes after the build keep of a layer.
+fn shallow(j: &Value) -> Value {
+    match j {
+        Value::Object(m) => Value::Object(m.iter().filter(|(k, _)| k.as_str() != "children").map(|(k, v)| (k.clone(), v.clone())).collect()),
+        other => other.clone(),
+    }
+}
+
+/// [`import_with_networks`] for the layers the `.fig` mapper packed (see [`Packed`]).
+pub(crate) fn import_packed(
+    v: &Value,
+    packed: Packed,
+    images: ImageResolver,
+    networks: Vec<Option<VectorNetwork>>,
+    max_nodes: usize,
+) -> Result<(Document, Vec<String>), FormatError> {
+    import_parts(v, None, images, networks, max_nodes, true, Some(packed))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn import_parts(
     v: &Value,
     variables: Option<&Value>,
@@ -205,6 +266,7 @@ fn import_parts(
     networks: Vec<Option<VectorNetwork>>,
     max_nodes: usize,
     fig_sources: bool,
+    packed: Option<Packed>,
 ) -> Result<(Document, Vec<String>), FormatError> {
     let entries: Vec<&Value> = if is_document(v) { vec![v] } else { nodes_entries(v).collect() };
     if entries.is_empty() {
@@ -231,11 +293,13 @@ fn import_parts(
     // The `.fig` mapper already kept the layers, library copies included, within the cap; each
     // library copy's wrapper frame is the one layer here it doesn't count (#981).
     let contexts = if fig_sources { v.get(FIG_LIBRARY_CONTEXTS_FIELD).and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default() } else { &[] };
+    let (packed_pages, packed_contexts) = packed.map_or((Vec::new(), Vec::new()), |p| (p.pages, p.contexts));
     if fig_sources {
         cx.capped_mains =
             v.get(FIG_CAPPED_MAINS_FIELD).and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
-        cx.max_nodes = max_nodes.saturating_add(contexts.len());
+        cx.max_nodes = max_nodes.saturating_add(contexts.len() + packed_contexts.len());
     }
+    let mut packed_pages = Some(packed_pages);
     for e in entries {
         let Some(root) = e.get("document") else { continue };
         match text(root, "type") {
@@ -245,6 +309,15 @@ fn import_parts(
                         cx.page(c);
                     } else {
                         cx.warn("document children other than pages were skipped");
+                    }
+                }
+                // Packed pages: each layer is read back, built and freed in turn.
+                for page in packed_pages.take().into_iter().flatten() {
+                    let id = cx.page_head(&page.header);
+                    for bytes in page.children {
+                        let layer = unpack(&bytes)?;
+                        drop(bytes);
+                        cx.build(&layer, id, Space::default(), None, 0, false);
                     }
                 }
             }
@@ -260,6 +333,12 @@ fn import_parts(
     for context in contexts {
         let store = cx.doc.ensure_library_store();
         cx.build(context, store, Space::default(), None, 0, false);
+    }
+    for bytes in packed_contexts {
+        let context = unpack(&bytes)?;
+        drop(bytes);
+        let store = cx.doc.ensure_library_store();
+        cx.build(&context, store, Space::default(), None, 0, false);
     }
     // Drop the empty page the new document started with once real pages exist.
     if let Some(p) = blank
@@ -407,16 +486,18 @@ pub(crate) struct Ctx<'a> {
     count: usize,
     /// REST node id → imported node.
     ids: BTreeMap<String, NodeId>,
-    fig_sources: Option<fig_sources::Sources<'a>>,
+    fig_sources: Option<fig_sources::Sources>,
     component_meta: BTreeMap<&'a str, &'a Value>,
     set_meta: BTreeMap<&'a str, &'a Value>,
     style_meta: BTreeMap<&'a str, &'a Value>,
+    // The layers kept for `finish` hold their own JSON without the children ([`shallow`]), so a
+    // layer's tree can be dropped once it is built.
     /// Instances (imported as frames until their main is resolved) with their JSON.
-    instances: Vec<(NodeId, &'a Value)>,
+    instances: Vec<(NodeId, Value)>,
     /// `SLOT` layers (imported as frames until their slot property is resolved) with their JSON.
-    slots: Vec<(NodeId, &'a Value)>,
+    slots: Vec<(NodeId, Value)>,
     /// Slot property defaults (the main's slot content id): (component or set, property) → value.
-    slot_defaults: BTreeMap<(NodeId, String), &'a Value>,
+    slot_defaults: BTreeMap<(NodeId, String), Value>,
     /// Instance-swap property defaults: (component or set, property, REST id of the default).
     swap_defaults: Vec<(NodeId, String, String)>,
     /// Property definitions of component sets, shared by their variants.
@@ -424,9 +505,9 @@ pub(crate) struct Ctx<'a> {
     /// Prototype starting points: (page, name, REST node id).
     flows: Vec<(NodeId, String, String)>,
     /// Layers with prototype interactions, resolved once every layer is imported.
-    protos: Vec<(NodeId, &'a Value)>,
+    protos: Vec<(NodeId, Value)>,
     /// Layers that carry overlay settings (position, background, outside clicks), by REST id.
-    overlay_meta: BTreeMap<&'a str, &'a Value>,
+    overlay_meta: BTreeMap<String, Value>,
     /// Imported variables by id, and the mode ids of imported collections (default first).
     var_kinds: BTreeMap<String, VariableType>,
     var_modes: BTreeMap<String, Vec<String>>,
@@ -481,7 +562,15 @@ impl<'a> Ctx<'a> {
     }
 
     /// A CANVAS → a page.
-    fn page(&mut self, c: &'a Value) {
+    fn page(&mut self, c: &Value) {
+        let page = self.page_head(c);
+        for ch in children(c) {
+            self.build(ch, page, Space::default(), None, 0, false);
+        }
+    }
+
+    /// The page for a CANVAS, without its layers.
+    fn page_head(&mut self, c: &Value) -> NodeId {
         let page = self.doc.add_page(text(c, "name").map_or("Page", clip_str));
         let modes = self.modes(c);
         if let Some(n) = self.doc.node_mut(page).filter(|_| !modes.is_empty()) {
@@ -508,14 +597,12 @@ impl<'a> Ctx<'a> {
         {
             self.flows.push((page, "Flow 1".into(), start.to_string()));
         }
-        for ch in children(c) {
-            self.build(ch, page, Space::default(), None, 0, false);
-        }
+        page
     }
 
     /// Import layer `j` (and its subtree) under `parent`. `root_abs`: place it by its absolute
     /// bounds (roots of a nodes response, whose parent isn't in the file).
-    fn build(&mut self, j: &'a Value, parent: NodeId, space: Space, parent_mode: Option<LayoutMode>, depth: usize, root_abs: bool) {
+    fn build(&mut self, j: &Value, parent: NodeId, space: Space, parent_mode: Option<LayoutMode>, depth: usize, root_abs: bool) {
         if depth > MAX_DEPTH {
             self.warn(format!("layers nested deeper than {MAX_DEPTH} levels were skipped"));
             return;
@@ -557,8 +644,8 @@ impl<'a> Ctx<'a> {
             }
         }
         match ty {
-            "INSTANCE" => self.instances.push((id, j)),
-            "SLOT" => self.slots.push((id, j)),
+            "INSTANCE" => self.instances.push((id, shallow(j))),
+            "SLOT" => self.slots.push((id, shallow(j))),
             _ => {}
         }
         let kids = children(j);
@@ -578,7 +665,7 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    fn kind(&mut self, ty: &str, j: &'a Value) -> Option<NodeKind> {
+    fn kind(&mut self, ty: &str, j: &Value) -> Option<NodeKind> {
         let point_count = || num(j, "pointCount").filter(|c| *c >= 3.0).map(|c| c.min(1000.0) as u32);
         let has_geometry = !list(j, "fillGeometry").is_empty() || !list(j, "strokeGeometry").is_empty();
         Some(match ty {
@@ -661,7 +748,7 @@ impl<'a> Ctx<'a> {
     }
 
     /// Properties shared by every layer type.
-    fn common(&mut self, n: &mut Node, j: &'a Value, parent_mode: Option<LayoutMode>) {
+    fn common(&mut self, n: &mut Node, j: &Value, parent_mode: Option<LayoutMode>) {
         n.visible = flag(j, "visible").unwrap_or(true);
         n.locked = flag(j, "locked").unwrap_or(false);
         n.opacity = num(j, "opacity").map_or(1.0, |o| o.clamp(0.0, 1.0) as f32);
@@ -717,12 +804,12 @@ impl<'a> Ctx<'a> {
         self.link_styles(n, j);
         proto::scrolling(n, j);
         if !list(j, "interactions").is_empty() || j.get("transitionNodeID").is_some_and(Value::is_string) {
-            self.protos.push((n.id, j));
+            self.protos.push((n.id, shallow(j)));
         }
         if let Some(rid) = text(j, "id")
             && ["overlayPositionType", "overlayBackground", "overlayBackgroundInteraction"].iter().any(|k| j.get(k).is_some())
         {
-            self.overlay_meta.entry(rid).or_insert(j);
+            self.overlay_meta.entry(rid.to_string()).or_insert_with(|| shallow(j));
         }
         self.bindings(n, j);
         let restored = j.get("outlinedStroke").is_some_and(|original| restore_stroke(n, original));
@@ -805,7 +892,7 @@ impl<'a> Ctx<'a> {
     }
 
     /// Component property definitions (variant ones are implied by the variant names).
-    fn prop_defs(&mut self, owner: NodeId, j: &'a Value) -> BTreeMap<String, PropDef> {
+    fn prop_defs(&mut self, owner: NodeId, j: &Value) -> BTreeMap<String, PropDef> {
         let mut out = BTreeMap::new();
         for (name, d) in j.get("componentPropertyDefinitions").and_then(Value::as_object).into_iter().flatten().take(256) {
             let default = d.get("defaultValue");
@@ -821,7 +908,7 @@ impl<'a> Ctx<'a> {
                 Some("VARIANT") => continue,
                 Some("SLOT") => {
                     if let Some(d) = default {
-                        self.slot_defaults.insert((owner, name.clone()), d);
+                        self.slot_defaults.insert((owner, name.clone()), d.clone());
                     }
                     self.slot_notes(d);
                     PropDef::Slot { preferred: Vec::new() }
@@ -1012,7 +1099,7 @@ impl<'a> Ctx<'a> {
         }
         self.rename_props();
         for (id, j) in std::mem::take(&mut self.protos) {
-            let list = self.interactions(j);
+            let list = self.interactions(&j);
             if let Some(n) = self.doc.node_mut(id) {
                 n.interactions = list;
             }
@@ -1063,9 +1150,9 @@ impl<'a> Ctx<'a> {
     /// through other components), stay frames.
     fn resolve_instances(&mut self) {
         let frames: BTreeSet<NodeId> = self.instances.iter().map(|(i, _)| *i).collect();
-        let mut links: Vec<(NodeId, NodeId, &'a Value)> = Vec::new();
+        let mut links: Vec<(NodeId, NodeId, Value)> = Vec::new();
         for (inst, j) in std::mem::take(&mut self.instances) {
-            let main = text(j, "componentId");
+            let main = text(&j, "componentId");
             match main.and_then(|r| self.component(r)) {
                 None if main.is_some_and(|r| self.capped_mains.contains(r)) => {
                     self.warn("instances whose component was past the layer limit were imported as frames");
@@ -1090,7 +1177,7 @@ impl<'a> Ctx<'a> {
                 self.warn("instances that would nest a component inside itself were imported as frames");
                 continue;
             }
-            let props = self.instance_props(j);
+            let props = self.instance_props(&j);
             if let Some(n) = self.doc.node_mut(inst) {
                 n.kind = NodeKind::Instance { component: c, props };
                 linked.push((inst, j));
@@ -1099,7 +1186,7 @@ impl<'a> Ctx<'a> {
         self.resolve_slots(&frames, &linked);
         // Overridden fields the file lists, on the instance and its layers.
         for (inst, j) in linked {
-            for o in list(j, "overrides") {
+            for o in list(&j, "overrides") {
                 let Some(&id) = text(o, "id").and_then(|r| self.ids.get(r)) else { continue };
                 if !(id == inst || self.doc.is_ancestor(inst, id)) {
                     continue;
@@ -1119,8 +1206,8 @@ impl<'a> Ctx<'a> {
     /// values to compare, a slot holding layers keeps them as its own). A slot without a property
     /// stays a frame. `frames`: every instance
     /// layer of the file, `linked`: those that became instances.
-    fn resolve_slots(&mut self, frames: &BTreeSet<NodeId>, linked: &[(NodeId, &'a Value)]) {
-        let linked: BTreeMap<NodeId, &Value> = linked.iter().copied().collect();
+    fn resolve_slots(&mut self, frames: &BTreeSet<NodeId>, linked: &[(NodeId, Value)]) {
+        let linked: BTreeMap<NodeId, &Value> = linked.iter().map(|(i, j)| (*i, j)).collect();
         let mut bound: BTreeSet<(NodeId, String)> = BTreeSet::new();
         for (id, j) in std::mem::take(&mut self.slots) {
             // The nearest main component or instance above the slot owns it; in an instance whose
@@ -1137,7 +1224,7 @@ impl<'a> Ctx<'a> {
             let Some((main, inst)) = owner else { continue };
             let Some(NodeKind::Component { props, .. }) = self.doc.node(main).map(|n| &n.kind) else { continue };
             let defs: Vec<&String> = props.iter().filter(|(_, d)| matches!(d, PropDef::Slot { .. })).map(|(k, _)| k).collect();
-            let layer = text(j, "name").unwrap_or_default();
+            let layer = text(&j, "name").unwrap_or_default();
             let refs: Vec<&str> =
                 j.get("componentPropertyReferences").and_then(Value::as_object).into_iter().flatten().filter_map(|(_, v)| v.as_str()).collect();
             // An instance's slot is matched against all of its main's slot properties.
@@ -1163,7 +1250,7 @@ impl<'a> Ctx<'a> {
             };
             let set = self.doc.node(main).and_then(|n| n.parent);
             let default =
-                name.as_ref().and_then(|p| [Some(main), set].into_iter().flatten().find_map(|o| self.slot_defaults.get(&(o, p.clone())).copied()));
+                name.as_ref().and_then(|p| [Some(main), set].into_iter().flatten().find_map(|o| self.slot_defaults.get(&(o, p.clone()))));
             let value = name.as_ref().and_then(|p| inst.get("componentProperties")?.get(p)?.get("value"));
             let own = name.is_some()
                 && match (value, default) {

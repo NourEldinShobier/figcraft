@@ -111,12 +111,12 @@ pub fn import(bytes: &[u8], name: &str) -> Result<(Document, Vec<String>), Forma
     let max_nodes = layer_budget(packed);
     drop(message);
     let file_name = archive.file_name.as_deref().filter(|n| !n.trim().is_empty()).unwrap_or(name);
-    let (json, mut warnings, networks) = map::to_rest(&msg, file_name, max_nodes);
+    let (json, packed, mut warnings, networks) = map::to_rest_packed(&msg, file_name, max_nodes);
     // The message goes before the layers are built, so the images it carries are copied out first.
     let embedded: BTreeMap<String, Vec<u8>> = embedded_images(&msg).into_iter().map(|(hash, bytes)| (hash, bytes.to_vec())).collect();
     drop(msg);
     let images = |r: &str| archive.image(r).or_else(|| embedded.get(r).cloned());
-    let (doc, more) = crate::rest::import_with_networks(&json, &images, networks, max_nodes)?;
+    let (doc, more) = crate::rest::import_packed(&json, packed, &images, networks, max_nodes)?;
     drop_later(json);
     // Both stages stop at the same cap and say so in the same words: one note (#981).
     for w in more.into_iter().filter_map(map::adapt_warning) {

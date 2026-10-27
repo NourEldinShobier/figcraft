@@ -310,6 +310,11 @@ pub(crate) fn value_budget(packed: usize) -> usize {
     packed.saturating_mul(4).clamp(MIN_VALUES, MAX_VALUES)
 }
 
+/// Message fields the import never reads and the export never writes: glyph layout the editor
+/// recomputes (`derivedTextData` is half of all values in a design file) and edit history. They
+/// are decoded to find the next field and dropped, so the tree doesn't hold them.
+const UNUSED_FIELDS: [&str; 2] = ["derivedTextData", "editInfo"];
+
 struct Decoder<'s, 'b> {
     schema: &'s Schema,
     r: Reader<'b>,
@@ -353,7 +358,11 @@ impl<'s> Decoder<'s, '_> {
                     // Field ids usually run 1, 2, 3, …: try the slot before the scan of ~200 fields.
                     let guess = (id as usize).checked_sub(1).and_then(|i| d.fields.get(i)).filter(|f| f.value == id);
                     let f = guess.or_else(|| d.fields.iter().find(|f| f.value == id)).ok_or_else(|| KiwiError(format!("message: {} has no field {id}", d.name)))?;
-                    out.push((f.name.as_str(), self.field(f, depth)?));
+                    let value = self.field(f, depth)?;
+                    // Read to move past it, but not kept (see [`UNUSED_FIELDS`]).
+                    if !UNUSED_FIELDS.contains(&f.name.as_str()) {
+                        out.push((f.name.as_str(), value));
+                    }
                 }
             }
         }

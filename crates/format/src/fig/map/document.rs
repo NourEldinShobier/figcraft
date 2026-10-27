@@ -35,12 +35,24 @@ impl<'a> Mapper<'a> {
         self.reserved = top.min(self.max_nodes / 2);
         for (id, canvas) in internal {
             if let Some(context) = self.library_context(&id, canvas, &required_mains) {
-                self.library_contexts.push(context);
+                match &mut self.packed {
+                    Some(packed) => packed.contexts.push(crate::rest::pack(&context)),
+                    None => self.library_contexts.push(context),
+                }
             }
         }
         self.reserved = 0;
-        let out: Vec<Value> = visible.into_iter().map(|(p, n)| self.page(&p, n)).collect();
-        if out.is_empty() {
+        let mut out: Vec<Value> = Vec::new();
+        let mut pages = 0usize;
+        for (p, n) in visible {
+            let page = self.page(&p, n);
+            pages += 1;
+            match &mut self.packed {
+                Some(packed) => packed.pages.push(crate::rest::PackedPage { header: page, children: std::mem::take(&mut self.page_chunks) }),
+                None => out.push(page),
+            }
+        }
+        if pages == 0 {
             self.warn("the file has no pages");
         }
         let mut doc = json!({"id": doc_id.unwrap_or_else(|| "0:0".into()), "type": "DOCUMENT"});
@@ -211,7 +223,13 @@ impl<'a> Mapper<'a> {
                 let name = sp.get("name").and_then(Kv::str).filter(|s| !s.is_empty()).unwrap_or("Flow");
                 flows.push((sp.get("position").and_then(Kv::str).unwrap_or(""), json!({"nodeId": c, "name": name})));
             }
-            kids.extend(self.layer(&c, None, Affine::IDENTITY, None, None, 0));
+            let made = self.layer(&c, None, Affine::IDENTITY, None, None, 0);
+            if self.packed.is_some() {
+                // Packed as soon as it is made, so only one top-level layer is a tree at a time.
+                self.page_chunks.extend(made.iter().map(crate::rest::pack));
+            } else {
+                kids.extend(made);
+            }
         }
         flows.sort_by(|a, b| a.0.cmp(b.0));
         if !flows.is_empty() {

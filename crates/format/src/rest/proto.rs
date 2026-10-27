@@ -306,7 +306,7 @@ impl Ctx<'_> {
             Some("SCROLL_TO") => Action::ScrollTo { dest, offset: [0.0, 0.0] },
             Some("CHANGE_TO") => Action::ChangeTo { dest },
             Some("OVERLAY") => {
-                let meta = text(a, "destinationId").and_then(|d| self.overlay_meta.get(d)).copied();
+                let meta = text(a, "destinationId").and_then(|d| self.overlay_meta.get(d));
                 let position = meta.and_then(|m| text(m, "overlayPositionType")).and_then(overlay_position).unwrap_or_default();
                 // Overlays close on a click outside unless the destination says otherwise.
                 let close_on_outside = meta.and_then(|m| text(m, "overlayBackgroundInteraction")).is_none_or(|i| i == "CLOSE_ON_CLICK_OUTSIDE");
