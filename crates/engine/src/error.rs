@@ -35,10 +35,20 @@ impl From<figcraft_doc::DocError> for EngineError {
 impl EngineError {
     /// This error from step `step` of a batch, saying so in its message; the kind stays (errors
     /// without a message stay as they are).
-    pub(crate) fn at_step(self, step: usize) -> Self {
+    pub(crate) fn at_step(self, step: usize, command: &str) -> Self {
         match self {
-            EngineError::BadParams { cmd, msg } => EngineError::BadParams { cmd, msg: format!("step {step}: {msg}") },
-            EngineError::Other(msg) => EngineError::Other(format!("step {step}: {msg}")),
+            EngineError::BadParams { cmd, msg } => EngineError::BadParams { cmd, msg: format!("step {step} ({command}): {msg}") },
+            EngineError::Waiting | EngineError::Internal { .. } | EngineError::UnknownCommand(_) => self,
+            e => EngineError::Other(format!("step {step} ({command}): {e}")),
+        }
+    }
+
+    /// This error of an aborted batch, saying that its steps were rolled back.
+    pub(crate) fn batch_rolled_back(self) -> Self {
+        const NOTE: &str = " (the whole batch was rolled back: nothing changed)";
+        match self {
+            EngineError::BadParams { cmd, msg } if !msg.contains("rolled back") => EngineError::BadParams { cmd, msg: msg + NOTE },
+            EngineError::Other(msg) if !msg.contains("rolled back") => EngineError::Other(msg + NOTE),
             e => e,
         }
     }

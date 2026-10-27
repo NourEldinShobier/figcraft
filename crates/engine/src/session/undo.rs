@@ -191,6 +191,7 @@ impl Session {
             }
             Ok(scope.into_results())
         })
+        .map_err(EngineError::batch_rolled_back)
     }
 
     /// Run every step, rolling back failed steps and returning each outcome, still as one undo step.
@@ -229,7 +230,7 @@ impl Session {
     fn execute_batch_step(&mut self, scope: &BatchScope, cmd: &str, params: &Value) -> Result<Value> {
         let p = if cmd == "command.batch" { params.clone() } else { scope.resolve(params)? };
         // Say which step failed; a nested batch names its own steps.
-        self.execute(cmd, &p).map_err(|e| if cmd == "command.batch" { e } else { e.at_step(scope.next_step()) })
+        self.execute(cmd, &p).map_err(|e| if cmd == "command.batch" { e } else { e.at_step(scope.next_step(), cmd) })
     }
 
     /// Take the tabs `pred` matches out of `docs`; inside a group they are kept so that a failed
