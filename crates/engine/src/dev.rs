@@ -5,5 +5,6 @@ pub mod component_codegen;
 pub mod dev_measurements;
 pub mod dev_resources;
 pub mod devcompare;
+pub mod design_read;
 pub mod devinspect;
 pub mod tailwind;

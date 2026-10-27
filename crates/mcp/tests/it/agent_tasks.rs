@@ -398,3 +398,30 @@ fn task_named_steps_and_a_duplicate_in_one_batch() {
     );
     assert!(e.contains("step 1") && e.contains("\"crad\" names no step") && e.contains("\"card\" is step 0"), "{e}");
 }
+
+/// The Figma-style read tools: outline, variables, design context and design-system search.
+#[test]
+fn figma_style_read_tools() {
+    let mut c = Client::new();
+    let card = c.create(json!({"type": "frame", "name": "Card", "x": 4, "y": 8, "width": 120, "height": 60}));
+    let bg = c.create(json!({"type": "rectangle", "name": "Bg", "parent": card, "x": 1, "y": 2, "width": 10, "height": 20}));
+    c.run("variable.createCollection", json!({"name": "Tokens"}));
+    c.run("variable.create", json!({"collection": "Tokens", "name": "space/md", "type": "number", "value": 16}));
+    c.run("variable.bind", json!({"ids": [bg], "field": "cornerRadius", "variable": "space/md"}));
+
+    let xml = c.ok("get_metadata", json!({"nodeId": card}));
+    assert_eq!(
+        xml,
+        json!(format!(
+            "<frame id=\"{card}\" name=\"Card\" x=\"4\" y=\"8\" width=\"120\" height=\"60\">\n<rectangle id=\"{bg}\" name=\"Bg\" x=\"1\" y=\"2\" width=\"10\" height=\"20\"/>\n</frame>\n"
+        ))
+    );
+    assert_eq!(c.ok("get_variable_defs", json!({"nodeId": card})), json!({"space/md": "16"}));
+    let ctx = c.ok("get_design_context", json!({"nodeId": card, "language": "css"}));
+    assert_eq!((ctx["name"].as_str(), ctx["language"].as_str()), (Some("Card"), Some("css")));
+    assert_eq!(ctx["variables"], json!({"space/md": "16"}));
+    let found = c.ok("search_design_system", json!({"query": "SPACE", "types": ["variable"]}));
+    assert_eq!(found["total"], 1);
+    assert_eq!(found["variables"][0]["name"], "space/md");
+    c.err("get_metadata", json!({"nodeId": 999999}));
+}

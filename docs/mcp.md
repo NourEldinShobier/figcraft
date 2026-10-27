@@ -340,6 +340,12 @@ a later step can use `{"$step": 0, "field": "ids/0"}` to target the first match.
 | `key {key, shift, alt, cmd}` | A shortcut or key as if typed on the canvas (every default shortcut, tool keys, Escape, Delete, arrows, number keys for opacity, arrows that pan the view when nothing is selected; while editing text, the text shortcuts and then text editing keys). Keys are names like `A`, `0`, `Enter`, `ArrowLeft`, `=`, `/`, or egui's (`Plus`, `Questionmark`); `cmd` is Cmd on macOS and Ctrl elsewhere. |
 | `type_text {text, id?}` | Type into the text being edited, or replace the contents of text layer `id`. |
 | `inspect_ui {}` | Tool, view and status (and panels, timings and the app's `windows` when attached). |
+| `get_metadata {nodeId?, depth?, maxNodes?}` | Sparse XML outline of a layer (default the current page): `<frame id name x y width height>` per layer, x/y relative to the parent, `hidden="true"` for invisible layers, `omitted="N"` for children not shown. `depth` 0–32 (default 4), `maxNodes` 1–5000 (default 500); a cut outline ends with a `<!-- truncated -->` comment. Engine command `inspect.metadata {id?, depth?, maxNodes?}` → `{xml, nodes, truncated}`. |
+| `get_variable_defs {nodeId?}` | The variables a layer, its descendants and their styles use, `{name: value}`, resolved in the layer's modes (colours as hex, numbers and booleans as strings). Default the selection. Engine command `inspect.variableDefs`. |
+| `get_design_context {nodeId?, language?, depth?}` | Everything to implement a layer in code: `code` (HTML + CSS by default; `language` as `inspect.code`, cut at 60,000 characters with `codeTruncated`), `properties` (as `inspect.properties`), `variables`, `assets` (as `inspect.assets`) and an `outline` (as `get_metadata`, `depth` default 3). Default the selection. Engine command `inspect.designContext`. |
+| `search_design_system {query, types?, limit?}` | Components, variables and styles whose name or description contains `query` (case-insensitive; empty lists all). `types`: `component`, `variable`, `style` (default all); `limit` per kind 1–200 (default 25). Returns `{components, variables, styles, total}` (`total` counts every match; variants are listed under their set). Engine command `inspect.searchDesignSystem`. |
+
+These four mirror the read tools of the Figma MCP server (`nodeId` is a FigCraft layer id, an integer). `screenshot` is Figma's `get_screenshot`; writes go through `run_command` / `batch`. Not provided: Code Connect map tools, `whoami`.
 
 ### Starter templates
 

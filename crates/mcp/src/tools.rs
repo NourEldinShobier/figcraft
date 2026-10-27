@@ -102,6 +102,10 @@ pub const TOOL_NAMES: &[&str] = &[
     "key",
     "type_text",
     "inspect_ui",
+    "get_metadata",
+    "get_variable_defs",
+    "get_design_context",
+    "search_design_system",
 ];
 
 /// All tools, in `tools/list` order.
@@ -320,6 +324,55 @@ pub fn tool_definitions() -> Vec<Value> {
             empty(),
             true,
         ),
+        tool(
+            "get_metadata",
+            "Get layer outline",
+            "A sparse XML outline of a layer and its descendants (engine `inspect.metadata`): one element per layer with id, name, x/y (relative to the parent), width and height; `hidden` for invisible layers and `omitted` = how many children are not shown (depth or node limit). Use it to find ids, then get_design_context or get_node for details. Same name and arguments as the Figma MCP tool.",
+            obj(
+                json!({
+                    "nodeId": id_schema("Layer id (default: the current page)"),
+                    "depth": int("Levels below the layer to list (default 4, max 32)"),
+                    "maxNodes": int("Most layers listed (default 500, max 5000)"),
+                }),
+                &[],
+            ),
+            true,
+        ),
+        tool(
+            "get_variable_defs",
+            "Get variables used",
+            "The variables (design tokens) a layer, its descendants and their styles use (engine `inspect.variableDefs`): {name: resolved value} in the layer's variable modes; colours as hex. Same name and arguments as the Figma MCP tool.",
+            obj(json!({"nodeId": id_schema("Layer id (default: the selection)")}), &[]),
+            true,
+        ),
+        tool(
+            "get_design_context",
+            "Get design context",
+            "Everything needed to implement a layer in code (engine `inspect.designContext`): generated `code` (HTML + CSS by default; `language` as inspect.code: css, html, react, vue, tailwind, swiftui, compose…), the layer's `properties` (layout, typography, fills, strokes, effects with style and variable names), `variables` used, exportable `assets` and a child `outline`. Same name and arguments as the Figma MCP tool.",
+            obj(
+                json!({
+                    "nodeId": id_schema("Layer id (default: the selection)"),
+                    "language": string("css | html | react | leptos | vue | tailwind | swiftui | compose | arkui (default html)"),
+                    "depth": int("Outline depth (default 3, max 32)"),
+                }),
+                &[],
+            ),
+            true,
+        ),
+        tool(
+            "search_design_system",
+            "Search design system",
+            "Search the file's components, variables and styles by name or description (engine `inspect.searchDesignSystem`). Returns `{components, variables, styles, total}`; components are ids to place with `instance.place`, variables and styles to apply with `variable.bind` / `style.apply`. Same name as the Figma MCP tool.",
+            obj(
+                json!({
+                    "query": string("Case-insensitive text to find in names and descriptions; empty lists everything"),
+                    "types": {"type": "array", "items": {"type": "string", "enum": ["component", "variable", "style"]}, "description": "Kinds to search (default all)"},
+                    "limit": int("Most results per kind (default 25, max 200)"),
+                }),
+                &[],
+            ),
+            true,
+        ),
     ]
 }
 
@@ -327,6 +380,15 @@ pub fn tool_definitions() -> Vec<Value> {
 
 fn exec(b: &mut dyn Backend, cmd: &str, params: Value) -> Result<Value, String> {
     b.call("engine.execute", json!({"command": cmd, "params": params}))
+}
+
+/// Run a read command with the tool's arguments; Figma's `nodeId` is the engine's `id`.
+fn read_command(b: &mut dyn Backend, cmd: &str, a: &Map<String, Value>) -> Result<Value, String> {
+    let mut params = a.clone();
+    if let Some(n) = params.remove("nodeId") {
+        params.entry("id").or_insert(n);
+    }
+    exec(b, cmd, Value::Object(params))
 }
 
 fn args_obj(args: &Value) -> Result<Map<String, Value>, String> {
@@ -440,6 +502,14 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
         "key" => key(b, &a),
         "type_text" => type_text(b, &a),
         "inspect_ui" => b.call("ui.inspect", json!({})).map(|v| ToolResult::json(&v)),
+        "get_metadata" => read_command(b, "inspect.metadata", &a).map(|v| match v.get("xml").and_then(Value::as_str) {
+            Some(xml) if v["truncated"] == true => ToolResult::text(format!("{xml}<!-- truncated: raise depth or maxNodes, or ask for a child's nodeId -->\n")),
+            Some(xml) => ToolResult::text(xml),
+            None => ToolResult::json(&v),
+        }),
+        "get_variable_defs" => read_command(b, "inspect.variableDefs", &a).map(|v| ToolResult::json(&v["variables"])),
+        "get_design_context" => read_command(b, "inspect.designContext", &a).map(|v| ToolResult::json(&v)),
+        "search_design_system" => read_command(b, "inspect.searchDesignSystem", &a).map(|v| ToolResult::json(&v)),
         other => Err(format!("unknown tool `{other}` (tools/list has: {})", TOOL_NAMES.join(", "))),
     };
     r.unwrap_or_else(ToolResult::error)
