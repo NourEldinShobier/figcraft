@@ -8,6 +8,7 @@ pub mod edit;
 pub mod facilitate;
 pub mod file;
 pub mod image;
+pub mod keys;
 pub mod layout;
 pub mod library;
 pub mod lists;
@@ -71,6 +72,7 @@ fn registry() -> &'static Registry {
         let mut list = Vec::new();
         list.extend(create::specs());
         list.extend(edit::specs());
+        list.extend(keys::specs());
         list.extend(lists::specs());
         list.extend(crate::selection_colors::specs());
         list.extend(arrange::specs());
@@ -78,6 +80,7 @@ fn registry() -> &'static Registry {
         list.extend(section::specs());
         list.extend(layout::specs());
         list.extend(file::specs());
+        list.extend(file::source_specs());
         list.extend(page::specs());
         list.extend(view::specs());
         list.extend(text::specs());

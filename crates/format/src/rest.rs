@@ -751,6 +751,9 @@ impl<'a> Ctx<'a> {
     fn common(&mut self, n: &mut Node, j: &Value, parent_mode: Option<LayoutMode>) {
         n.visible = flag(j, "visible").unwrap_or(true);
         n.locked = flag(j, "locked").unwrap_or(false);
+        if let Some(k) = text(j, "figcraftKey").filter(|k| figcraft_doc::key::key_problem(k).is_none()) {
+            n.set_key(Some(k));
+        }
         n.opacity = num(j, "opacity").map_or(1.0, |o| o.clamp(0.0, 1.0) as f32);
         if let Some(b) = text(j, "blendMode").and_then(props::blend_mode) {
             n.blend = b;

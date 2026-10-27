@@ -335,6 +335,9 @@ pub fn create(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(Value::Object(props)) = get(p, "props") {
         super::props::apply(cmd, doc, nid, props)?;
     }
+    if let Some(k) = string(p, "key") {
+        super::keys::claim(cmd, doc, nid, Some(&k))?;
+    }
     if boolean(p, "select").unwrap_or(true) {
         ds.selection = vec![nid];
     }

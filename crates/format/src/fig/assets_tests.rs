@@ -968,3 +968,31 @@ fn local_samples_keep_their_variables_and_styles() {
         assert_eq!(styles(&a), styles(&b), "{}", p.display());
     }
 }
+
+#[test]
+fn layer_keys_are_written_as_plugin_data_and_come_back() {
+    let mut doc = Document::new("Keys");
+    let page = doc.first_page().unwrap();
+    let frame = add(&mut doc, page, NodeKind::Frame, "Card", (0.0, 0.0), (100.0, 100.0), &|n| n.set_key(Some("card")));
+    add(&mut doc, frame, NodeKind::Rectangle, "Bg", (0.0, 0.0), (50.0, 50.0), &|n| n.set_key(Some("card/bg")));
+    add(&mut doc, frame, NodeKind::Rectangle, "Plain", (0.0, 0.0), (10.0, 10.0), &|_| {});
+    let nodes = written(&doc);
+    let kept = &named(&nodes, "Bg")["pluginData"][0];
+    assert_eq!((kept["pluginID"].as_str(), kept["key"].as_str(), kept["value"].as_str()), (Some("figcraft"), Some("key"), Some("card/bg")));
+    assert!(named(&nodes, "Plain").get("pluginData").is_none());
+    let (bytes, warnings) = export(&doc, None).unwrap();
+    assert!(warnings.iter().all(|w| !w.contains("plugin data")), "{warnings:?}");
+    let (back, _) = import(&bytes, "x").unwrap();
+    let key_of = |name: &str| back.nodes().find(|n| n.name == name).and_then(|n| n.key().map(str::to_string));
+    assert_eq!((key_of("Card").as_deref(), key_of("Bg").as_deref(), key_of("Plain")), (Some("card"), Some("card/bg"), None));
+    // A layer written as a stroke outline keeps both the stash and the key in one list.
+    let mut tap = tapered(&[(0.0, 0.0, 1.0), (0.5, 1.0, 1.0), (1.0, 0.0, 1.0)]);
+    let id = tap.nodes().find(|n| n.name == "Tapered").unwrap().id;
+    tap.node_mut(id).unwrap().set_key(Some("tap"));
+    let nodes = written(&tap);
+    let list = named(&nodes, "Tapered")["pluginData"].as_array().unwrap().clone();
+    assert_eq!(list.iter().map(|p| p["key"].as_str().unwrap()).collect::<Vec<_>>(), ["stroke", "key"]);
+    let (bytes, _) = export(&tap, None).unwrap();
+    let (back, _) = import(&bytes, "x").unwrap();
+    assert_eq!(back.nodes().find(|n| n.name == "Tapered").and_then(|n| n.key()), Some("tap"));
+}

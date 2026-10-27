@@ -184,8 +184,12 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
         }
     }
     // Layer data written with `node.set {props: {pluginData}}` (pages too).
-    if !n.plugin_data.is_empty() {
-        o.insert("pluginData".into(), json!(n.plugin_data));
+    if let Some(k) = n.key() {
+        o.insert("key".into(), json!(k));
+    }
+    let data: std::collections::BTreeMap<_, _> = n.plugin_data.iter().filter(|(k, _)| k.as_str() != figcraft_doc::key::KEY_FIELD).collect();
+    if !data.is_empty() {
+        o.insert("pluginData".into(), json!(data));
     }
     match &n.kind {
         NodeKind::Text(t) => {

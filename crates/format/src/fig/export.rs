@@ -611,6 +611,9 @@ impl<'d> Exporter<'d> {
 /// The plugin id and key under which a layer written as an outline keeps what it was.
 pub(super) const STASH: (&str, &str) = ("figcraft", "stroke");
 
+/// The plugin id and key under which a layer keeps its [`figcraft_doc::key`] key.
+pub(super) const KEY: (&str, &str) = ("figcraft", "key");
+
 /// An image's name in the file: the SHA-1 of its bytes (lowercase hex). Paints refer to images by
 /// these 20 bytes, and readers reject other hash lengths (the document's own SHA-256 key is not
 /// used here).

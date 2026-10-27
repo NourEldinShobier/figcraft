@@ -1,8 +1,12 @@
-# MCP design notes: not built yet
+# MCP design notes
 
-Two ideas from the MCP gap evaluation need a larger design than a command. Each is sketched here so the next person starts from a decision.
+Ideas from the MCP gap evaluation that need a larger design than a command. Each is sketched here so the next person starts from a decision.
 
-## Stable ids across save, open and `.fig` import
+## Stable ids across save, open and `.fig` import: built (layer keys)
+
+A layer has an optional `key` ("icon/folder"), unique per document, set by `node.create {key}` or `node.set {props: {key}}` (null clears), shown by `node.get` / `get_node` as `key`, searched by `node.find {key | keyGlob}`. It is stored as the layer's plugin data `figcraft.key` (so `Node` did not grow: 864 bytes before and after), which `.figcraft` save/open and undo keep, and which the `.fig` export writes as plugin data `figcraft`/`key` and the import reads back. Duplicates and copies get no key (a copy whose key is taken loses it); setting a taken key fails with a free alternative (`icon/folder-2`). `{"key": "card/title"}` works in place of a layer id in `id`, `ids`, `parent`, `root`, `target`, `targets`, `component`, `from`, `to` of every command (resolved per step, so a `command.batch` step can use a key an earlier step created), and a top-level `key` is the target of `node.set`, `node.get`, `node.reorder`, `node.reparent`, `edit.delete`, `edit.duplicate`, `select.set`, `object.rename`, `object.toggleVisible`, `object.toggleLock`. `node.resolveKey {key | keys}` returns ids. Code: `crates/doc/src/key.rs`, `crates/engine/src/cmd/keys.rs`. Not covered: a `.fig`/`.figcraft` file that already holds the same key twice keeps both (lookups return the first); the Sketch and REST imports have no place for keys.
+
+## Original sketch (kept for the record)
 
 Layer ids are small integers handed out per document, and a `.fig` import (and a re-import of a saved file) renumbers them, so a script that holds ids loses them across a round trip. The plan is an optional `key` string on a layer, set by `create_node {key}` or `node.set {key}` and unique within the file, stored in the `.figcraft` file and written to the `.fig` file as plugin data under a FigCraft namespace so it survives the format. Every command that takes an id would also take `{"key": "card/title"}`, resolved in `crates/engine/src/params` next to `{"$ref"}`, and `batch` could use keys in place of `as` names across calls. This touches the document model, the file formats and every id parameter parser (crates/doc, crates/format), so it should land as one change with a sweep over all commands, not piecemeal.
 

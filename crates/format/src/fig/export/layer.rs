@@ -49,7 +49,13 @@ impl<'d> Exporter<'d> {
             // (which the import puts back).
             self.warn("strokes wider on one side of their path were written as filled outlines (the stroke itself is kept for FigCraft)");
             let children = self.layer(&outline, parent, f, nested);
-            f.push(("pluginData", arr(vec![o(vec![("pluginID", s(STASH.0)), ("value", s(&original)), ("key", s(STASH.1))])])));
+            // The outline's own call wrote the layer key; both entries go in one list.
+            f.retain(|(name, _)| *name != "pluginData");
+            let mut entries = vec![o(vec![("pluginID", s(STASH.0)), ("value", s(&original)), ("key", s(STASH.1))])];
+            if let Some(k) = n.key() {
+                entries.push(o(vec![("pluginID", s(KEY.0)), ("value", s(k)), ("key", s(KEY.1))]));
+            }
+            f.push(("pluginData", arr(entries)));
             return children;
         }
         let main = match &n.kind {
@@ -296,7 +302,11 @@ impl<'d> Exporter<'d> {
         {
             self.warn("Dev Mode annotations, statuses, resources, measurements and code links were left out");
         }
-        if !n.plugin_data.is_empty() {
+        // The layer key is kept as plugin data (`figcraft` / `key`), which the import puts back.
+        if let Some(k) = n.key() {
+            f.push(("pluginData", arr(vec![o(vec![("pluginID", s(KEY.0)), ("value", s(k)), ("key", s(KEY.1))])])));
+        }
+        if n.plugin_data.keys().any(|k| k != figcraft_doc::key::KEY_FIELD) {
             self.warn("plugin data was left out");
         }
     }
