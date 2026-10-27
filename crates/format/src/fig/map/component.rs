@@ -61,6 +61,14 @@ pub(super) struct Inst<'a> {
     pub(super) slot_content: bool,
     /// Mains being expanded (an instance inside its own main stops there).
     symbols: Vec<String>,
+    /// This instance, or one it sits in, is uniformly scaled (`uniformScaleFactor`): its layers
+    /// scale with it whatever their constraints say.
+    pub(super) scale: f64,
+}
+
+/// The factor `symbolData.uniformScaleFactor` scales an instance's layers by, when it isn't 1.
+pub(super) fn uniform_scale(v: &View) -> Option<f64> {
+    v.get("symbolData").and_then(|s| num(s, "uniformScaleFactor")).filter(|k| k.is_finite() && *k > 1e-6 && (*k - 1.0).abs() > 1e-6)
 }
 
 impl<'a> Mapper<'a> {
@@ -403,6 +411,7 @@ impl<'a> Mapper<'a> {
                 slot_contents: Rc::new(slot_contents),
                 slot_content: false,
                 symbols,
+                scale: outer.map_or(1.0, |i| i.scale) * uniform_scale(v).unwrap_or(1.0),
             },
             sym,
         ))

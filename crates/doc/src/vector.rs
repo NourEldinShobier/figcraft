@@ -6,6 +6,7 @@ use figcraft_geom::{BezPath, Point, Vec2};
 use serde::{Deserialize, Serialize};
 
 use crate::{StrokeCap, StrokeJoin};
+use figcraft_color::Paint;
 
 /// How a vertex's two bezier handles follow each other when one is dragged.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -94,6 +95,17 @@ pub struct Region {
     pub loops: Vec<Vec<usize>>,
     #[serde(default)]
     pub winding: WindingRule,
+    /// The area's own fill paints; `None`: the layer's fills.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fills: Option<Vec<Paint>>,
+}
+
+/// A segment's own stroke look: its paints and weight (`None`: the layer's weight).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+pub struct SegmentStroke {
+    pub paints: Vec<Paint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weight: Option<f64>,
 }
 
 /// A rounded point as drawn: point `v` moves to `a` (on segment `s1`), segment `s2` starts again
@@ -132,6 +144,9 @@ pub struct VectorNetwork {
     pub segments: Vec<Segment>,
     #[serde(default)]
     pub regions: Vec<Region>,
+    /// Segments (by index) painted with a stroke of their own instead of the layer's.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub strokes: std::collections::BTreeMap<usize, SegmentStroke>,
 }
 
 /// Point the subpath's last segment (the only one ending at the fresh vertex `from`) at `to`,
@@ -153,9 +168,9 @@ impl VectorNetwork {
         let mut regions = Vec::new();
         if closed && n > 2 {
             segments.push(Segment::line(n - 1, 0));
-            regions.push(Region { loops: vec![(0..segments.len()).collect()], winding: WindingRule::NonZero });
+            regions.push(Region { loops: vec![(0..segments.len()).collect()], winding: WindingRule::NonZero, fills: None });
         }
-        Self { vertices, segments, regions }
+        Self { vertices, segments, regions, strokes: Default::default() }
     }
 
     /// A network from a bezier path: each subpath becomes a chain (closed subpaths a loop + region).
@@ -242,7 +257,7 @@ impl VectorNetwork {
         }
         close_open(&mut net, &mut loop_segs, &mut all_loops, first_v, cur_v);
         if !all_loops.is_empty() {
-            net.regions.push(Region { loops: all_loops, winding: WindingRule::NonZero });
+            net.regions.push(Region { loops: all_loops, winding: WindingRule::NonZero, fills: None });
         }
         net
     }
@@ -503,6 +518,60 @@ impl VectorNetwork {
         path
     }
 
+    /// Whether any region has fill paints of its own.
+    pub fn has_region_fills(&self) -> bool {
+        self.regions.iter().any(|r| r.fills.is_some())
+    }
+
+    /// The fill split by paints, in region order: each run of regions without paints of their own
+    /// is one group (paints `None`: the layer's), each region with its own a group of its own.
+    /// With the fill rule (even-odd when any region of the group is).
+    pub fn fill_groups(&self) -> Vec<(Option<Vec<Paint>>, BezPath, bool)> {
+        if let Some(r) = self.rounded() {
+            return r.fill_groups();
+        }
+        let mut out: Vec<(Option<Vec<Paint>>, BezPath, bool)> = Vec::new();
+        for region in &self.regions {
+            let even_odd = region.winding == WindingRule::EvenOdd;
+            match (out.last_mut(), &region.fills) {
+                (Some((None, path, eo)), None) => {
+                    for lp in &region.loops {
+                        self.append_loop(path, lp);
+                    }
+                    *eo |= even_odd;
+                }
+                _ => {
+                    let mut path = BezPath::new();
+                    for lp in &region.loops {
+                        self.append_loop(&mut path, lp);
+                    }
+                    out.push((region.fills.clone(), path, even_odd));
+                }
+            }
+        }
+        out
+    }
+
+    /// The network split by stroke look: the segments with the layer's stroke (`None`), then those
+    /// with a look of their own (equal looks together). Regions are left out (strokes don't use them).
+    pub fn stroke_groups(&self) -> Vec<(Option<SegmentStroke>, VectorNetwork)> {
+        let part = |keep: &dyn Fn(usize) -> bool| {
+            let segments = self.segments.iter().enumerate().filter(|(i, _)| keep(*i)).map(|(_, s)| *s).collect();
+            VectorNetwork { vertices: self.vertices.clone(), segments, ..Default::default() }
+        };
+        let mut out = vec![(None, part(&|i| !self.strokes.contains_key(&i)))];
+        let mut looks: Vec<&SegmentStroke> = Vec::new();
+        for s in self.strokes.values() {
+            if !looks.contains(&s) {
+                looks.push(s);
+            }
+        }
+        for look in looks {
+            out.push((Some(look.clone()), part(&|i| self.strokes.get(&i) == Some(look))));
+        }
+        out
+    }
+
     fn append_loop(&self, path: &mut BezPath, lp: &[usize]) {
         // Walk the loop, orienting each segment to continue from the previous end vertex.
         let segs: Vec<&Segment> = lp.iter().filter_map(|i| self.segments.get(*i)).collect();
@@ -659,6 +728,7 @@ impl VectorNetwork {
         let keep: Vec<bool> = self.segments.iter().map(|s| s.a < nv && s.b < nv).collect();
         if keep.iter().all(|k| *k) {
             let ns = self.segments.len();
+            self.strokes.retain(|i, _| *i < ns);
             for r in &mut self.regions {
                 r.loops.retain(|l| l.iter().all(|i| *i < ns));
             }
@@ -675,6 +745,7 @@ impl VectorNetwork {
             }
         }
         self.segments = out;
+        self.strokes = std::mem::take(&mut self.strokes).into_iter().filter_map(|(i, s)| Some((remap.get(i).copied().filter(|m| *m != usize::MAX)?, s))).collect();
         for r in &mut self.regions {
             r.loops.retain(|l| l.iter().all(|i| remap.get(*i).is_some_and(|m| *m != usize::MAX)));
             for l in &mut r.loops {

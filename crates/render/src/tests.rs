@@ -376,3 +376,35 @@ fn rect_clip_frame_matches_same_rect_fill_on_fractional_edges() {
         }
     }
 }
+
+#[test]
+fn vector_areas_paint_with_their_own_fills_and_segments_with_their_own_strokes() {
+    use figcraft_doc::{Region, Segment, SegmentStroke, VectorNetwork, Vertex, WindingRule};
+    let mut d = figcraft_doc::Document::new("t");
+    let p = d.first_page().unwrap();
+    let pt = figcraft_geom::Point::new;
+    let mut net = VectorNetwork::from_points(&[pt(0.0, 0.0), pt(20.0, 0.0), pt(20.0, 20.0), pt(0.0, 20.0)], true);
+    // A second square to the right, filled blue on its own; the first has the layer's red.
+    let at = net.vertices.len();
+    for (x, y) in [(40.0, 0.0), (60.0, 0.0), (60.0, 20.0), (40.0, 20.0)] {
+        net.vertices.push(Vertex::new(x, y));
+    }
+    let s0 = net.segments.len();
+    for k in 0..4 {
+        net.segments.push(Segment::line(at + k, at + (k + 1) % 4));
+    }
+    let blue = Paint::solid(Color::from_hex("0000FF").unwrap());
+    net.regions.push(Region { loops: vec![(s0..s0 + 4).collect()], winding: WindingRule::NonZero, fills: Some(vec![blue]) });
+    let v = d.create(p, NodeKind::Vector { network: net }, "V", 10.0, 10.0, 60.0, 20.0).unwrap();
+    d.get_mut(v).unwrap().fills = vec![Paint::solid(Color::from_hex("FF0000").unwrap())];
+    let pix = render_view(&d, p, &view(100, 60), &Options::default()).unwrap();
+    assert_eq!(px(&pix, 20, 20), [255, 0, 0, 255]);
+    assert_eq!(px(&pix, 60, 20), [0, 0, 255, 255]);
+    // The first square's right edge (segment 1) has a green stroke of its own, 6 wide; the layer has none.
+    if let NodeKind::Vector { network } = &mut d.get_mut(v).unwrap().kind {
+        network.strokes.insert(1, SegmentStroke { paints: vec![Paint::solid(Color::from_hex("00FF00").unwrap())], weight: Some(6.0) });
+    }
+    let pix = render_view(&d, p, &view(100, 60), &Options::default()).unwrap();
+    assert_eq!(px(&pix, 30, 20), [0, 255, 0, 255]);
+    assert_eq!(px(&pix, 20, 20), [255, 0, 0, 255]);
+}

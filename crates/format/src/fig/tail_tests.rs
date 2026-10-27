@@ -343,6 +343,60 @@ fn per_segment_stroke_styles_are_reported() {
 }
 
 #[test]
+fn segment_settings_that_change_nothing_are_not_reported() {
+    // Plain corner, no cap and the layer's own join: nothing is lost by not applying them.
+    let mut blob = square_blob();
+    blob[12 + 4 * 12..12 + 4 * 12 + 4].copy_from_slice(&9u32.to_le_bytes());
+    let mut message = tail_message();
+    let Kv::Object(fields) = &mut message else { panic!() };
+    let Kv::Array(blobs) = &mut fields.iter_mut().find(|(key, _)| *key == "blobs").unwrap().1 else { panic!() };
+    blobs[1] = o(vec![("bytes", Kv::Bytes(blob))]);
+    let Kv::Array(nodes) = &mut fields.iter_mut().find(|(key, _)| *key == "nodeChanges").unwrap().1 else { panic!() };
+    for n in nodes {
+        let Kv::Object(fs) = n else { continue };
+        if !fs.iter().any(|(k, v)| *k == "name" && matches!(v, Kv::Str(s) if s == "Wave")) {
+            continue;
+        }
+        let Some((_, Kv::Object(vd))) = fs.iter_mut().find(|(k, _)| *k == "vectorData") else { panic!() };
+        let Some((_, Kv::Array(table))) = vd.iter_mut().find(|(k, _)| *k == "styleOverrideTable") else { panic!() };
+        table.push(o(vec![("styleID", u(9)), ("cornerRadius", f(0.0)), ("strokeCap", e("NONE")), ("strokeJoin", e("MITER"))]));
+    }
+    let (_, warnings) = import(&canvas(&schema(), &message), "Tail").unwrap();
+    assert!(!warnings.iter().any(|w| w.contains("style settings of some vector segments")), "{warnings:?}");
+}
+
+#[test]
+fn regions_keep_the_fill_paints_of_their_own() {
+    let blob = network::encode(&Network {
+        vertices: vec![vtx(0, 0.0, 0.0), vtx(0, 50.0, 0.0), vtx(0, 50.0, 50.0), vtx(0, 0.0, 50.0)],
+        segments: vec![seg(0, 1, (0.0, 0.0), (0.0, 0.0)), seg(1, 2, (0.0, 0.0), (0.0, 0.0)), seg(2, 3, (0.0, 0.0), (0.0, 0.0)), seg(3, 0, (0.0, 0.0), (0.0, 0.0))],
+        regions: vec![Region { style: 9, non_zero: true, loops: vec![vec![0, 1, 2, 3]] }],
+    });
+    let mut message = tail_message();
+    let Kv::Object(fields) = &mut message else { panic!() };
+    let Kv::Array(blobs) = &mut fields.iter_mut().find(|(key, _)| *key == "blobs").unwrap().1 else { panic!() };
+    blobs[1] = o(vec![("bytes", Kv::Bytes(blob))]);
+    let Kv::Array(nodes) = &mut fields.iter_mut().find(|(key, _)| *key == "nodeChanges").unwrap().1 else { panic!() };
+    for n in nodes {
+        let Kv::Object(fs) = n else { continue };
+        if !fs.iter().any(|(k, v)| *k == "name" && matches!(v, Kv::Str(s) if s == "Wave")) {
+            continue;
+        }
+        let Some((_, Kv::Object(vd))) = fs.iter_mut().find(|(k, _)| *k == "vectorData") else { panic!() };
+        let Some((_, Kv::Array(table))) = vd.iter_mut().find(|(k, _)| *k == "styleOverrideTable") else { panic!() };
+        table.push(o(vec![("styleID", u(9)), ("fillPaints", arr(vec![solid(0.0, 0.0, 1.0)]))]));
+    }
+    let (doc, warnings) = import(&canvas(&schema(), &message), "Tail").unwrap();
+    assert!(!warnings.iter().any(|w| w.contains("filled areas of a vector")), "{warnings:?}");
+    let net = network_of(&doc, "Wave");
+    let own = net.regions[0].fills.as_ref().expect("the region keeps its own fill");
+    assert_eq!(own.len(), 1);
+    assert_eq!(own[0].solid_color().map(|c| (c.r, c.g, c.b)), Some((0.0, 0.0, 1.0)));
+    // The layer's own fill (red) stays on the layer.
+    assert_eq!(named(&doc, "Wave").fills.len(), 1);
+}
+
+#[test]
 fn other_layer_kinds_import_as_the_closest_layers() {
     let (doc, warnings) = import(&tail_canvas(), "Tail").unwrap();
     let text_of = |id| match &doc.node(id).unwrap().kind {

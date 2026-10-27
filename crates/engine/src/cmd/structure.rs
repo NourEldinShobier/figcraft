@@ -692,7 +692,7 @@ fn join(s: &mut Session, p: &Value) -> Result<Value> {
                 let last = network.vertices.len() - 1;
                 network.segments.push(Segment::line(last, 0));
                 let all: Vec<usize> = (0..network.segments.len()).collect();
-                network.regions.push(Region { loops: vec![all], winding: WindingRule::NonZero });
+                network.regions.push(Region { loops: vec![all], winding: WindingRule::NonZero, fills: None });
             }
         }
         return ok();
