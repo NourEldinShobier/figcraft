@@ -1,5 +1,5 @@
 use super::component::{Entry, Inst, OverrideRow, prop_ref, uniform_scale};
-use super::connector::connector_has_saved_label;
+use super::connector::{connector_has_saved_label, generated_record};
 use super::layout::{layout_grid, tracks};
 use super::paint::{effect, export_setting, paint, paint_bound, stroke};
 use super::*;
@@ -279,8 +279,12 @@ impl<'a> Mapper<'a> {
             }
         }
         if stand.is_some_and(|s| s.0 == "FRAME") {
-            kids.splice(0..0, self.shape_with_text(&mut o, &view, own, &rest_id));
-            kids.extend(self.inner_text(&o, &view, &rest_id, own == "STICKY"));
+            if let Some(snapshot) = self.board_snapshot(&mut o, &view, own, &rest_id, depth) {
+                kids.splice(0..0, snapshot);
+            } else {
+                kids.splice(0..0, self.shape_with_text(&mut o, &view, own, &rest_id));
+                kids.extend(self.inner_text(&o, &view, &rest_id, own == "STICKY"));
+            }
         }
         if !kids.is_empty() {
             o.insert("children".into(), Value::Array(kids));
@@ -289,6 +293,79 @@ impl<'a> Mapper<'a> {
             scale_look(&mut o, k, &|key| entries.iter().any(|e| e.entry != Entry::Stale && e.row.get(key).is_some()));
         }
         Some(Value::Object(o))
+    }
+
+    /// FigJam notes and shapes keep their paints and text on generated template children,
+    /// not on the outer node. Keep the saved layout as ordinary editable layers (including a
+    /// note's author), without applying the background's opacity or transform to the wrapper.
+    /// When no generated text survives, retain usable outer text alongside successful children.
+    fn board_snapshot(&mut self, o: &mut Obj, v: &View<'a>, own: &str, rest_id: &str, depth: usize) -> Option<Vec<Value>> {
+        if !matches!(own, "STICKY" | "SHAPE_WITH_TEXT") || v.get("nodeGenerationData").is_none() {
+            return None;
+        }
+        if v.get("derivedImmutableFrameData").and_then(|d| num(d, "version")) != Some(1.0) {
+            self.warn("note or shape generated layout is missing or unsupported; using its outer frame");
+            return None;
+        }
+        let mut children = Vec::new();
+        for local_id in 0..if own == "STICKY" { 3 } else { 2 } {
+            let style = generated_record(v, "nodeGenerationData", local_id);
+            let bounds = generated_record(v, "derivedImmutableFrameData", local_id);
+            let (Some(style), Some(bounds)) = (style, bounds) else {
+                if style.is_some() || bounds.is_some() {
+                    self.warn("note or shape generated child is missing its style or bounds; child skipped");
+                }
+                continue;
+            };
+            let child = View::of(style).with([bounds]);
+            let chars = own_text(&child);
+            if local_id != 0 && chars.is_none() {
+                continue;
+            }
+            if valid_size(child.get("size")).is_none() || child.transform().is_none() {
+                self.warn("note or shape generated child has invalid bounds; child skipped");
+                continue;
+            }
+            if self.count >= self.budget() || depth >= MAX_DEPTH {
+                self.warn("note or shape generated children exceed the layer or nesting limit; remaining children skipped");
+                break;
+            }
+            let mut layer = Obj::new();
+            let ty = if local_id == 0 { "RECTANGLE" } else { "TEXT" };
+            layer.insert("id".into(), json!(format!("{rest_id};generated{local_id}")));
+            layer.insert("type".into(), json!(ty));
+            layer.insert("name".into(), json!(chars.map_or_else(|| "Background".into(), |c| c.chars().take(40).collect::<String>())));
+            self.common(&mut layer, &child, ty, Affine::IDENTITY, None);
+            if local_id == 0 {
+                // Network decoding is only enabled for vectors; choose that type before
+                // geometry sees a saved network, then restore the rectangle if it is unusable.
+                if child.get("vectorData").is_some() {
+                    layer.insert("type".into(), json!("VECTOR"));
+                }
+                self.geometry(&mut layer, &child);
+                if layer.contains_key("fillGeometry") || layer.contains_key("strokeGeometry") || layer.contains_key("vectorNetworkRef") {
+                    layer.insert("type".into(), json!("VECTOR"));
+                } else {
+                    layer.insert("type".into(), json!("RECTANGLE"));
+                    if own == "SHAPE_WITH_TEXT" && !matches!(v.str("shapeWithTextType"), None | Some("SQUARE" | "ROUNDED_RECTANGLE")) {
+                        self.warn("shape generated outline is missing or damaged; using its rectangle");
+                    }
+                }
+                o.insert("fills".into(), json!([]));
+                o.insert("strokes".into(), json!([]));
+            } else {
+                self.text(&mut layer, &child);
+                if let Some(Value::Object(style)) = layer.get_mut("style") {
+                    style.insert("textAutoResize".into(), json!("NONE"));
+                }
+            }
+            self.count += 1;
+            children.push(Value::Object(layer));
+        }
+        if depth < MAX_DEPTH && !children.iter().any(|child| child.get("type").and_then(Value::as_str) == Some("TEXT")) {
+            children.extend(self.inner_text(o, v, rest_id, own == "STICKY"));
+        }
+        Some(children)
     }
 
     /// A non-rectangular shape-with-text's shape, as a vector under its frame (which gives up its

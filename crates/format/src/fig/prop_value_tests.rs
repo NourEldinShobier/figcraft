@@ -186,3 +186,61 @@ fn property_values_written_only_as_variables_are_applied() {
     assert_eq!(props.get("Hint"), Some(&Value::Bool(false)));
     assert_eq!(props.get("Label"), Some(&Value::String("Name on card".into())));
 }
+
+/// A main "Button" whose nested instance "Icon" (main Mail, 40) is swapped through definition 72;
+/// instance 20 of it sets the swap to Card (41). `icon_fields` bind the nested instance; `row` is
+/// an override row instance 20 writes for it.
+fn swap_message(icon_fields: Vec<(&'static str, Kv<'static>)>, row: Vec<(&'static str, Kv<'static>)>) -> Kv<'static> {
+    let mut icon = vec![("symbolData", o(vec![("symbolID", g(40))]))];
+    icon.extend(icon_fields);
+    let mut row_fields = vec![("guidPath", o(vec![("guids", Kv::Array(vec![g(13)]))]))];
+    row_fields.extend(row);
+    message(vec![
+        node(10, "SYMBOL", "Button", Some(2), vec![("componentPropDefs", Kv::Array(vec![definition(72, "Icon", "INSTANCE_SWAP", o(vec![("guidValue", g(40))]))]))]),
+        node(13, "INSTANCE", "Icon", Some(10), icon),
+        node(40, "SYMBOL", "Mail", Some(2), vec![]),
+        node(41, "SYMBOL", "Card", Some(2), vec![]),
+        node(
+            20,
+            "INSTANCE",
+            "Instance",
+            Some(2),
+            vec![
+                ("symbolData", o(vec![("symbolID", g(10)), ("symbolOverrides", Kv::Array(vec![o(row_fields)]))])),
+                ("componentPropAssignments", Kv::Array(vec![variable_assignment(72, "SYMBOL_ID", o(vec![("symbolIdValue", o(vec![("guid", g(41))]))]))])),
+            ],
+        ),
+    ])
+}
+
+/// #464: an override row with a map of its own (variable bindings only) must not hide the swap
+/// binding below it, and the older `componentPropRefs` form binds the swap as well.
+#[test]
+fn instance_swap_properties_reach_nested_instances_in_either_reference_form() {
+    let map_only = swap_message(vec![bound("OVERRIDDEN_SYMBOL_ID", 72)], vec![bound("CORNER_RADIUS", 73)]);
+    let legacy = swap_message(
+        vec![("componentPropRefs", Kv::Array(vec![o(vec![("defID", g(72)), ("componentPropNodeField", Kv::Enum("OVERRIDDEN_SYMBOL_ID"))])]))],
+        vec![],
+    );
+    let plain = swap_message(vec![bound("OVERRIDDEN_SYMBOL_ID", 72)], vec![]);
+    for (name, msg) in [("plain", plain), ("row with its own map", map_only), ("componentPropRefs", legacy)] {
+        let (rest, _, _) = to_rest(&msg, "Synthetic", crate::rest::MAX_NODES);
+        let instance = by_id(&rest["document"], "9:20");
+        assert_eq!(by_id(instance, "I9:20;9:13")["componentId"], "9:41", "{name}");
+    }
+}
+
+/// #1234: a text layer in a library instance links its style by the asset's key and version; the
+/// file's copy of that style (which says the same key and version) wins over the layer's stale size.
+#[test]
+fn a_text_style_linked_by_asset_key_beats_the_layers_own_copy() {
+    let link = |version: &str| ("styleIdForText", o(vec![("assetRef", o(vec![("key", s("abc")), ("version", s(version))]))]));
+    let text = |id: u32, name: &str, version: &str| {
+        node(id, "TEXT", name, Some(2), vec![("textData", o(vec![("characters", s("Hi"))])), ("fontSize", Kv::Float(12.0)), link(version)])
+    };
+    let style = node(30, "TEXT", "Heading", Some(2), vec![("styleType", Kv::Enum("TEXT")), ("key", s("abc")), ("version", s("7")), ("fontSize", Kv::Float(30.0))]);
+    let msg = message(vec![style, text(31, "By asset", "7"), text(32, "Other version", "9")]);
+    let (rest, _, _) = to_rest(&msg, "Synthetic", crate::rest::MAX_NODES);
+    assert_eq!(by_id(&rest["document"], "9:31")["style"]["fontSize"], 30.0);
+    assert_eq!(by_id(&rest["document"], "9:32")["style"]["fontSize"], 12.0, "an unknown version names nothing");
+}
