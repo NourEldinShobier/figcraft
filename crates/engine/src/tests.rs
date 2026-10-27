@@ -462,6 +462,12 @@ fn every_command_survives_junk_params() {
         // Layer search roots, filters and limits as junk.
         json!({"root": {"id": 2}, "name": [1], "type": "nope", "text": true, "component": [], "limit": -1}),
         json!({"root": 999999, "limit": 1e308}),
+        // Compact inspection: fields and outline with malformed types and unknown keys.
+        json!({"id": 2, "fields": "name", "outline": true}),
+        json!({"id": 2, "fields": ["name", 5]}),
+        json!({"id": 2, "fields": ["Name", "noSuchField"]}),
+        json!({"id": 2, "fields": null, "outline": []}),
+        json!({"id": 2, "outline": "yes"}),
         // Batch step names and reference paths as junk.
         json!({"commands": [{"command": "select.none", "as": "a"}, {"command": "select.none", "as": [1]}, {"command": "select.none", "as": "a"}]}),
         json!({"commands": [{"command": "select.all", "as": "\u{0}"}, {"command": "node.set", "params": {"ids": [

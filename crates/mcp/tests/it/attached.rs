@@ -85,6 +85,24 @@ fn remote_destinations_are_rejected_before_connecting() {
 }
 
 #[test]
+fn attached_inspection_forwards_compact_options_to_the_app() {
+    let mut s = Server::new(Box::new(attach(fake_app())));
+    let created = call(&mut s, "create_node", json!({"type": "text", "text": "界".repeat(121), "name": "Title"}));
+    let id = serde_json::from_str::<Value>(created["content"][0]["text"].as_str().unwrap()).unwrap()["id"].clone();
+    let r = call(&mut s, "get_node", json!({"id": id, "outline": true}));
+    assert_eq!(r["isError"], false, "{r}");
+    let outline: Value = serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(outline["characters"], format!("{}...", "界".repeat(120)));
+    assert_eq!(outline["visible"], true);
+    assert!(outline.get("fontSize").is_none());
+    let r = call(&mut s, "inspect_document", json!({"fields": [], "outline": false}));
+    assert_eq!(r["isError"], false, "{r}");
+    let compact: Value = serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(compact["pages"][0]["children"][0], json!({"id": id}));
+    assert!(compact["pages"][0].get("name").is_none());
+}
+
+#[test]
 fn attached_to_nothing_fails_cleanly() {
     let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     assert!(Attached::connect_with_token(&format!("127.0.0.1:{port}"), token()).is_err());

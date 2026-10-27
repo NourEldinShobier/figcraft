@@ -315,6 +315,8 @@ mod import_journal_tests;
 #[cfg(test)]
 mod inspect_behaviour_tests;
 #[cfg(test)]
+mod inspect_fields_tests;
+#[cfg(test)]
 mod instance_modes_tests;
 #[cfg(test)]
 mod instance_resizing_tests;
