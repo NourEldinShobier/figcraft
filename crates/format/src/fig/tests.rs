@@ -1232,3 +1232,25 @@ fn dump_samples() {
         std::fs::write(format!("{out}/{stem}.rest.json"), serde_json::to_string_pretty(&rest).unwrap()).unwrap();
     }
 }
+
+#[test]
+fn fields_the_import_never_reads_are_not_kept_in_the_tree() {
+    let field = |name: &str, ty, value| Field { name: name.into(), ty: Some(ty), array: false, value };
+    let schema = Schema {
+        defs: vec![Def {
+            name: "Message".into(),
+            kind: Kind::Message,
+            fields: vec![field("name", Type::Str, 1), field("derivedTextData", Type::Uint, 2), field("editInfo", Type::Str, 3), field("size", Type::Uint, 4)],
+        }],
+    };
+    let msg = Kv::Object(vec![
+        ("name", Kv::Str("kept".into())),
+        ("derivedTextData", Kv::Uint(7)),
+        ("editInfo", Kv::Str("history".into())),
+        ("size", Kv::Uint(3)),
+    ]);
+    let bytes = encode::message(&schema, 0, &msg).unwrap();
+    // The fields after a dropped one are still read from the right place.
+    let back = schema.decode_message(0, &bytes).unwrap();
+    assert_eq!(back, Kv::Object(vec![("name", Kv::Str("kept".into())), ("size", Kv::Uint(3))]));
+}

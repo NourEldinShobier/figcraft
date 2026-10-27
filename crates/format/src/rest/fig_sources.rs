@@ -2,6 +2,7 @@
 //! All strings borrow the bounded JSON; no names, node-kind similarity or child order match links.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 use figcraft_doc::{Document, NodeId, NodeKind};
 use serde_json::Value;
@@ -12,22 +13,22 @@ use super::{FIG_SOURCE_FIELD, MAX_DEPTH};
 // MAX_DEPTH + 2 GUIDs. Check before constructing any projected path string.
 const MAX_SOURCE_ID_BYTES: usize = 44 * (MAX_DEPTH + 2);
 
-#[derive(Clone, Copy)]
-struct Origin<'a> {
-    rest: &'a str,
-    guid: &'a str,
+#[derive(Clone)]
+struct Origin {
+    rest: Rc<str>,
+    guid: Rc<str>,
     expanded: bool,
     slot_content: bool,
     wire_frame: bool,
     wire_instance: bool,
-    component: Option<&'a str>,
+    component: Option<Rc<str>>,
 }
 
-pub(super) struct Sources<'a> {
+pub(super) struct Sources {
     /// Most layers recorded.
     max_nodes: usize,
-    nodes: BTreeMap<NodeId, Origin<'a>>,
-    duplicate_ids: BTreeSet<&'a str>,
+    nodes: BTreeMap<NodeId, Origin>,
+    duplicate_ids: BTreeSet<Rc<str>>,
     rejected: usize,
 }
 
@@ -45,15 +46,15 @@ fn expanded_id(instance: &str, origin: &str) -> Option<String> {
     Some(if instance.starts_with('I') { format!("{instance};{origin}") } else { format!("I{instance};{origin}") })
 }
 
-impl<'a> Sources<'a> {
+impl Sources {
     pub(super) fn new(max_nodes: usize) -> Self {
         Self { max_nodes, nodes: BTreeMap::new(), duplicate_ids: BTreeSet::new(), rejected: 0 }
     }
 
-    pub(super) fn record(&mut self, id: NodeId, node: &'a Value, primary: bool) {
+    pub(super) fn record(&mut self, id: NodeId, node: &Value, primary: bool) {
         let Some(rest) = node.get("id").and_then(Value::as_str) else { return };
         if !primary {
-            self.duplicate_ids.insert(rest);
+            self.duplicate_ids.insert(Rc::from(rest));
             return;
         }
         let Some(meta) = node.get(FIG_SOURCE_FIELD) else { return };
@@ -75,20 +76,20 @@ impl<'a> Sources<'a> {
         let wire_instance = !wire_frame
             && meta.get("wireInstance").and_then(Value::as_bool) == Some(true)
             && node.get("type").and_then(Value::as_str) == Some("INSTANCE");
-        let component = wire_instance.then(|| node.get("componentId").and_then(Value::as_str).filter(|id| guid(id))).flatten();
+        let component = wire_instance.then(|| node.get("componentId").and_then(Value::as_str).filter(|id| guid(id))).flatten().map(Rc::from);
         let slot_content = meta.get("slotContent").and_then(Value::as_bool).unwrap_or(false);
-        self.nodes.insert(id, Origin { rest, guid: origin, expanded, slot_content, wire_frame, wire_instance, component });
+        self.nodes.insert(id, Origin { rest: Rc::from(rest), guid: Rc::from(origin), expanded, slot_content, wire_frame, wire_instance, component });
     }
 
-    fn origin(&self, id: NodeId) -> Option<Origin<'a>> {
-        let meta = *self.nodes.get(&id)?;
-        (!self.duplicate_ids.contains(meta.rest)).then_some(meta)
+    fn origin(&self, id: NodeId) -> Option<Origin> {
+        let meta = self.nodes.get(&id)?.clone();
+        (!self.duplicate_ids.contains(&*meta.rest)).then_some(meta)
     }
 
     fn raw_in_main(&self, origin: &str, main: NodeId, doc: &Document, ids: &BTreeMap<String, NodeId>) -> Option<NodeId> {
         let target = *ids.get(origin)?;
         let meta = self.origin(target)?;
-        (!meta.expanded && meta.rest == origin && target != main && doc.is_ancestor(main, target)).then_some(target)
+        (!meta.expanded && &*meta.rest == origin && target != main && doc.is_ancestor(main, target)).then_some(target)
     }
 
     fn root_source(&self, id: NodeId, doc: &Document) -> Option<NodeId> {
@@ -107,7 +108,7 @@ impl<'a> Sources<'a> {
             meta.wire_instance
                 && matches!(doc.node(id).map(|n| &n.kind), Some(NodeKind::Frame))
                 // An existing target of the wrong kind or a cycle-blocked main is not missing.
-                && meta.component.is_some_and(|main| !ids.contains_key(main))
+                && meta.component.is_some_and(|main| !ids.contains_key(&*main))
         })
     }
 
@@ -140,7 +141,7 @@ impl<'a> Sources<'a> {
                 return false;
             }
             let Some(meta) = self.origin(current) else { return false };
-            if !meta.expanded || expanded_id(owner_meta.rest, meta.guid).as_deref() != Some(meta.rest) {
+            if !meta.expanded || expanded_id(&owner_meta.rest, &meta.guid).as_deref() != Some(&*meta.rest) {
                 return false;
             }
             let Some(parent) = doc.node(current).and_then(|n| n.parent) else { return false };
@@ -177,7 +178,7 @@ impl<'a> Sources<'a> {
         if !self.missing_frame(source_owner, doc, ids) || owner_meta.component != source_meta.component {
             return None;
         }
-        let target = *ids.get(expanded_id(source_meta.rest, meta.guid)?.as_str())?;
+        let target = *ids.get(expanded_id(&source_meta.rest, &meta.guid)?.as_str())?;
         let target_meta = self.origin(target)?;
         if !target_meta.expanded
             || target_meta.guid != meta.guid
@@ -237,14 +238,14 @@ impl<'a> Sources<'a> {
             let NodeKind::Instance { component: main, .. } = &doc.node(owner)?.kind else { return None };
             let source_owner = source_owner?;
             let target = match &doc.node(source_owner)?.kind {
-                NodeKind::Component { .. } if source_owner == *main => self.raw_in_main(meta.guid, *main, doc, ids)?,
+                NodeKind::Component { .. } if source_owner == *main => self.raw_in_main(&meta.guid, *main, doc, ids)?,
                 NodeKind::Instance { component: source_main, .. } if source_main != main => {
                     // A resolved main switch is evidence for resetting to that CURRENT main.
-                    self.raw_in_main(meta.guid, *main, doc, ids)?
+                    self.raw_in_main(&meta.guid, *main, doc, ids)?
                 }
                 NodeKind::Instance { component: source_main, .. } if source_main == main => {
                     let source_meta = self.origin(source_owner)?;
-                    let target = *ids.get(expanded_id(source_meta.rest, meta.guid)?.as_str())?;
+                    let target = *ids.get(expanded_id(&source_meta.rest, &meta.guid)?.as_str())?;
                     let target_meta = self.origin(target)?;
                     let target_owner = self.owner(target, doc, ids);
                     if !target_meta.expanded || target_meta.guid != meta.guid || target_owner != Some(source_owner) {
@@ -255,7 +256,7 @@ impl<'a> Sources<'a> {
                 NodeKind::Frame if self.origin(source_owner)?.wire_frame => {
                     // An actual wire FRAME becoming INSTANCE has no previous main. Its resolved
                     // current main is the only proven namespace for its newly expanded children.
-                    self.raw_in_main(meta.guid, *main, doc, ids)?
+                    self.raw_in_main(&meta.guid, *main, doc, ids)?
                 }
                 _ => return None,
             };

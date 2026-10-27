@@ -47,7 +47,7 @@ craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.
 kurbo = { version = "0.13", features = ["serde"] }
 thiserror = "2"
 serde = { version = "1", features = ["derive", "rc"] }
-serde_json = { version = "1", features = ["float_roundtrip"] }
+serde_json = { version = "1", features = ["float_roundtrip", "unbounded_depth"] }
 regex = "1.13"
 log = "0.4"
 same-file = "1.0.6"

@@ -756,3 +756,27 @@ fn the_fig_import_sets_its_own_layer_cap() {
     assert_eq!(doc.node_count(), 5);
     assert!(warnings.iter().any(|w| w.contains("more than 4 layers")), "{warnings:?}");
 }
+
+#[test]
+fn packed_layers_read_back_exactly() {
+    // Floats at the edge of f64 precision, negative zero, large integers and 250 levels of nesting.
+    let mut layer = json!({"id": "1:1", "type": "RECTANGLE", "name": "Ünï\u{1F600}", "a": 0.1 + 0.2, "b": -0.0, "c": 1e-300, "d": u64::MAX, "e": i64::MIN});
+    for i in 0..250 {
+        layer = json!({"id": format!("n:{i}"), "type": "FRAME", "children": [layer]});
+    }
+    assert_eq!(unpack(&pack(&layer)).unwrap(), layer);
+    assert!(unpack(b"not deflate").is_err());
+}
+
+#[test]
+fn packed_pages_import_like_the_whole_tree() {
+    let kids = json!([{"id": "1:1", "type": "FRAME", "name": "A", "children": [{"id": "1:2", "type": "RECTANGLE", "name": "B"}]}, {"id": "1:3", "type": "ELLIPSE", "name": "C"}]);
+    let whole = file(json!([page("One", kids.clone())]));
+    let (expected, _) = import_with_networks(&whole, &no_images, Vec::new(), MAX_NODES).unwrap();
+    let mut header = page("One", json!([]));
+    header.as_object_mut().unwrap().remove("children");
+    let packed = Packed { pages: vec![PackedPage { header, children: kids.as_array().unwrap().iter().map(pack).collect() }], contexts: Vec::new() };
+    let (doc, _) = import_packed(&file(json!([])), packed, &no_images, Vec::new(), MAX_NODES).unwrap();
+    assert_eq!(doc.node_count(), expected.node_count());
+    assert_eq!(serde_json::to_string(&doc).unwrap(), serde_json::to_string(&expected).unwrap());
+}

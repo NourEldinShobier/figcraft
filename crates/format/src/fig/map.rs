@@ -46,8 +46,22 @@ const MAX_ASSET_PART: usize = 256;
 
 /// The REST API file JSON for message `msg`, with the warnings about what was skipped and the
 /// vector networks its layers name by `vectorNetworkRef` (for [`crate::rest::import_with_networks`]).
+#[cfg(test)]
 pub(super) fn to_rest(msg: &Kv, name: &str, max_nodes: usize) -> (Value, Vec<String>, Vec<Option<VectorNetwork>>) {
+    let (out, _, warnings, networks) = map_file(msg, name, max_nodes, false);
+    (out, warnings, networks)
+}
+
+/// [`to_rest`] with the pages' layers and the library copies packed (see [`crate::rest::Packed`])
+/// instead of in the returned tree, which then holds no pages.
+pub(super) fn to_rest_packed(msg: &Kv, name: &str, max_nodes: usize) -> (Value, crate::rest::Packed, Vec<String>, Vec<Option<VectorNetwork>>) {
+    let (out, packed, warnings, networks) = map_file(msg, name, max_nodes, true);
+    (out, packed.unwrap_or_default(), warnings, networks)
+}
+
+fn map_file(msg: &Kv, name: &str, max_nodes: usize, pack: bool) -> (Value, Option<crate::rest::Packed>, Vec<String>, Vec<Option<VectorNetwork>>) {
     let mut m = Mapper::new(msg, max_nodes);
+    m.packed = pack.then(crate::rest::Packed::default);
     let doc = m.document();
     // Large values are moved in, never passed through `json!`, which serialises its arguments:
     // a deep copy of the whole tree, briefly holding it twice.
@@ -80,7 +94,7 @@ pub(super) fn to_rest(msg: &Kv, name: &str, max_nodes: usize) -> (Value, Vec<Str
     if !styles.is_empty() {
         out["styleDefinitions"] = Value::Array(styles);
     }
-    (out, m.warnings.finish(), m.networks)
+    (out, m.packed.take(), m.warnings.finish(), m.networks)
 }
 
 #[cfg(test)]
@@ -250,6 +264,10 @@ struct Mapper<'a> {
     network_ids: HashMap<(usize, u64, u64, usize), usize>,
     /// SVG path data by geometry blob (`None`: damaged), shared by every layer that shows the blob.
     svg_paths: HashMap<usize, Option<String>>,
+    /// When packing (see [`to_rest_packed`]): the pages and library copies packed so far, and the
+    /// layers of the page being mapped.
+    packed: Option<crate::rest::Packed>,
+    page_chunks: Vec<Vec<u8>>,
 }
 
 impl<'a> Mapper<'a> {
@@ -325,6 +343,8 @@ impl<'a> Mapper<'a> {
             networks: Vec::new(),
             network_ids: HashMap::new(),
             svg_paths: HashMap::new(),
+            packed: None,
+            page_chunks: Vec::new(),
         }
     }
 
