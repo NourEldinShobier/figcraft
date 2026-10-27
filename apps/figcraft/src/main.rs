@@ -257,8 +257,6 @@ fn main() -> eframe::Result {
     if let Some(icon) = icon {
         viewport = viewport.with_icon(icon);
     }
-    let mut options = eframe::NativeOptions { viewport, renderer: eframe::Renderer::Wgpu, ..Default::default() };
-    graphics::configure(&mut options.wgpu_options);
     figcraft_ui_egui::windows::install(fig);
     // Registered before the event loop starts, so it catches the Finder event that launched the app
     // as well as later ones. Lives until the event loop returns; the app creator only borrows it.
@@ -266,21 +264,32 @@ fn main() -> eframe::Result {
     let apple_events = apple_events::AppleEvents::install();
     #[cfg(target_os = "macos")]
     let apple_events = &apple_events;
-    let result = eframe::run_native(
-        "FigCraft",
-        options,
-        Box::new(move |cc| {
-            with_app(|fig| fig.services.set_egui_context(&cc.egui_ctx));
-            Ok(Box::new(App {
-                queue,
-                ctx_slot,
-                title: String::new(),
-                recovery,
-                #[cfg(target_os = "macos")]
-                apple_events: apple_events.connect(&cc.egui_ctx),
-            }))
-        }),
-    );
+    let run = |fallback: bool| {
+        let mut options = eframe::NativeOptions { viewport: viewport.clone(), renderer: eframe::Renderer::Wgpu, ..Default::default() };
+        graphics::configure(&mut options.wgpu_options, fallback);
+        let (queue, ctx_slot, recovery) = (queue.clone(), ctx_slot.clone(), recovery.clone());
+        eframe::run_native(
+            "FigCraft",
+            options,
+            Box::new(move |cc| {
+                with_app(|fig| fig.services.set_egui_context(&cc.egui_ctx));
+                Ok(Box::new(App {
+                    queue,
+                    ctx_slot,
+                    title: String::new(),
+                    recovery,
+                    #[cfg(target_os = "macos")]
+                    apple_events: apple_events.connect(&cc.egui_ctx),
+                }))
+            }),
+        )
+    };
+    let mut result = run(false);
+    if let Err(e) = &result {
+        if graphics::retry_on_fallback(&e.to_string(), cfg!(windows), eframe::wgpu::Backends::from_env()) {
+            result = run(true);
+        }
+    }
     // Say why instead of quitting silently: release builds on Windows have no console.
     if let Err(e) = &result {
         startup::failed(e, port.is_some());

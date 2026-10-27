@@ -1019,11 +1019,13 @@ fn index_bytes(path: &std::path::Path, len: usize) -> Option<Vec<u8>> {
         vec![0]
     };
     for at in fonts {
-        let Some(tables) = fill(&mut buf, at, 12).and_then(|()| be(&buf, at + 4, 2)) else { continue };
-        if fill(&mut buf, at + 12, 16 * tables).is_none() {
+        let Some(tables) = fill(&mut buf, at, 12).and_then(|()| be(&buf, at.checked_add(4)?, 2)) else { continue };
+        // A file-controlled offset: unchecked sums wrap on 32-bit targets.
+        let Some(first) = at.checked_add(12) else { continue };
+        if fill(&mut buf, first, 16 * tables).is_none() {
             continue;
         }
-        for rec in (0..tables).map(|t| at + 12 + 16 * t) {
+        for rec in (0..tables).map(|t| first + 16 * t) {
             if buf.get(rec..rec + 4) == Some(b"name")
                 && let (Some(off), Some(n)) = (be(&buf, rec + 8, 4), be(&buf, rec + 12, 4))
             {

@@ -15,6 +15,17 @@ use eframe::wgpu::Backends;
 /// Direct3D 12, then OpenGL: wgpu ranks a hardware GPU on either ahead of Direct3D's software one.
 const WINDOWS: Backends = Backends::DX12.union(Backends::GL);
 
+/// Vulkan, then OpenGL: the second try when Direct3D 12 opened a device that is lost at once (a
+/// machine with two GPUs where wgpu picks the one whose Direct3D 12 driver fails; Vulkan and OpenGL
+/// open fine there).
+const FALLBACK: Backends = Backends::VULKAN.union(Backends::GL);
+
+/// Whether a failed start is worth one more try on [`FALLBACK`]: on Windows, with no `WGPU_BACKEND`
+/// naming a backend, when the error says the device was lost.
+pub fn retry_on_fallback(error: &str, windows: bool, requested: Option<Backends>) -> bool {
+    windows && requested.is_none() && error.to_ascii_lowercase().contains("device is lost")
+}
+
 /// The backends wgpu chooses from: the ones `WGPU_BACKEND` asks for (`requested`), else [`WINDOWS`]
 /// on Windows, else eframe's `defaults`.
 pub fn backends(requested: Option<Backends>, windows: bool, defaults: Backends) -> Backends {
@@ -26,9 +37,9 @@ pub fn backends(requested: Option<Backends>, windows: bool, defaults: Backends) 
 }
 
 /// Offer wgpu [`backends`] instead of eframe's defaults.
-pub fn configure(options: &mut WgpuConfiguration) {
+pub fn configure(options: &mut WgpuConfiguration, fallback: bool) {
     if let WgpuSetup::CreateNew(create) = &mut options.wgpu_setup {
         let offered = &mut create.instance_descriptor.backends;
-        *offered = backends(Backends::from_env(), cfg!(windows), *offered);
+        *offered = if fallback { FALLBACK } else { backends(Backends::from_env(), cfg!(windows), *offered) };
     }
 }
