@@ -30,7 +30,7 @@ fontVariations / variationSettings ({axis: number}, e.g. {\"wght\": 550, \"wdth\
 path (a vector's SVG path data: replaces its geometry, keeping the layer, its paints, styles and bindings; width/height in the same call scale it as \
 node.create does; its own box goes at the layer's x/y, or with x/y given, at x + its left edge and y + its top as node.create places it), pointCount, innerRadius, arcStart, arcSweep, \
 arcInner, booleanOperation (a boolean group's operation, or an operand's own; null: the group's), operandOperation (a layer in a boolean \
-group: how it combines with the operands below it; null: the group's), constrainProportions, description, interactions, overflow, pluginData {k: v}";
+group: how it combines with the operands below it; null: the group's), constrainProportions, description, interactions, overflow, pluginData {k: v}, key (stable name unique in the document, e.g. \"icon/folder\"; null clears; usable in place of an id)";
 
 /// CRLF, bare CR, U+2028 and U+2029 become LF, the only line ending text layout understands (editor insertion does the same).
 pub(crate) fn normalize_line_endings(s: &str) -> String {
@@ -890,6 +890,10 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
             "description" => match &mut doc.get_mut(id)?.kind {
                 NodeKind::Component { description, .. } | NodeKind::ComponentSet { description } => *description = string_val(v).unwrap_or_default(),
                 _ => return Err(bad(cmd, "description applies to components")),
+            },
+            "key" => match v {
+                Value::Null => super::keys::claim(cmd, doc, id, None)?,
+                _ => super::keys::claim(cmd, doc, id, Some(&string_val(v).ok_or_else(|| bad(cmd, "`key` must be a string or null"))?))?,
             },
             "pluginData" => {
                 let n = doc.get_mut(id)?;

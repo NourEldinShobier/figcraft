@@ -41,10 +41,17 @@ impl Session {
         {
             ds.end_preview();
         }
+        // `{"key": ".."}` in id parameters becomes the layer id (a batch resolves per step).
+        let keyed = match self.doc() {
+            Ok(doc) if id != "command.batch" => cmd::keys::resolve_params(id, doc, params)?,
+            _ => None,
+        };
+        let run_params = keyed.as_ref().unwrap_or(params);
         let before = self.ds().ok().map(|d| (d.doc.clone(), d.selection.clone(), d.page, d.uid));
         // Cut and copy write the clipboard before a later check can refuse the command.
         let clipboard_before = self.clipboard.clone();
-        let result = guard::run(id, || (spec.run)(self, params))
+        let result = guard::run(id, || (spec.run)(self, run_params))
+            .and_then(|v| self.check_unique_keys(id, &before).map(|()| v))
             .and_then(|v| self.check_instance_structure(id, &before).map(|()| v))
             .and_then(|v| self.check_preview(id, &before).map(|()| v))
             .and_then(|v| self.check_live_access(id, &before).map(|()| v))
@@ -80,6 +87,16 @@ impl Session {
             }
         }
         result
+    }
+
+    /// Layer keys stay unique: copies lose a taken key, other layers given one fail (rolled back).
+    fn check_unique_keys(&mut self, id: &str, before: &Option<(Arc<Document>, Vec<NodeId>, NodeId, u64)>) -> Result<()> {
+        let Some((bdoc, _, _, uid)) = before else { return Ok(()) };
+        let Some(ds) = self.docs.iter_mut().find(|d| d.uid == *uid) else { return Ok(()) };
+        if Arc::ptr_eq(&ds.doc, bdoc) {
+            return Ok(());
+        }
+        cmd::keys::enforce_unique(id, &mut ds.doc, bdoc)
     }
 
     /// A version shown in place of the document is read-only: refuse an edit (it is rolled back).

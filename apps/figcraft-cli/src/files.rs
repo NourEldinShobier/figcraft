@@ -231,6 +231,12 @@ pub struct Target {
 
 pub fn export(file: &str, out: &str, t: &Target) -> CliResult<ExitCode> {
     let doc = load(file)?;
+    // Plain-text source: one file, or a folder (no extension) with the images beside it.
+    if t.format.as_deref().is_some_and(|f| f.eq_ignore_ascii_case("source")) {
+        figcraft_engine::cmd::file::write_source(&doc, out).map_err(|e| CliError::Failed(e.to_string()))?;
+        println!("{out}");
+        return Ok(ExitCode::SUCCESS);
+    }
     // `.fig`: the whole file.
     if t.format.as_deref().map_or(ext(out) == "fig", |f| f.eq_ignore_ascii_case("fig")) {
         write(out, &fig_bytes(&doc)?)?;
@@ -241,7 +247,7 @@ pub fn export(file: &str, out: &str, t: &Target) -> CliResult<ExitCode> {
     let (scale, node, print) = (t.scale, t.node.as_deref(), &t.print);
     let fmt = match t.format.as_deref() {
         Some(f) => {
-            image_format(&f.to_ascii_lowercase()).ok_or_else(|| CliError::Usage(format!("unknown --format `{f}` (png|jpg|svg|webp|pdf|xml|fig)")))?
+            image_format(&f.to_ascii_lowercase()).ok_or_else(|| CliError::Usage(format!("unknown --format `{f}` (png|jpg|svg|webp|pdf|xml|fig|source)")))?
         }
         None => image_format(&ext(out)).unwrap_or(ExportFormat::Png),
     };

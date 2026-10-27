@@ -16,6 +16,7 @@ pub mod facilitation;
 pub mod geometry;
 pub mod handoff;
 pub mod ids;
+pub mod key;
 pub mod library;
 pub mod node;
 pub mod props;

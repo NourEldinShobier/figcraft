@@ -103,6 +103,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "select",
     "export",
     "export_many",
+    "export_source",
     "screenshot",
     "open_file",
     "save_file",
@@ -168,6 +169,7 @@ pub fn tool_definitions() -> Vec<Value> {
                     "parent": id_schema("Parent frame/group/component id (default: the current page)"),
                     "index": int("Z-index among the parent's children (default: on top)"),
                     "name": string("Layer name"),
+                    "key": string("Stable key unique in the document (e.g. \"icon/folder\"); survives save, open, undo and .fig export. Any command taking a layer id also takes {\"key\": \"icon/folder\"} there. A duplicate key is an error that suggests a free one."),
                     "text": string("Characters, for type text"),
                     "path": string("SVG path data, for type vector (e.g. \"M0 0 L100 0 L50 80 Z\")"),
                     "props": {"type": "object", "description": "Any set_properties keys applied at creation, e.g. {\"fill\":\"#3366FF\",\"cornerRadius\":12,\"fontSize\":24,\"layout\":\"vertical\",\"gap\":8,\"padding\":16}"},
@@ -211,6 +213,7 @@ pub fn tool_definitions() -> Vec<Value> {
             obj(
                 json!({
                     "id": id_schema("Layer id"),
+                    "key": string("The layer's key (e.g. \"icon/folder\") instead of `id`"),
                     "depth": int("Child depth (default 1)"),
                     "fields": fields_schema(),
                     "outline": outline_schema(),
@@ -219,7 +222,7 @@ pub fn tool_definitions() -> Vec<Value> {
                         "Largest response to send, in bytes of the whole JSON-RPC message (default 8388608, which fits the usual 10 MiB client buffer); 1024 of it is kept for the envelope and the request id"
                     ),
                 }),
-                &["id"],
+                &[],
             ),
             true,
         ),
@@ -280,6 +283,13 @@ pub fn tool_definitions() -> Vec<Value> {
                 &[],
             ),
             false,
+        ),
+        tool(
+            "export_source",
+            "Export plain-text source",
+            "The whole document as canonical plain text for diffs and version control (engine `file.exportSource`; format in docs/source-format.md): JSON Lines, one object per line with sorted keys and no volatile fields, so exporting twice gives identical text and changing one fill changes one line. Layers keep their ids and keys. Without `path` the text comes back as `source`; with a `path` that has a file extension it is written there, and with a folder path (no extension) `design.jsonl` and `images/<hash>` are written. Read it back with run_command file.importSource.",
+            obj(json!({"path": string("Output file (with extension) or folder (without); omit to get the text back")}), &[]),
+            true,
         ),
         tool(
             "screenshot",
@@ -552,6 +562,7 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
         "get_node" => get_node(b, &a),
         "select" => select(b, &a),
         "export" => export(b, &a),
+        "export_source" => export_source(b, &a),
         "export_many" => export_many(b, &a),
         "screenshot" => screenshot(b, &a),
         "open_file" => open_file(b, &a),
@@ -672,7 +683,7 @@ fn create_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult
         return Err("`props` must be an object".into());
     }
     let mut params = Map::new();
-    for k in ["type", "x", "y", "width", "height", "parent", "index", "name", "text", "path", "points", "closed", "props", "select"] {
+    for k in ["type", "x", "y", "width", "height", "parent", "index", "name", "key", "text", "path", "points", "closed", "props", "select"] {
         if let Some(v) = a.get(k).filter(|v| !v.is_null()) {
             params.insert(k.into(), v.clone());
         }
@@ -860,7 +871,11 @@ fn inspect_document(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolR
 /// is about, and no depth makes that smaller because the width is at depth 1. So the subtree is
 /// cut by depth first, as the document's is, and then by a window over the children.
 fn get_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
-    let id = id_arg(a.get("id").ok_or("`id` is required")?)?;
+    let id = match (a.get("id"), s_arg(a, "key")?) {
+        (Some(v), _) => id_arg(v)?,
+        (None, Some(k)) => id_arg(b.call("node.resolveKey", json!({"key": k}))?.get("id").ok_or("no layer has that key")?)?,
+        _ => return Err("`id` or `key` is required".into()),
+    };
     let depth = n_arg(a, "depth")?.unwrap_or(1.0).clamp(0.0, 64.0) as u64;
     let offset = n_arg(a, "offset")?.unwrap_or(0.0).max(0.0).min(u32::MAX as f64) as usize;
     let options = inspection_options(a)?;
@@ -1030,6 +1045,14 @@ fn lint_icons(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult,
         params.insert("ids".into(), json!(ids));
     }
     exec(b, "inspect.lintIcons", Value::Object(params)).map(|v| ToolResult::json(&v))
+}
+
+fn export_source(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let mut params = Map::new();
+    if let Some(p) = s_arg(a, "path")? {
+        params.insert("path".into(), json!(p));
+    }
+    exec(b, "file.exportSource", Value::Object(params)).map(|v| ToolResult::json(&v))
 }
 
 fn export_many(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {

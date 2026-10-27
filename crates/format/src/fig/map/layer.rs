@@ -438,6 +438,12 @@ impl<'a> Mapper<'a> {
         if let Some(m) = v.str("maskType") {
             o.insert("maskType".into(), json!(if m == "OUTLINE" { "VECTOR" } else { m }));
         }
+        // The layer key (`figcraftKey`, our extension of the file JSON).
+        let (kid, kkey) = crate::fig::export::KEY;
+        let key = v.list("pluginData").iter().find(|p| p.get("pluginID").and_then(Kv::str) == Some(kid) && p.get("key").and_then(Kv::str) == Some(kkey));
+        if let Some(k) = key.and_then(|p| p.get("value")).and_then(Kv::str) {
+            o.insert("figcraftKey".into(), json!(k));
+        }
         copy_num(o, v, "opacity", "opacity");
         if let Some(b) = v.str("blendMode").filter(|b| *b != "UNSET") {
             o.insert("blendMode".into(), json!(b));

@@ -17,7 +17,7 @@ pub const USAGE: &str = "figcraft-cli — FigCraft without a window
 
 USAGE:
   figcraft-cli info <file> [--json]
-  figcraft-cli export <file> -o <out> [--format png|jpg|svg|webp|pdf|xml|fig] [--scale N] [--page NAME] [--node ID|NAME]
+  figcraft-cli export <file> -o <out> [--format png|jpg|svg|webp|pdf|xml|fig|source] [--scale N] [--page NAME] [--node ID|NAME]
                       [--bleed LENGTH] [--crop-marks] [--bleed-marks] [--cmyk] [--vd-compat bestEffort|exact|ignore]
   figcraft-cli convert <in> <out>
   figcraft-cli render <file> -o <out.png> [--scale N] [--page NAME]

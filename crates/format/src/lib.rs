@@ -21,6 +21,7 @@ pub mod fig;
 pub mod library;
 pub mod rest;
 pub mod sketch;
+pub mod source;
 pub mod thumbnail;
 
 pub use library::{is_valid_library_id, read_library, read_library_within};
@@ -1143,6 +1144,8 @@ mod image_budget_tests;
 mod image_tests;
 #[cfg(test)]
 mod large_tests;
+#[cfg(test)]
+mod source_tests;
 #[cfg(test)]
 mod staging_tests;
 #[cfg(test)]

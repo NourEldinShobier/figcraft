@@ -10,6 +10,7 @@ pub const NODE_KEYS: &[&str] = &[
     "absolute",
     "absoluteBounds",
     "annotations",
+    "key",
     "arc",
     "background",
     "blend",
@@ -360,8 +361,12 @@ pub fn node_json_with_options(doc: &Document, id: NodeId, depth: usize, options:
         }
     }
     // Layer data written with `node.set {props: {pluginData}}` (pages too).
-    if !n.plugin_data.is_empty() {
-        put!("pluginData", json!(n.plugin_data));
+    if let Some(k) = n.key() {
+        put!("key", json!(k));
+    }
+    let data: std::collections::BTreeMap<_, _> = n.plugin_data.iter().filter(|(k, _)| k.as_str() != figcraft_doc::key::KEY_FIELD).collect();
+    if !data.is_empty() {
+        put!("pluginData", json!(data));
     }
     match &n.kind {
         NodeKind::Text(t) => {

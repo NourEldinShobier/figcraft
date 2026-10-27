@@ -93,6 +93,9 @@ struct Extra {
     height: Option<(f64, f64)>,
     parent: Option<NodeId>,
     variant: Vec<(String, String)>,
+    /// `key`: the layer with exactly this key. `keyGlob`: keys matching a `*`/`?` pattern (case-sensitive).
+    key: Option<String>,
+    key_glob: Option<Vec<char>>,
 }
 
 impl Extra {
@@ -131,6 +134,10 @@ impl Extra {
             height: range_filter(cmd, p, "height")?,
             parent: opt_id(cmd, p, "parent")?,
             variant,
+            key: get(p, "key").map(|v| v.as_str().map(str::to_string).ok_or_else(|| bad(cmd, "`key` must be a string"))).transpose()?,
+            key_glob: get(p, "keyGlob")
+                .map(|v| v.as_str().map(|s| s.chars().collect()).ok_or_else(|| bad(cmd, "`keyGlob` must be a string")))
+                .transpose()?,
         })
     }
 
@@ -144,6 +151,8 @@ impl Extra {
             || !within(self.width, n.width)
             || !within(self.height, n.height)
             || self.parent.is_some_and(|p| n.parent != Some(p))
+            || self.key.as_ref().is_some_and(|k| n.key() != Some(k.as_str()))
+            || self.key_glob.as_ref().is_some_and(|g| !n.key().is_some_and(|k| glob_match(g, &k.chars().collect::<Vec<_>>())))
         {
             return false;
         }
@@ -423,7 +432,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "node.find",
             "Find layers",
-            "{root? (strict descendants; default current page), name?, type? (canonical layer type), text?, component? (main component name), nameRegex? (case-insensitive regular expression), nameGlob? (`*` and `?`, whole name, case-insensitive), fill? / stroke? (colour of a visible solid paint, e.g. \"#111111\"), strokeWeight? / width? / height? (a number, or {min?, max?} inclusive), parent? (direct parent id), variant? ({Property: \"Value\"} on a variant component or an instance of one), limit? (0-10000; default 100)}: every filter must match; name, text and component are case-insensitive substrings, type is exact (any case); returns {ids, total} and does not select",
+            "{root? (strict descendants; default current page), name?, type? (canonical layer type), text?, component? (main component name), nameRegex? (case-insensitive regular expression), nameGlob? (`*` and `?`, whole name, case-insensitive), fill? / stroke? (colour of a visible solid paint, e.g. \"#111111\"), strokeWeight? / width? / height? (a number, or {min?, max?} inclusive), parent? (direct parent id), variant? ({Property: \"Value\"} on a variant component or an instance of one), key? (exact layer key) / keyGlob? (`*` and `?`, case-sensitive), limit? (0-10000; default 100)}: every filter must match; name, text and component are case-insensitive substrings, type is exact (any case); returns {ids, total} and does not select",
             false,
             node_find
         ),
