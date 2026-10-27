@@ -23,6 +23,8 @@ mod export;
 #[cfg(test)]
 mod export_tests;
 #[cfg(test)]
+mod import_snapshot_tests;
+#[cfg(test)]
 mod interop_tests;
 pub mod kiwi;
 #[cfg(test)]
@@ -115,6 +117,7 @@ pub fn import(bytes: &[u8], name: &str) -> Result<(Document, Vec<String>), Forma
     drop(msg);
     let images = |r: &str| archive.image(r).or_else(|| embedded.get(r).cloned());
     let (doc, more) = crate::rest::import_with_networks(&json, &images, networks, max_nodes)?;
+    drop_later(json);
     // Both stages stop at the same cap and say so in the same words: one note (#981).
     for w in more.into_iter().filter_map(map::adapt_warning) {
         let base = w.rsplit_once(" (×").map_or(w.as_str(), |(b, _)| b);
@@ -123,6 +126,15 @@ pub fn import(bytes: &[u8], name: &str) -> Result<(Document, Vec<String>), Forma
         }
     }
     Ok((doc, warnings))
+}
+
+/// Free the REST JSON (millions of small allocations) on another thread: the caller doesn't wait
+/// for it. Plain drop on wasm.
+fn drop_later(json: serde_json::Value) {
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = std::thread::Builder::new().spawn(move || drop(json)); // a failed spawn drops it here
+    #[cfg(target_arch = "wasm32")]
+    drop(json);
 }
 
 /// A font style under the name the format uses: the standard weight names as words ("SemiBold"

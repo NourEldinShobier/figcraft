@@ -3,6 +3,7 @@ use super::connector::connector_has_saved_label;
 use super::layout::{layout_grid, tracks};
 use super::paint::{effect, export_setting, paint, paint_bound, stroke};
 use super::*;
+use std::fmt::Write as _;
 
 /// How the layers of a resized container follow it when the file gives no derived layout for
 /// them: a frame's by their constraints, from its main's size to its own; a group's scale with it.
@@ -447,8 +448,11 @@ impl<'a> Mapper<'a> {
         for key in ["fillGeometry", "strokeGeometry"] {
             let mut out = Vec::new();
             for p in v.list(key) {
-                let Some(blob) = num(p, "commandsBlob").and_then(|i| self.blobs.get(i as usize)).copied() else { continue };
-                let Some(d) = svg_path(blob) else {
+                let Some(index) = num(p, "commandsBlob").map(|i| i as usize) else { continue };
+                let Some(blob) = self.blobs.get(index).copied() else { continue };
+                // Every instance of a main shows the main's outlines: converted once per blob.
+                let d = self.svg_paths.entry(index).or_insert_with(|| svg_path(blob)).clone();
+                let Some(d) = d else {
                     self.warn("damaged vector geometry was skipped");
                     continue;
                 };
@@ -773,7 +777,8 @@ pub(super) fn svg_path(b: &[u8]) -> Option<String> {
             if !x.is_finite() {
                 return None;
             }
-            out.push_str(&format!(" {x}"));
+            // `write!` into the buffer: a `format!` per coordinate allocated and took most of the import.
+            let _ = write!(out, " {x}");
             i += 4;
         }
     }
