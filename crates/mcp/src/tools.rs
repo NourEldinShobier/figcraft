@@ -118,6 +118,8 @@ pub const TOOL_NAMES: &[&str] = &[
     "get_design_context",
     "search_design_system",
     "lint_icons",
+    "export_tokens",
+    "check_contrast",
 ];
 
 /// All tools, in `tools/list` order.
@@ -254,6 +256,7 @@ pub fn tool_definitions() -> Vec<Value> {
                     "svgIdAttribute": boolean("SVG: layer names as unique `id` attributes (default false)"),
                     "svgSimplifyStroke": boolean("SVG: strokes as `stroke` attributes where exact (default true); false writes outlines"),
                     "vdCompat": {"type": "string", "enum": ["bestEffort", "exact", "ignore"], "description": "XML: what a Vector Drawable can't draw exactly is approximated with a warning (bestEffort, default), left out with a warning (exact), or written as far as it maps without warnings (ignore: overlapping layer opacity dropped, even-odd fills kept as fillType=evenOdd, diamond gradients left out)"},
+                    "cvd": {"type": "string", "enum": ["protanopia", "deuteranopia", "tritanopia", "achromatopsia"], "description": "PNG only: simulate this colour vision deficiency"},
                     "iconPreset": boolean("SVG: tidy for icons (transforms baked into the paths, no needless groups or view-box clips, numbers to 3 decimals, the layers' box as the view box)"),
                     "currentColor": {"type": ["boolean", "string"], "description": "With iconPreset: true makes the icon's only colour `currentColor`; a hex colour like \"#111111\" does so for that colour"},
                 }),
@@ -300,6 +303,7 @@ pub fn tool_definitions() -> Vec<Value> {
                     "ids": ids_schema("Layers to render (default: the whole current page)"),
                     "scale": num("Requested scale (default 1; reduced to fit maxSize)"),
                     "maxSize": int("Largest side in pixels (default 1600)"),
+                    "cvd": {"type": "string", "enum": ["protanopia", "deuteranopia", "tritanopia", "achromatopsia"], "description": "Show the image as a person with this colour vision deficiency sees it (Machado 2009 matrices)"},
                     "window": {"description": "Capture the app window: true for the one in front, or a window id (attached app only; headless renders the page)", "anyOf": [{"type": "boolean"}, {"type": "integer"}]},
                 }),
                 &[],
@@ -437,6 +441,39 @@ pub fn tool_definitions() -> Vec<Value> {
                     "color": string("Colour every icon should use, e.g. #111111 (default: the most common)"),
                     "padding": num("Free space kept at each edge, strokes included (default grid/12, 2 at 24)"),
                     "tolerance": num("Allowed distance from the pixel grid (default 0.02)"),
+                }),
+                &[],
+            ),
+            true,
+        ),
+        tool(
+            "export_tokens",
+            "Export design tokens",
+            "Export the file's variables as design tokens (engine `variable.exportTokens`). `format` dtcg (default): Design Tokens Format Module files, one per collection and mode, `{files: [{name, collection, mode, tokens}]}`, colours as `{colorSpace: \"srgb\", components, alpha?, hex}`, lengths as `{value, unit: \"px\"}`, aliases as `{group.token}`. `css`: custom properties, the default mode on `:root` and the others on `[data-theme=\"<mode>\"]`. `tailwind`: `{theme: {extend: {colors, borderRadius, fontSize, spacing, fontFamily}}, text}` with `var(--name)` values and the css that defines them. `json`: the local variables JSON. Read-only unless `path` writes a file (a folder for dtcg). Import DTCG back with run_command `variable.importTokens`.",
+            obj(
+                json!({
+                    "format": {"type": "string", "enum": ["dtcg", "css", "tailwind", "json"], "description": "Output format (default dtcg)"},
+                    "collection": string("Collection id or name (default every collection of the file)"),
+                    "modes": {"type": "array", "items": {"type": "string"}, "description": "Mode names or ids to include (default all)"},
+                    "path": string("Write to this file (dtcg: this folder, one file per mode)"),
+                }),
+                &[],
+            ),
+            true,
+        ),
+        tool(
+            "check_contrast",
+            "Check contrast",
+            "Check text contrast against what is painted behind it (engine `a11y.checkContrast`): WCAG 2.x ratio against AA/AAA for the text size and weight, and APCA Lc, per variable mode when colours are bound to variables. Returns `{level, checked, failures: [{id, name, mode, fg, bg, ratio, requiredRatio, apcaLc, fontSize, large, boundVariable?, fixable, suggestion: {textColor, ratio}}], unknown: [{id, reason}], passed}`; `unknown` is text over a gradient, image or blended fill. With `fg` and `bg` it checks one colour pair instead (`a11y.contrast`: #767676 on #FFFFFF is 4.54). Read-only.",
+            obj(
+                json!({
+                    "ids": ids_schema("Layers whose text is checked (default: the whole current page)"),
+                    "level": {"type": "string", "enum": ["AA", "AAA"], "description": "WCAG level (default AA)"},
+                    "all": boolean("Also list the passing text layers as `results`"),
+                    "fg": string("A colour pair instead of layers: text colour"),
+                    "bg": string("A colour pair instead of layers: background colour"),
+                    "fontSize": num("With fg and bg: text size in px (default 16)"),
+                    "bold": boolean("With fg and bg: bold text"),
                 }),
                 &[],
             ),
@@ -582,6 +619,8 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
         "get_design_context" => read_command(b, "inspect.designContext", &a).map(|v| ToolResult::json(&v)),
         "search_design_system" => read_command(b, "inspect.searchDesignSystem", &a).map(|v| ToolResult::json(&v)),
         "lint_icons" => lint_icons(b, &a),
+        "export_tokens" => export_tokens(b, &a),
+        "check_contrast" => check_contrast(b, &a),
         other => Err(format!("unknown tool `{other}` (tools/list has: {})", TOOL_NAMES.join(", "))),
     };
     r.unwrap_or_else(ToolResult::error)
@@ -1055,6 +1094,34 @@ fn export_source(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResu
     exec(b, "file.exportSource", Value::Object(params)).map(|v| ToolResult::json(&v))
 }
 
+fn export_tokens(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let mut params = a.clone();
+    params.retain(|_, v| !v.is_null());
+    let r = exec(b, "variable.exportTokens", Value::Object(params))?;
+    // css and json come back as `text`: show it as such, not escaped inside JSON.
+    Ok(match (r.get("text").and_then(Value::as_str), r.get("theme")) {
+        (Some(t), None) => ToolResult::text(t.to_string()),
+        _ => ToolResult::json(&r),
+    })
+}
+
+fn check_contrast(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let mut params = a.clone();
+    params.retain(|_, v| !v.is_null());
+    if let Some(ids) = ids_arg(a, "ids")? {
+        params.insert("ids".into(), json!(ids));
+    }
+    let pair = params.contains_key("fg") || params.contains_key("bg");
+    exec(b, if pair { "a11y.contrast" } else { "a11y.checkContrast" }, Value::Object(params)).map(|v| ToolResult::json(&v))
+}
+
+/// The colour-vision simulation `a` asks for (`cvd`), checked before anything renders.
+fn cvd_arg(a: &Map<String, Value>) -> Result<Option<figcraft_render::cvd::Cvd>, String> {
+    s_arg(a, "cvd")?
+        .map(|s| figcraft_render::cvd::Cvd::parse(s).ok_or_else(|| format!("unknown cvd `{s}` (protanopia|deuteranopia|tritanopia|achromatopsia)")))
+        .transpose()
+}
+
 fn export_many(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
     let mut params = a.clone();
     params.retain(|_, v| !v.is_null());
@@ -1099,6 +1166,7 @@ fn export(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Str
         "iconPreset",
         "currentColor",
         "vdCompat",
+        "cvd",
     ] {
         if let Some(v) = a.get(k).filter(|v| !v.is_null()) {
             params.insert(k.into(), v.clone());
@@ -1136,12 +1204,18 @@ fn export(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Str
 }
 
 fn screenshot(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let cvd = cvd_arg(a)?;
+    let tint = |bytes: Vec<u8>| match cvd {
+        Some(c) => figcraft_render::cvd::filter_png(&bytes, c),
+        None => Ok(bytes),
+    };
     let id = a.get("window").and_then(Value::as_u64);
     if (id.is_some() || matches!(a.get("window"), Some(Value::Bool(true)))) && b.has_ui() {
         let bytes = match id {
             Some(id) => b.window_png(id)?,
             None => b.screenshot_png()?,
         };
+        let bytes = tint(bytes)?;
         let (w, h) = png_info(&bytes);
         return Ok(ToolResult::image(&bytes, "image/png", &json!({"source": "window", "width": w, "height": h})));
     }
@@ -1170,10 +1244,11 @@ fn screenshot(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult,
         bytes = b.render_png(&ids, scale)?;
         (w, h) = png_info(&bytes);
     }
+    let bytes = tint(bytes)?;
     Ok(ToolResult::image(
         &bytes,
         "image/png",
-        &json!({"source": if ids.is_empty() { "page" } else { "layers" }, "ids": ids, "scale": scale, "width": w, "height": h}),
+        &json!({"source": if ids.is_empty() { "page" } else { "layers" }, "ids": ids, "scale": scale, "width": w, "height": h, "cvd": cvd.map(figcraft_render::cvd::Cvd::id)}),
     ))
 }
 

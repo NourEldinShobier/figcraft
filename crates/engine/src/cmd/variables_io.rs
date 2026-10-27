@@ -69,6 +69,12 @@ fn css_safe(text: &str) -> String {
 /// default mode's values on `:root`, every other mode's on `[data-<collection>="<mode>"]`;
 /// aliases are `var(--name)`.
 fn css(doc: &Document, colls: &[&Collection], tailwind: bool) -> String {
+    css_with(doc, colls, tailwind, None, None)
+}
+
+/// [`css`] with the name other modes select on (`[data-<name>="<mode>"]`; default the collection) and the modes
+/// (names or ids) to write; the first of those is the default mode.
+pub(super) fn css_with(doc: &Document, colls: &[&Collection], tailwind: bool, attr: Option<&str>, only: Option<&[String]>) -> String {
     let vars = &doc.variables;
     // Tailwind theme names, unique per file and the same ones page code reads.
     let theme = crate::tailwind::Theme::new(doc);
@@ -78,8 +84,9 @@ fn css(doc: &Document, colls: &[&Collection], tailwind: bool) -> String {
     let roles = crate::token_roles::Roles::new(doc);
     let mut out = if tailwind { "@import \"tailwindcss\";\n\n".to_string() } else { String::new() };
     for c in colls {
-        let attr = css_var_name(&c.name);
-        for (i, m) in c.modes.iter().enumerate() {
+        let attr = attr.map_or_else(|| css_var_name(&c.name), str::to_string);
+        let wanted = c.modes.iter().filter(|m| only.is_none_or(|o| o.iter().any(|x| *x == m.id || *x == m.name)));
+        for (i, m) in wanted.enumerate() {
             let sel = match i {
                 // `static`: Tailwind otherwise drops theme variables no utility uses, and pages also
                 // read them through `var()` and `(--name)` utilities.
@@ -246,7 +253,7 @@ fn dart(vars: &Variables, colls: &[&Collection]) -> String {
     out
 }
 
-fn import(s: &mut Session, p: &Value) -> Result<Value> {
+pub(super) fn import(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "variable.import";
     let v =
         super::file::variables_param(cmd, p)?.ok_or_else(|| bad(cmd, "`variables` (the variables JSON: an object, JSON text or a path) required"))?;

@@ -8,6 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod a11y;
 mod blend;
 mod hsx;
 mod icc;
