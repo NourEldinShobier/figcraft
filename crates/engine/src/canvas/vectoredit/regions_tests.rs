@@ -31,7 +31,7 @@ fn nested(regions: Vec<Region>) -> VectorNetwork {
 }
 
 fn region(loops: Vec<Vec<usize>>, winding: WindingRule) -> Region {
-    Region { loops, winding }
+    Region { loops, winding, fills: None }
 }
 
 /// The 7.1 region: both squares as one region.

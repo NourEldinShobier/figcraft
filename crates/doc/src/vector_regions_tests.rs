@@ -30,7 +30,7 @@ fn nested() -> VectorNetwork {
 }
 
 fn region(loops: Vec<Vec<usize>>, winding: WindingRule) -> Region {
-    Region { loops, winding }
+    Region { loops, winding, fills: None }
 }
 
 fn p(x: f64, y: f64) -> Point {
@@ -87,7 +87,7 @@ fn curved_edges_count_where_the_curve_runs() {
     let mut n = VectorNetwork {
         vertices: vec![Vertex::new(0.0, 0.0), Vertex::new(120.0, 0.0)],
         segments: vec![Segment { a: 0, b: 1, ta: (0.0, -80.0), tb: (0.0, -80.0) }, Segment::line(1, 0)],
-        regions: vec![region(vec![vec![0, 1]], WindingRule::NonZero)],
+        regions: vec![region(vec![vec![0, 1]], WindingRule::NonZero)], strokes: Default::default(),
     };
     // 9. Inside the bulge, above the chord; 10. below the chord; 11. above the curve's top (-60).
     assert_eq!(n.region_at(p(60.0, -40.0)), Some(0));
@@ -106,7 +106,7 @@ fn a_single_curved_segment_loop_encloses_its_area() {
     let n = VectorNetwork {
         vertices: vec![Vertex::new(0.0, 0.0)],
         segments: vec![Segment { a: 0, b: 0, ta: (100.0, -100.0), tb: (-100.0, -100.0) }],
-        regions: vec![region(vec![vec![0]], WindingRule::NonZero)],
+        regions: vec![region(vec![vec![0]], WindingRule::NonZero)], strokes: Default::default(),
     };
     assert_eq!(n.region_at(p(0.0, -40.0)), Some(0));
     assert_eq!(n.region_at(p(0.0, 40.0)), None);
@@ -237,4 +237,47 @@ fn the_topology_key_ignores_moved_points_but_not_new_segments() {
     let k = n.topology_key();
     n.segments.push(Segment::line(0, 2));
     assert_ne!(n.topology_key(), k);
+}
+
+#[test]
+fn regions_with_their_own_fills_form_their_own_groups() {
+    use figcraft_color::{Color, Paint};
+    let mut n = VectorNetwork::default();
+    let a = square(&mut n, 0.0, 0.0, 10.0);
+    let b = square(&mut n, 20.0, 0.0, 10.0);
+    let c = square(&mut n, 40.0, 0.0, 10.0);
+    let red = vec![Paint::solid(Color::new(1.0, 0.0, 0.0, 1.0))];
+    n.regions = vec![
+        region(vec![a], WindingRule::NonZero),
+        Region { fills: Some(red.clone()), ..region(vec![b], WindingRule::NonZero) },
+        region(vec![c], WindingRule::EvenOdd),
+    ];
+    assert!(n.has_region_fills());
+    let groups = n.fill_groups();
+    let own: Vec<bool> = groups.iter().map(|g| g.0.is_some()).collect();
+    assert_eq!(own, [false, true, false]);
+    assert_eq!(groups[1].0, Some(red));
+    assert_eq!(groups.iter().map(|g| g.2).collect::<Vec<_>>(), [false, false, true]);
+    // Without own fills the regions are one group.
+    n.regions.iter_mut().for_each(|r| r.fills = None);
+    assert_eq!(n.fill_groups().len(), 1);
+}
+
+#[test]
+fn segments_with_their_own_stroke_are_split_off() {
+    use figcraft_color::{Color, Paint};
+    use crate::vector::SegmentStroke;
+    let mut n = VectorNetwork::default();
+    let s = square(&mut n, 0.0, 0.0, 10.0);
+    let look = SegmentStroke { paints: vec![Paint::solid(Color::new(0.0, 0.0, 1.0, 1.0))], weight: Some(3.0) };
+    n.strokes.insert(s[1], look.clone());
+    n.strokes.insert(s[2], look.clone());
+    let groups = n.stroke_groups();
+    assert_eq!(groups.len(), 2);
+    assert_eq!((groups[0].0.clone(), groups[0].1.segments.len()), (None, 2));
+    assert_eq!((groups[1].0.clone(), groups[1].1.segments.len()), (Some(look), 2));
+    // A segment removed by sanitizing takes its look along; the others keep theirs under new indexes.
+    n.segments[s[0]].a = 99;
+    n.sanitize();
+    assert_eq!(n.strokes.keys().copied().collect::<Vec<_>>(), [0, 1]);
 }

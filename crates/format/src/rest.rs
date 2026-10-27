@@ -732,6 +732,16 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// The fill paints some regions have of their own (`vectorRegionPaints`: one list or null per
+    /// region, our extension of the `.fig` import's JSON).
+    fn region_paints(&mut self, network: &mut VectorNetwork, j: &Value) {
+        for (region, p) in network.regions.iter_mut().zip(list(j, "vectorRegionPaints")) {
+            if p.is_array() {
+                region.fills = props::paints(self, &serde_json::json!({"fills": p}), "fills");
+            }
+        }
+    }
+
     /// A vector's network: the editable one when the JSON carries it (`vectorNetwork`, or
     /// `vectorNetworkRef` naming one built by the `.fig` import: our extensions), else from its
     /// geometry. A stroke-only vector uses the stroke outline, painted with the stroke paints
@@ -744,7 +754,8 @@ impl<'a> Ctx<'a> {
         };
         if let Some(net) = net {
             match net {
-                Some(network) => {
+                Some(mut network) => {
+                    self.region_paints(&mut network, j);
                     n.kind = NodeKind::Vector { network };
                     return false;
                 }

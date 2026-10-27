@@ -87,9 +87,10 @@ fn two_squares() -> VectorNetwork {
             Segment::line(2, 3),
             Segment::line(3, 4),
         ],
+        strokes: Default::default(),
         regions: vec![
-            Region { loops: vec![vec![0, 1, 2, 3]], winding: WindingRule::NonZero },
-            Region { loops: vec![vec![4, 5, 6, 1]], winding: WindingRule::NonZero },
+            Region { loops: vec![vec![0, 1, 2, 3]], winding: WindingRule::NonZero, fills: None },
+            Region { loops: vec![vec![4, 5, 6, 1]], winding: WindingRule::NonZero, fills: None },
         ],
     }
 }
@@ -113,9 +114,10 @@ fn two_lenses() -> VectorNetwork {
             Segment { a: 1, b: 0, ta: (0.0, -50.0), tb: (0.0, -50.0) },
             Segment { a: 0, b: 1, ta: (0.0, 50.0), tb: (0.0, 50.0) },
         ],
+        strokes: Default::default(),
         regions: vec![
-            Region { loops: vec![vec![0, 1]], winding: WindingRule::NonZero },
-            Region { loops: vec![vec![2, 0]], winding: WindingRule::NonZero },
+            Region { loops: vec![vec![0, 1]], winding: WindingRule::NonZero, fills: None },
+            Region { loops: vec![vec![2, 0]], winding: WindingRule::NonZero, fills: None },
         ],
     }
 }
@@ -131,7 +133,8 @@ fn one_shared_segment() -> VectorNetwork {
     VectorNetwork {
         vertices: vec![Vertex::new(0.0, 0.0), Vertex::new(100.0, 0.0)],
         segments: vec![Segment { a: 0, b: 1, ta: (0.0, -60.0), tb: (0.0, -60.0) }],
-        regions: vec![Region { loops: vec![vec![0]], winding: WindingRule::NonZero }, Region { loops: vec![vec![0]], winding: WindingRule::NonZero }],
+        strokes: Default::default(),
+        regions: vec![Region { loops: vec![vec![0]], winding: WindingRule::NonZero, fills: None }, Region { loops: vec![vec![0]], winding: WindingRule::NonZero, fills: None }],
     }
 }
 

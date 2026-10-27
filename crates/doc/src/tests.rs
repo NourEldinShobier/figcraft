@@ -212,7 +212,7 @@ fn vector_network_paths() {
     let mut bad = VectorNetwork {
         vertices: vec![Vertex::new(0.0, 0.0)],
         segments: vec![Segment::line(0, 5)],
-        regions: vec![Region { loops: vec![vec![0, 9]], winding: WindingRule::EvenOdd }],
+        regions: vec![Region { loops: vec![vec![0, 9]], winding: WindingRule::EvenOdd, fills: None }], strokes: Default::default(),
     };
     bad.sanitize();
     assert!(bad.segments.is_empty());
@@ -534,7 +534,7 @@ fn hit_test_even_odd_vector_hole_misses() {
         VectorNetwork {
             vertices: v1.into_iter().chain(v2).collect(),
             segments: s1.into_iter().chain(s2).collect(),
-            regions: vec![Region { loops: vec![vec![0, 1, 2, 3], vec![4, 5, 6, 7]], winding: rule }],
+            regions: vec![Region { loops: vec![vec![0, 1, 2, 3], vec![4, 5, 6, 7]], winding: rule, fills: None }], strokes: Default::default(),
         }
     };
     let mut d = Document::new("x");
@@ -637,7 +637,7 @@ fn two_segment_closed_loop_rounded_corners() {
     let net = VectorNetwork {
         vertices: vec![v0, v1],
         segments: vec![Segment { a: 0, b: 1, ta: (0.0, 0.0), tb: (0.0, 0.0) }, Segment { a: 1, b: 0, ta: (0.0, 5.0), tb: (0.0, -5.0) }],
-        regions: vec![Region { loops: vec![vec![0, 1]], winding: WindingRule::NonZero }],
+        regions: vec![Region { loops: vec![vec![0, 1]], winding: WindingRule::NonZero, fills: None }], strokes: Default::default(),
     };
     let r = net.rounded().unwrap();
     assert_eq!(r.regions[0].loops[0].len(), 4, "both arcs are in the loop");

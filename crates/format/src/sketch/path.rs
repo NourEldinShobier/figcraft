@@ -96,8 +96,8 @@ pub(crate) fn network(cx: &mut Cx, l: &Value, w: f64, h: f64, fill_open: bool) -
         })
         .collect();
     let winding = winding(l);
-    let regions = if closed { vec![Region { loops: vec![(0..segments.len()).collect()], winding }] } else { Vec::new() };
-    Some(VectorNetwork { vertices, segments, regions })
+    let regions = if closed { vec![Region { loops: vec![(0..segments.len()).collect()], winding, fills: None }] } else { Vec::new() };
+    Some(VectorNetwork { vertices, segments, regions, ..Default::default() })
 }
 
 /// Rectangle `l` with angled (corner style 2), inside-square (3) or inside-arc (4) corners in its
@@ -354,7 +354,7 @@ fn compound(cx: &mut Cx, run: &[&Value], winding: WindingRule) -> Option<VectorN
         return None;
     }
     if !loops.is_empty() {
-        out.regions.push(Region { loops, winding });
+        out.regions.push(Region { loops, winding, fills: None });
     }
     Some(out)
 }

@@ -785,7 +785,19 @@ fn draw_content(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize,
             let clips = n.clip && n.kind.is_frame_like() && !n.children.is_empty();
             // The outline fills, clips children to rounded corners and strokes booleans.
             let outline = if splatted && !(clips && n.corners.uniform() != Some(0.0)) { None } else { node_outline(doc, n) };
-            if !splatted
+            if let NodeKind::Vector { network } = &n.kind
+                && !splatted
+                && closed
+                && network.has_region_fills()
+            {
+                // Areas with fills of their own paint with them, the others with the layer's.
+                for (paints, path, even_odd) in network.fill_groups() {
+                    if let Some(tp) = ts_path(&path) {
+                        let rule = if even_odd { FillRule::EvenOdd } else { FillRule::Winding };
+                        fill_with(pix, &tp, paints.as_deref().unwrap_or(&n.fills), w, h, xf, rule, ctx, None);
+                    }
+                }
+            } else if !splatted
                 && let Some((path, rule)) = &outline
                 && closed
                 && let Some(tp) = ts_path(path)
@@ -802,7 +814,30 @@ fn draw_content(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize,
                     draw_children(ctx, pix, n, xf, depth);
                 }
             }
-            if n.has_visible_stroke() {
+            if let NodeKind::Vector { network } = &n.kind
+                && !network.strokes.is_empty()
+            {
+                // Segments with a stroke of their own, then the rest with the layer's.
+                for (look, part) in network.stroke_groups() {
+                    let mut m = n.clone();
+                    if let Some(look) = look {
+                        m.strokes = look.paints;
+                        if let Some(weight) = look.weight {
+                            m.stroke.weight = weight;
+                        }
+                    }
+                    m.kind = NodeKind::Vector { network: part };
+                    if !m.has_visible_stroke() {
+                        continue;
+                    }
+                    if let Some(g) = figcraft_doc::geometry::stroke_geometry(&m) {
+                        let area = stroke_area(&m, &g, closed);
+                        if let Some(tp) = ts_path(&area) {
+                            fill_with(pix, &tp, &m.strokes, w, h, xf, stroke_rule(&m, closed), ctx, None);
+                        }
+                    }
+                }
+            } else if n.has_visible_stroke() {
                 let geom = match &n.kind {
                     NodeKind::BooleanOp { .. } => outline.as_ref().map(|(p, _)| p.clone()),
                     _ => figcraft_doc::geometry::stroke_geometry(n),

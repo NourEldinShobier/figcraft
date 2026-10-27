@@ -1,4 +1,4 @@
-use super::component::{Entry, Inst, OverrideRow, prop_ref};
+use super::component::{Entry, Inst, OverrideRow, prop_ref, uniform_scale};
 use super::connector::connector_has_saved_label;
 use super::layout::{layout_grid, tracks};
 use super::paint::{effect, export_setting, paint, paint_bound, stroke};
@@ -111,7 +111,10 @@ impl<'a> Mapper<'a> {
         // A layer of a resized instance the file gives no derived layout for follows its
         // constraints from the main's geometry, then takes the size and place overridden on it
         // (auto layout places the others, as in the editor).
-        let derived = entries.iter().any(|e| e.entry == Entry::Derived && (e.row.get("size").is_some() || e.row.get("transform").is_some()));
+        // A uniformly scaled instance's derived rows give sizes (already scaled) but no places:
+        // the places scale with the fit.
+        let derived_row = |k: &str| entries.iter().any(|e| e.entry == Entry::Derived && e.row.get(k).is_some());
+        let derived = derived_row("transform") || (derived_row("size") && !matches!(fit, Some(Fit::Scale(..))));
         let stacked = parent.and_then(|p| p.str("stackMode")).is_some_and(|m| matches!(m, "HORIZONTAL" | "VERTICAL" | "GRID"))
             && view.str("stackPositioning") != Some("ABSOLUTE");
         let main = View::of(base);
@@ -231,7 +234,14 @@ impl<'a> Mapper<'a> {
         } else if ty == "INSTANCE" {
             if let Some((sub, sym)) = self.instance(&mut o, &view, id, inst, &rest_id) {
                 let main = self.nodes.get(&sym).map(|m| View::of(m));
-                let fit = Fit::frame(main.as_ref().and_then(View::size), view.size());
+                let (from, to) = (main.as_ref().and_then(View::size), view.size());
+                let uniform = uniform_scale(&view);
+                // A uniformly scaled instance (or one in such an instance) scales its layers whole.
+                let fit = match uniform {
+                    Some(k) => Some(Fit::Scale(k, k)),
+                    None if inst.is_some_and(|i| i.scale != 1.0) => Fit::scale(from, to),
+                    None => Fit::frame(from, to),
+                };
                 // An instance that records no auto layout of its own has its main's.
                 let view = match main {
                     Some(m) if view.get("stackMode").is_none() && m.get("stackMode").is_some() => {
@@ -260,6 +270,7 @@ impl<'a> Mapper<'a> {
             let fit = match (inst, ty) {
                 (None, _) => None,
                 (Some(_), "GROUP" | "BOOLEAN_OPERATION") => Fit::scale(View::of(base).size(), view.size()),
+                (Some(i), _) if i.scale != 1.0 => Fit::scale(View::of(base).size(), view.size()),
                 (Some(_), _) => Fit::frame(View::of(base).size(), view.size()),
             };
             for c in self.children(id) {
@@ -272,6 +283,9 @@ impl<'a> Mapper<'a> {
         }
         if !kids.is_empty() {
             o.insert("children".into(), Value::Array(kids));
+        }
+        if let Some(k) = inst.map(|i| i.scale).filter(|k| *k != 1.0) {
+            scale_look(&mut o, k, &|key| entries.iter().any(|e| e.entry != Entry::Stale && e.row.get(key).is_some()));
         }
         Some(Value::Object(o))
     }
@@ -474,12 +488,20 @@ impl<'a> Mapper<'a> {
             vd.get("styleOverrideTable").map(Kv::list).unwrap_or_default().iter().filter_map(|s| Some((num(s, "styleID")? as u64, s))).collect();
         let mut has_uninterpreted = false;
         let mut has_missing = false;
+        // A segment's settings that change nothing (plain corner, no cap, the layer's join) are no
+        // loss: the segments of most vector layers carry them.
+        let layer_join_name = v.str("strokeJoin").unwrap_or("MITER");
+        let plain = |s: &Kv| {
+            num(s, "cornerRadius").is_none_or(|r| r == 0.0)
+                && s.get("strokeCap").and_then(Kv::str).is_none_or(|c| c == "NONE")
+                && s.get("strokeJoin").and_then(Kv::str).is_none_or(|j| j == layer_join_name)
+        };
         for segment in &net.segments {
             if segment.style == 0 {
                 continue;
             }
-            if styles.contains_key(&u64::from(segment.style)) {
-                has_uninterpreted = true;
+            if let Some(s) = styles.get(&u64::from(segment.style)) {
+                has_uninterpreted |= !plain(s);
             } else {
                 has_missing = true;
             }
@@ -510,8 +532,18 @@ impl<'a> Mapper<'a> {
         let unresolved_style = net.vertices.iter().any(|p| p.style != 0 && style(p.style).is_none());
         let unknown_join = net.vertices.iter().any(|p| point_join(p).is_some_and(|j| !j.str().is_some_and(known)));
         let unsupported_join = net.vertices.iter().any(|p| point_join(p).and_then(Kv::str).is_some_and(|j| known(j) && j != layer_join));
-        if net.regions.iter().any(|r| style(r.style).is_some_and(|s| s.get("fillPaints").is_some())) {
-            self.warn("filled areas of a vector with their own fill use the layer's fill");
+        // Areas with fill paints of their own (`vectorRegionPaints`, our extension: one list or
+        // null per region).
+        let region_paints: Vec<Value> = net
+            .regions
+            .iter()
+            .map(|r| match style(r.style).and_then(|s| s.get("fillPaints")) {
+                Some(p) => Value::Array(p.list().iter().filter_map(|p| paint(p, &mut |w| self.warn(w))).collect()),
+                None => Value::Null,
+            })
+            .collect();
+        if region_paints.iter().any(|p| !p.is_null()) {
+            o.insert("vectorRegionPaints".into(), Value::Array(region_paints));
         }
         if unresolved_style {
             self.warn("some vector points refer to point settings missing from the file; they use the layer's joins and plain corners");
@@ -584,6 +616,56 @@ impl<'a> Mapper<'a> {
         };
         o.insert("vectorNetworkRef".into(), json!(id));
         true
+    }
+}
+
+/// Scale the sizes that aren't boxes (strokes, radii, effects, type, auto layout spacing) of a layer
+/// of a uniformly scaled instance by `k` (what `given` says the file gives itself is left); their boxes and places follow the fit.
+pub(super) fn scale_look(node: &mut Obj, k: f64, given: &dyn Fn(&str) -> bool) {
+    fn mul(v: &mut Value, k: f64) {
+        match v {
+            Value::Number(n) => {
+                if let Some(x) = n.as_f64().and_then(|x| serde_json::Number::from_f64(x * k)) {
+                    *v = Value::Number(x);
+                }
+            }
+            Value::Array(a) => a.iter_mut().for_each(|x| mul(x, k)),
+            Value::Object(o) => o.values_mut().for_each(|x| mul(x, k)),
+            _ => {}
+        }
+    }
+    let o = node;
+    // (REST key, the file's key): what the instance's derived or overridden rows give is already scaled.
+    for (key, field) in [
+        ("strokeWeight", "strokeWeight"),
+        ("cornerRadius", "cornerRadius"),
+        ("rectangleCornerRadii", "rectangleTopLeftCornerRadius"),
+        ("individualStrokeWeights", "borderTopWeight"),
+        ("strokeDashes", "dashPattern"),
+        ("itemSpacing", "stackSpacing"),
+        ("counterAxisSpacing", "stackCounterSpacing"),
+        ("paddingLeft", "stackHorizontalPadding"),
+        ("paddingRight", "stackPaddingRight"),
+        ("paddingTop", "stackVerticalPadding"),
+        ("paddingBottom", "stackPaddingBottom"),
+    ] {
+        if let Some(v) = o.get_mut(key).filter(|_| !given(field)) {
+            mul(v, k);
+        }
+    }
+    if !given("effects") {
+        for e in o.get_mut("effects").and_then(Value::as_array_mut).into_iter().flatten() {
+            for key in ["radius", "spread", "offset", "startRadius"] {
+                if let Some(v) = e.get_mut(key) {
+                    mul(v, k);
+                }
+            }
+        }
+    }
+    for (key, field) in [("fontSize", "fontSize"), ("letterSpacing", "letterSpacing"), ("lineHeightPx", "lineHeight")] {
+        if let Some(v) = o.get_mut("style").and_then(|s| s.get_mut(key)).filter(|_| !given(field)) {
+            mul(v, k);
+        }
     }
 }
 
