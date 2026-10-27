@@ -77,7 +77,7 @@ fn themed() -> Document {
     doc.node_mut(page).unwrap().var_modes.insert("c-space".into(), "m-only".into());
     let bind = |n: &mut Node, pairs: &[(&str, &str)]| n.bound.extend(pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())));
     let frame = add(&mut doc, page, NodeKind::Frame, "Card", (0.0, 0.0), (300.0, 200.0), &|n| {
-        n.layout = Some(AutoLayout::default());
+        n.layout = Some(Box::new(AutoLayout::default()));
         n.strokes = vec![solid(0.0, 0.0, 0.0)];
         n.stroke.sides = Some([2.0, 1.0, 1.0, 1.0]);
         n.grids = vec![LayoutGrid { kind: GridKind::Columns, ..LayoutGrid::default() }];
@@ -136,7 +136,7 @@ fn themed() -> Document {
             ],
         );
     });
-    add(&mut doc, frame, NodeKind::Text(TextData::new("Hello")), "Title", (10.0, 80.0), (60.0, 20.0), &|n| {
+    add(&mut doc, frame, NodeKind::Text(Box::new(TextData::new("Hello"))), "Title", (10.0, 80.0), (60.0, 20.0), &|n| {
         n.fills = vec![solid(0.0, 0.0, 0.0)];
         bind(
             n,
@@ -198,7 +198,8 @@ fn by_name(doc: &mut Document) {
             *v = name(v);
         }
         n.var_modes = std::mem::take(&mut n.var_modes).into_iter().map(|(c, m)| (name(&c), name(&m))).collect();
-        for r in [&mut n.styles.fill, &mut n.styles.stroke, &mut n.styles.effect, &mut n.styles.grid, &mut n.styles.text] {
+        let st = &mut *n.styles;
+        for r in [&mut st.fill, &mut st.stroke, &mut st.effect, &mut st.grid, &mut st.text] {
             *r = r.as_ref().map(name);
         }
     }
@@ -218,7 +219,7 @@ fn same_after_round_trip(doc: &Document, what: &str) -> Vec<String> {
         let mut styles = d.styles.clone();
         for s in &mut styles {
             // Held the way a layer's paints and text are.
-            let mut n = Node::new(NodeId(0), NodeKind::Text(TextData::new("")), "", 0.0, 0.0);
+            let mut n = Node::new(NodeId(0), NodeKind::Text(Box::new(TextData::new(""))), "", 0.0, 0.0);
             match &mut s.kind {
                 StyleKind::Paint { paints } => {
                     n.fills = std::mem::take(paints);
@@ -419,7 +420,7 @@ fn styled() -> Document {
     });
     let mut td = TextData::new("Title");
     td.style = heading;
-    add(&mut doc, frame, NodeKind::Text(td), "Title", (10.0, 80.0), (100.0, 32.0), &|n| {
+    add(&mut doc, frame, NodeKind::Text(Box::new(td)), "Title", (10.0, 80.0), (100.0, 32.0), &|n| {
         n.fills = vec![solid(0.0, 0.0, 0.0)];
         n.styles.text = Some("s-text".into());
     });
@@ -514,7 +515,7 @@ fn sized() -> (Document, [NodeId; 3]) {
     add(&mut doc, main, NodeKind::Rectangle, "Box", (10.0, 10.0), (40.0, 40.0), &|n| {
         n.constraints = Constraints { horizontal: HConstraint::Scale, vertical: VConstraint::Scale };
     });
-    add(&mut doc, main, NodeKind::Text(TextData::new("Card")), "Label", (56.0, 20.0), (32.0, 16.0), &|_| {});
+    add(&mut doc, main, NodeKind::Text(Box::new(TextData::new("Card"))), "Label", (56.0, 20.0), (32.0, 16.0), &|_| {});
     let mut g = Gen { r: Lcg(1), doc, image: String::new(), frames: Vec::new(), layers: Vec::new() };
     let insts = [(); 3].map(|_| g.instance(main, page, BTreeMap::new()));
     let mut doc = g.doc;
@@ -610,7 +611,7 @@ fn layers_bound_like_their_mains_are_no_overrides_in_another_mode() {
         add(&mut doc, page, NodeKind::Component { description: String::new(), props: BTreeMap::new() }, "Chip", (0.0, 300.0), (80.0, 30.0), &|n| {
             n.bound.insert("fill".into(), "v-bg".into());
         });
-    add(&mut doc, main, NodeKind::Text(TextData::new("Chip")), "Chip label", (8.0, 6.0), (40.0, 16.0), &|n| {
+    add(&mut doc, main, NodeKind::Text(Box::new(TextData::new("Chip"))), "Chip label", (8.0, 6.0), (40.0, 16.0), &|n| {
         n.fills = vec![solid(0.0, 0.0, 0.0)];
         n.bound.insert("fill".into(), "v-fg".into());
     });

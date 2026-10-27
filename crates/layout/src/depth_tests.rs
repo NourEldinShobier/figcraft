@@ -76,13 +76,13 @@ fn deeply_nested_fill_frames_lay_out_without_running_out_of_stack() {
         let mut d = Document::new("deep");
         let page = d.first_page().unwrap();
         let root = d.create(page, NodeKind::Frame, "F", 0.0, 0.0, 100.0, 100.0).unwrap();
-        d.get_mut(root).unwrap().layout = Some(AutoLayout { padding: [0.0; 4], ..AutoLayout::default() });
+        d.get_mut(root).unwrap().layout = Some(Box::new(AutoLayout { padding: [0.0; 4], ..AutoLayout::default() }));
         let mut parent = root;
         let mut chain = Vec::new();
         for _ in 0..DEEP {
             let f = d.create(parent, NodeKind::Frame, "F", 0.0, 0.0, 10.0, 10.0).unwrap();
             let n = d.get_mut(f).unwrap();
-            n.layout = Some(AutoLayout { padding: [0.0; 4], ..AutoLayout::default() });
+            n.layout = Some(Box::new(AutoLayout { padding: [0.0; 4], ..AutoLayout::default() }));
             n.child_layout.sizing_h = Sizing::Fill;
             chain.push(f);
             parent = f;

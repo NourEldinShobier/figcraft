@@ -8,7 +8,7 @@ use figcraft_doc::{AutoLayout, Document, NodeKind};
 fn al(d: &mut Document, parent: NodeId, mode: LayoutMode, (w, h): (f64, f64), (sh, sv): (Sizing, Sizing)) -> NodeId {
     let f = d.create(parent, NodeKind::Frame, "F", 0.0, 0.0, w, h).unwrap();
     let n = d.get_mut(f).unwrap();
-    n.layout = Some(AutoLayout { mode, gap: 10.0, padding: [0.0; 4], ..Default::default() });
+    n.layout = Some(Box::new(AutoLayout { mode, gap: 10.0, padding: [0.0; 4], ..Default::default() }));
     n.child_layout.sizing_h = sh;
     n.child_layout.sizing_v = sv;
     f

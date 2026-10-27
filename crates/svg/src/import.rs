@@ -431,7 +431,7 @@ fn paint_path(cx: &mut Ctx, p: &usvg::Path, mut n: Node, transform: Affine, worl
     n.strokes.clear();
     if let Some(s) = p.stroke().filter(|_| with_stroke) {
         n.strokes = paint::paint(cx, s.paint(), s.opacity().get(), target).into_iter().collect();
-        n.stroke = stroke_props(s, length_scale(world));
+        n.stroke = stroke_props(s, length_scale(world)).into();
         // A stroke painted under the fill shows only its outer half.
         if p.paint_order() == usvg::PaintOrder::StrokeAndFill && !n.fills.is_empty() && figcraft_doc::geometry::is_closed(&n) {
             n.stroke.align = StrokeAlign::Outside;

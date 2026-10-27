@@ -189,8 +189,9 @@ impl<'d> Exporter<'d> {
         let bound = self.bound(n);
         // Text whose own style sets fills paints with them (the layer's fills only show through
         // runs); a variable bound to the layer's fill colours the layer's.
-        let fills = match &n.kind {
-            NodeKind::Text(TextData { style: TextStyle { fills: Some(own), .. }, .. }) => self.paints(own, true, &Bound::default()),
+        let own_fills = n.kind.text().and_then(|t| t.style.fills.as_ref());
+        let fills = match own_fills {
+            Some(own) => self.paints(own, true, &Bound::default()),
             _ => self.paints(&n.fills, true, &bound),
         };
         let strokes = self.paints(&n.strokes, false, &bound);

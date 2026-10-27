@@ -43,7 +43,7 @@ fn run(c: &Case<'_>) -> Vec<(f64, f64, f64, f64)> {
     let page = d.first_page().unwrap();
     let f = d.create(page, NodeKind::Frame, "F", 0.0, 0.0, c.size.0, c.size.1).unwrap();
     let n = d.get_mut(f).unwrap();
-    n.layout = Some(AutoLayout {
+    n.layout = Some(Box::new(AutoLayout {
         mode: if c.vertical { LayoutMode::Vertical } else { LayoutMode::Horizontal },
         wrap: true,
         gap: 10.0,
@@ -52,7 +52,7 @@ fn run(c: &Case<'_>) -> Vec<(f64, f64, f64, f64)> {
         cross_align: c.cross,
         content_align: c.content,
         ..AutoLayout::default()
-    });
+    }));
     if c.hug_cross {
         *(if c.vertical { &mut n.child_layout.sizing_h } else { &mut n.child_layout.sizing_v }) = Sizing::Hug;
     }

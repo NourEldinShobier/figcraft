@@ -93,7 +93,7 @@ pub(crate) fn sample_doc() -> (Document, Vec<NodeId>) {
     // Text.
     let mut td = TextData::new("Hello PDF");
     td.style.font_size = 24.0;
-    let t = d.create(f1, NodeKind::Text(td), "T", 16.0, 200.0, 280.0, 32.0).unwrap();
+    let t = d.create(f1, NodeKind::Text(Box::new(td)), "T", 16.0, 200.0, 280.0, 32.0).unwrap();
     d.get_mut(t).unwrap().fills = vec![Paint::solid(Color::from_hex("111111").unwrap())];
     // A child sticking out of the frame (clipped).
     d.create(f1, NodeKind::Rectangle, "Out", 280.0, 200.0, 100.0, 100.0).unwrap();
@@ -236,7 +236,7 @@ fn hostile_inputs_error_or_skip() {
             visible: true,
         }];
     }
-    let t = d.create(f, NodeKind::Text(TextData::new("x")), "T", 0.0, 0.0, 10.0, 10.0).unwrap();
+    let t = d.create(f, NodeKind::Text(Box::new(TextData::new("x"))), "T", 0.0, 0.0, 10.0, 10.0).unwrap();
     if let NodeKind::Text(td) = &mut d.get_mut(t).unwrap().kind {
         td.style.font_size = f64::NAN;
     }

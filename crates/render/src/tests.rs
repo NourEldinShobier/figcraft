@@ -230,7 +230,7 @@ fn text_renders_something() {
     let p = d.first_page().unwrap();
     let mut td = TextData::new("Hello");
     td.style.font_size = 32.0;
-    d.create(p, NodeKind::Text(td), "T", 0.0, 0.0, 200.0, 50.0).unwrap();
+    d.create(p, NodeKind::Text(Box::new(td)), "T", 0.0, 0.0, 200.0, 50.0).unwrap();
     let pix = render_view(&d, p, &view(200, 60), &Options { background: Some(Color::WHITE), ..Default::default() }).unwrap();
     let dark = pix.data().as_chunks::<4>().0.iter().filter(|c| c[0] < 100).count();
     if figcraft_text::find_face("Inter", "Regular").is_some() {
@@ -253,7 +253,7 @@ fn colour_emoji_draw_their_pixels() {
     let mut td = TextData::new("\u{1F600}");
     (td.style.font_family, td.style.font_style) = (family.clone(), style.clone());
     td.style.font_size = 48.0;
-    d.create(p, NodeKind::Text(td), "T", 0.0, 0.0, 200.0, 64.0).unwrap();
+    d.create(p, NodeKind::Text(Box::new(td)), "T", 0.0, 0.0, 200.0, 64.0).unwrap();
     let pix = render_view(&d, p, &view(100, 80), &Options { background: Some(Color::WHITE), ..Default::default() }).unwrap();
     // The emoji is the only thing in this document that paints saturated colour.
     let coloured = pix

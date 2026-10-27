@@ -5,7 +5,7 @@ fn setup(mode: LayoutMode) -> (Document, NodeId, Vec<NodeId>) {
     let mut d = Document::new("t");
     let p = d.first_page().unwrap();
     let f = d.create(p, NodeKind::Frame, "F", 0.0, 0.0, 300.0, 100.0).unwrap();
-    d.get_mut(f).unwrap().layout = Some(AutoLayout { mode, gap: 10.0, padding: [5.0, 5.0, 5.0, 5.0], ..Default::default() });
+    d.get_mut(f).unwrap().layout = Some(Box::new(AutoLayout { mode, gap: 10.0, padding: [5.0, 5.0, 5.0, 5.0], ..Default::default() }));
     let a = d.create(f, NodeKind::Rectangle, "A", 0.0, 0.0, 50.0, 20.0).unwrap();
     let b = d.create(f, NodeKind::Rectangle, "B", 0.0, 0.0, 30.0, 40.0).unwrap();
     (d, f, vec![a, b])
@@ -81,7 +81,7 @@ fn wrap_into_rows() {
     let mut d = Document::new("t");
     let p = d.first_page().unwrap();
     let f = d.create(p, NodeKind::Frame, "F", 0.0, 0.0, 100.0, 100.0).unwrap();
-    d.get_mut(f).unwrap().layout = Some(AutoLayout { wrap: true, gap: 10.0, cross_gap: 5.0, padding: [0.0; 4], ..Default::default() });
+    d.get_mut(f).unwrap().layout = Some(Box::new(AutoLayout { wrap: true, gap: 10.0, cross_gap: 5.0, padding: [0.0; 4], ..Default::default() }));
     d.get_mut(f).unwrap().child_layout.sizing_v = Sizing::Hug;
     let ids: Vec<NodeId> = (0..5).map(|i| d.create(f, NodeKind::Rectangle, &format!("R{i}"), 0.0, 0.0, 40.0, 20.0).unwrap()).collect();
     layout_frame(&mut d, f, &NoMeasure);
@@ -95,7 +95,7 @@ fn grid_mode() {
     let mut d = Document::new("t");
     let p = d.first_page().unwrap();
     let f = d.create(p, NodeKind::Frame, "F", 0.0, 0.0, 210.0, 110.0).unwrap();
-    d.get_mut(f).unwrap().layout = Some(AutoLayout {
+    d.get_mut(f).unwrap().layout = Some(Box::new(AutoLayout {
         mode: LayoutMode::Grid,
         grid_columns: 2,
         grid_rows: 2,
@@ -103,7 +103,7 @@ fn grid_mode() {
         cross_gap: 10.0,
         padding: [0.0; 4],
         ..Default::default()
-    });
+    }));
     let ids: Vec<NodeId> = (0..4).map(|i| d.create(f, NodeKind::Rectangle, &format!("R{i}"), 0.0, 0.0, 10.0, 10.0).unwrap()).collect();
     layout_frame(&mut d, f, &NoMeasure);
     assert_eq!(pos(&d, ids[3]).0, 110.0);
@@ -115,10 +115,10 @@ fn nested_hug_propagates_with_layout_page() {
     let mut d = Document::new("t");
     let p = d.first_page().unwrap();
     let outer = d.create(p, NodeKind::Frame, "Outer", 0.0, 0.0, 10.0, 10.0).unwrap();
-    d.get_mut(outer).unwrap().layout = Some(AutoLayout { padding: [0.0; 4], ..Default::default() });
+    d.get_mut(outer).unwrap().layout = Some(Box::new(AutoLayout { padding: [0.0; 4], ..Default::default() }));
     d.get_mut(outer).unwrap().child_layout.sizing_h = Sizing::Hug;
     let inner = d.create(outer, NodeKind::Frame, "Inner", 0.0, 0.0, 10.0, 10.0).unwrap();
-    d.get_mut(inner).unwrap().layout = Some(AutoLayout { padding: [0.0; 4], gap: 0.0, ..Default::default() });
+    d.get_mut(inner).unwrap().layout = Some(Box::new(AutoLayout { padding: [0.0; 4], gap: 0.0, ..Default::default() }));
     d.get_mut(inner).unwrap().child_layout.sizing_h = Sizing::Hug;
     d.create(inner, NodeKind::Rectangle, "R", 0.0, 0.0, 77.0, 10.0).unwrap();
     layout_page(&mut d, p, &NoMeasure);
@@ -181,7 +181,7 @@ impl Measure for FakeMeasure {
 }
 
 pub(super) fn text(d: &mut Document, parent: NodeId, name: &str) -> NodeId {
-    d.create(parent, NodeKind::Text(figcraft_doc::TextData::new(name)), name, 0.0, 0.0, 10.0, 10.0).unwrap()
+    d.create(parent, NodeKind::Text(Box::new(figcraft_doc::TextData::new(name))), name, 0.0, 0.0, 10.0, 10.0).unwrap()
 }
 
 #[test]
@@ -248,7 +248,7 @@ fn hug_text_wraps_at_max_width() {
     let mut d = Document::new("t");
     let p = d.first_page().unwrap();
     let f = d.create(p, NodeKind::Frame, "F", 0.0, 0.0, 10.0, 10.0).unwrap();
-    d.get_mut(f).unwrap().layout = Some(AutoLayout { padding: [0.0; 4], ..Default::default() });
+    d.get_mut(f).unwrap().layout = Some(Box::new(AutoLayout { padding: [0.0; 4], ..Default::default() }));
     let t = text(&mut d, f, "Long");
     d.get_mut(t).unwrap().child_layout.sizing_h = Sizing::Hug;
     let m = FakeMeasure([(t, (200.0, 20.0, 15.0))].into_iter().collect());
@@ -295,7 +295,7 @@ fn baseline_alignment_horizontal() {
     let mut d = Document::new("t");
     let p = d.first_page().unwrap();
     let f = d.create(p, NodeKind::Frame, "F", 0.0, 0.0, 10.0, 10.0).unwrap();
-    d.get_mut(f).unwrap().layout = Some(AutoLayout { padding: [5.0; 4], gap: 0.0, cross_align: CrossAlign::Baseline, ..Default::default() });
+    d.get_mut(f).unwrap().layout = Some(Box::new(AutoLayout { padding: [5.0; 4], gap: 0.0, cross_align: CrossAlign::Baseline, ..Default::default() }));
     d.get_mut(f).unwrap().child_layout.sizing_v = Sizing::Hug;
     let small = text(&mut d, f, "small");
     let big = text(&mut d, f, "big");
@@ -310,7 +310,7 @@ fn baseline_alignment_horizontal() {
     assert_eq!(d.node(f).unwrap().height, 50.0);
     // Nested auto layout frames align on their first child's baseline.
     let outer = d.create(p, NodeKind::Frame, "O", 0.0, 0.0, 400.0, 100.0).unwrap();
-    d.get_mut(outer).unwrap().layout = Some(AutoLayout { padding: [0.0; 4], gap: 0.0, cross_align: CrossAlign::Baseline, ..Default::default() });
+    d.get_mut(outer).unwrap().layout = Some(Box::new(AutoLayout { padding: [0.0; 4], gap: 0.0, cross_align: CrossAlign::Baseline, ..Default::default() }));
     d.reparent(f, outer, None).unwrap();
     let t2 = text(&mut d, outer, "t2");
     let m = FakeMeasure([(small, (30.0, 14.0, 10.0)), (big, (60.0, 40.0, 30.0)), (t2, (20.0, 60.0, 50.0))].into_iter().collect());
@@ -329,7 +329,7 @@ fn grid_frame(cols: u32, w: f64, h: f64) -> (Document, NodeId) {
     let mut d = Document::new("t");
     let p = d.first_page().unwrap();
     let f = d.create(p, NodeKind::Frame, "G", 0.0, 0.0, w, h).unwrap();
-    d.get_mut(f).unwrap().layout = Some(AutoLayout {
+    d.get_mut(f).unwrap().layout = Some(Box::new(AutoLayout {
         mode: LayoutMode::Grid,
         grid_columns: cols,
         grid_rows: 1,
@@ -337,7 +337,7 @@ fn grid_frame(cols: u32, w: f64, h: f64) -> (Document, NodeId) {
         cross_gap: 10.0,
         padding: [0.0; 4],
         ..Default::default()
-    });
+    }));
     (d, f)
 }
 

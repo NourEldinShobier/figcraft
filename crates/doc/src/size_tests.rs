@@ -1,5 +1,7 @@
-﻿//! `cargo test --release -p figcraft-doc size_report -- --ignored --nocapture` prints the size of
+//! `cargo test --release -p figcraft-doc size_report -- --ignored --nocapture` prints the size of
 //! `Node` and its field groups (memory work: keep cold payloads small or boxed).
+
+#![cfg(test)]
 
 use super::node::*;
 use super::props::*;

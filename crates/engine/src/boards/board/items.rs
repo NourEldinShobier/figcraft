@@ -37,7 +37,7 @@ pub(crate) fn add_text(doc: &mut Document, parent: NodeId, text: &str, size: f64
         ..TextData::default()
     };
     td.style.font_size = size;
-    let id = add(doc, parent, NodeKind::Text(td), name, (0.0, 0.0), (width.max(1.0), size * 1.4), |n| {
+    let id = add(doc, parent, NodeKind::Text(Box::new(td)), name, (0.0, 0.0), (width.max(1.0), size * 1.4), |n| {
         n.fills = vec![Paint::solid(color)];
         n.child_layout.sizing_h = Sizing::Fill;
     })?;
@@ -70,13 +70,13 @@ fn make_sticky(doc: &mut Document, parent: NodeId, at: (f64, f64), text: &str, c
         n.corners.radii = [2.0; 4];
         n.effects = vec![soft_shadow()];
         n.clip = false;
-        n.layout = Some(AutoLayout {
+        n.layout = Some(Box::new(AutoLayout {
             mode: LayoutMode::Vertical,
             gap: 8.0,
             padding: [STICKY_PAD; 4],
             main_align: MainAlign::SpaceBetween,
             ..AutoLayout::default()
-        });
+        }));
         n.child_layout.sizing_v = Sizing::Hug;
         n.child_layout.min_h = Some(STICKY);
         n.board = Some(BoardItem::Sticky { author: author.to_string() });
@@ -180,13 +180,13 @@ fn make_shape(
     let id = add(doc, parent, NodeKind::Frame, shape.label(), at, size, |n| {
         n.fills.clear();
         n.clip = false;
-        n.layout = Some(AutoLayout {
+        n.layout = Some(Box::new(AutoLayout {
             mode: LayoutMode::Vertical,
             padding: shape_padding(shape, w, h),
             main_align: MainAlign::Center,
             cross_align: CrossAlign::Center,
             ..AutoLayout::default()
-        });
+        }));
         n.board = Some(BoardItem::Shape { shape });
     })?;
     add(doc, id, NodeKind::Vector { network: VectorNetwork::from_path(&shape.path(w, h)) }, "Outline", (0.0, 0.0), size, |n| {

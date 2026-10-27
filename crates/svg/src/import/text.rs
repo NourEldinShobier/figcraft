@@ -330,12 +330,12 @@ fn add_layer(
     }
     td.normalize();
     let name = if t.id().is_empty() { first.text.chars().take(64).collect() } else { layer_name(t.id(), "Text") };
-    let mut n = Node::new(cx.doc.alloc_id(), NodeKind::Text(td), name, w, h);
+    let mut n = Node::new(cx.doc.alloc_id(), NodeKind::Text(Box::new(td)), name, w, h);
     n.transform = transform;
     n.fills = base_fill;
     if let Some(st) = spans.first().and_then(|sp| sp.stroke()) {
         n.strokes = paint(cx, st.paint(), st.opacity().get(), target).into_iter().collect();
-        n.stroke = super::stroke_props(st, s);
+        n.stroke = super::stroke_props(st, s).into();
     }
     cx.add(n, parent);
 }

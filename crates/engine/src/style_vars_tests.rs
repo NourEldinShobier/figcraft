@@ -64,7 +64,7 @@ fn a_bound_paint_style_shows_in_each_layers_mode() {
     run(&mut s, "style.bind", json!({"style": sid, "field": "fill", "variable": "bg"}));
     // The layer in the Light frame is white, the one in the Dark frame black; both stay linked.
     assert_eq!((fill(&s, a), fill(&s, b)), ("#FFFFFF".to_string(), "#000000".to_string()));
-    assert_eq!((node(&s, a).styles.fill, node(&s, b).styles.fill), (Some(sid.clone()), Some(sid.clone())));
+    assert_eq!((node(&s, a).styles.fill.clone(), node(&s, b).styles.fill.clone()), (Some(sid.clone()), Some(sid.clone())));
     // The style itself holds the default mode's value, under the one spelling of the key.
     assert_eq!(style_fill(&s, &sid), "#FFFFFF");
     let st = s.doc().unwrap().style(&sid).unwrap().clone();
@@ -74,12 +74,12 @@ fn a_bound_paint_style_shows_in_each_layers_mode() {
     assert_eq!((fill(&s, a), fill(&s, b)), ("#FFFFFF".to_string(), "#112233".to_string()));
     // A frame's mode changes: the layers in it follow, still linked.
     run(&mut s, "variable.setMode", json!({"ids": [dark], "collection": "Theme", "mode": "Light"}));
-    assert_eq!((fill(&s, b), node(&s, b).styles.fill), ("#FFFFFF".to_string(), Some(sid.clone())));
+    assert_eq!((fill(&s, b), node(&s, b).styles.fill.clone()), ("#FFFFFF".to_string(), Some(sid.clone())));
     run(&mut s, "edit.undo", json!({}));
     assert_eq!(fill(&s, b), "#112233");
     // A layer moved into the other frame takes that frame's mode.
     run(&mut s, "node.reparent", json!({"id": a, "parent": dark}));
-    assert_eq!((fill(&s, a), node(&s, a).styles.fill), ("#112233".to_string(), Some(sid.clone())));
+    assert_eq!((fill(&s, a), node(&s, a).styles.fill.clone()), ("#112233".to_string(), Some(sid.clone())));
     // Unbound: the style and its users keep the value they showed last by default.
     run(&mut s, "style.bind", json!({"style": sid, "field": "fills/0/color"}));
     assert!(s.doc().unwrap().style(&sid).unwrap().bound.is_empty());
@@ -93,7 +93,7 @@ fn editing_a_bound_style_or_its_users() {
     run(&mut s, "style.bind", json!({"style": sid, "field": "fill", "variable": "bg"}));
     // An edit of the layer's own fill still unlinks it (the documented rule for styled properties).
     run(&mut s, "node.set", json!({"id": b, "props": {"fill": "#00FF00"}}));
-    assert_eq!((fill(&s, b), node(&s, b).styles.fill), ("#00FF00".to_string(), None));
+    assert_eq!((fill(&s, b), node(&s, b).styles.fill.clone()), ("#00FF00".to_string(), None));
     // Applying the style again gives the layer's mode's value, not the stored one.
     run(&mut s, "style.apply", json!({"ids": [b], "style": sid}));
     assert_eq!(fill(&s, b), "#000000");

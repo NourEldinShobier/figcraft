@@ -1538,3 +1538,6 @@ impl ExportSetting {
         }
     }
 }
+
+crate::cold_default!(StrokeProps);
+crate::cold_default!(ChildLayout);

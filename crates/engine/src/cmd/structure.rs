@@ -433,7 +433,7 @@ fn flatten(s: &mut Session, p: &Value) -> Result<Value> {
             f.fills.clone()
         };
         v.strokes = f.strokes.clone();
-        v.stroke = StrokeProps { align: StrokeAlign::Center, ..f.stroke.clone() };
+        v.stroke = StrokeProps { align: StrokeAlign::Center, ..(*f.stroke).clone() }.into();
         v.effects = f.effects.clone();
         v.opacity = f.opacity;
         v.blend = if matches!(f.blend, figcraft_color::BlendMode::PassThrough) { figcraft_color::BlendMode::Normal } else { f.blend };
@@ -485,7 +485,7 @@ fn outline_stroke(s: &mut Session, p: &Value) -> Result<Value> {
         // The stroke's paints (and its colour style) fill the outline.
         v.fills = n.strokes.clone();
         v.strokes.clear();
-        v.styles.fill = n.styles.stroke;
+        v.styles.fill = n.styles.stroke.clone();
         if n.fills.iter().any(|f| f.visible) && closed {
             // Keep the fill as its own layer under the outline, grouped.
             doc.insert(v, parent, idx.map(|x| x + 1))?;
@@ -501,7 +501,7 @@ fn outline_stroke(s: &mut Session, p: &Value) -> Result<Value> {
             continue;
         }
         // Standing in for the layer, the outline keeps how it is drawn and placed.
-        (v.opacity, v.blend, v.effects, v.styles.effect) = (n.opacity, n.blend, n.effects.clone(), n.styles.effect);
+        (v.opacity, v.blend, v.effects, v.styles.effect) = (n.opacity, n.blend, n.effects.clone(), n.styles.effect.clone());
         (v.constraints, v.child_layout, v.visible, v.locked) = (n.constraints, n.child_layout.clone(), n.visible, n.locked);
         doc.insert(v, parent, idx.map(|x| x + 1))?;
         doc.remove(i)?;
@@ -569,7 +569,7 @@ fn layout_add(s: &mut Session, p: &Value) -> Result<Value> {
         let empty = doc.node(*f).is_some_and(|n| n.children.iter().filter_map(|c| doc.node(*c)).all(|c| !c.visible || c.child_layout.absolute));
         let n = doc.get_mut(*f)?;
         n.children = kids;
-        n.layout = Some(al);
+        n.layout = Some(Box::new(al));
         if !all_frames || !empty {
             // A frame wrapped around the selection hugs it; an existing frame with no flow
             // children keeps its size instead of collapsing to its padding.

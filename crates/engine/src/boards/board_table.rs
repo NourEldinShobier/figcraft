@@ -70,7 +70,7 @@ fn frame(doc: &mut Document, parent: NodeId, index: Option<usize>, name: &str, s
 
 fn make_cell(doc: &mut Document, row: NodeId, index: Option<usize>, width: f64, text: &str) -> Result<NodeId> {
     let cell = frame(doc, row, index, "Cell", (width, CELL_H), |n| {
-        n.layout = Some(AutoLayout { mode: LayoutMode::Vertical, gap: 0.0, padding: CELL_PAD, ..AutoLayout::default() });
+        n.layout = Some(Box::new(AutoLayout { mode: LayoutMode::Vertical, gap: 0.0, padding: CELL_PAD, ..AutoLayout::default() }));
         n.child_layout.sizing_h = Sizing::Fill;
         n.child_layout.sizing_v = Sizing::Hug;
         n.child_layout.min_h = Some(CELL_H);
@@ -81,7 +81,7 @@ fn make_cell(doc: &mut Document, row: NodeId, index: Option<usize>, width: f64, 
 
 fn make_row(doc: &mut Document, table: NodeId, index: Option<usize>, width: f64, texts: &[&str]) -> Result<NodeId> {
     let row = frame(doc, table, index, "Row", (width, CELL_H), |n| {
-        n.layout = Some(AutoLayout { mode: LayoutMode::Horizontal, gap: 0.0, padding: [0.0; 4], ..AutoLayout::default() });
+        n.layout = Some(Box::new(AutoLayout { mode: LayoutMode::Horizontal, gap: 0.0, padding: [0.0; 4], ..AutoLayout::default() }));
         n.child_layout.sizing_h = Sizing::Fill;
         n.child_layout.sizing_v = Sizing::Hug;
         n.stroke.weight = LINE_W;
@@ -108,7 +108,7 @@ pub(crate) fn make_table(doc: &mut Document, parent: NodeId, at: (f64, f64), tex
         n.corners.radii = [4.0; 4];
         n.clip = true;
         // The outline draws over the rows' edges rather than taking room from them.
-        n.layout = Some(AutoLayout { mode: LayoutMode::Vertical, gap: 0.0, padding: [0.0; 4], strokes_included: false, ..AutoLayout::default() });
+        n.layout = Some(Box::new(AutoLayout { mode: LayoutMode::Vertical, gap: 0.0, padding: [0.0; 4], strokes_included: false, ..AutoLayout::default() }));
         n.child_layout.sizing_v = Sizing::Hug;
         n.board = Some(BoardItem::Table);
     })?;

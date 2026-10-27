@@ -341,7 +341,7 @@ pub(super) fn paint_copy(s: &mut Session, p: &Value, fills: bool) -> Result<Valu
         let list = if fills { &n.fills } else { &n.strokes };
         let at = at.unwrap_or(list.len().saturating_sub(1));
         let paint = list.get(at).cloned().ok_or_else(|| bad(cmd, format!("no {} at index {at}", if fills { "fill" } else { "stroke" })))?;
-        (paint, (!fills).then(|| n.stroke.clone()))
+        (paint, (!fills).then(|| (*n.stroke).clone()))
     };
     s.clipboard.paint = Some((fills, paint.clone()));
     s.clipboard.stroke = stroke;
@@ -378,7 +378,7 @@ pub(super) fn paint_paste(s: &mut Session, p: &Value, fills: bool) -> Result<Val
     };
     if let Some(stroke) = s.clipboard.stroke.clone().filter(|_| !fills) {
         for id in ids {
-            s.doc_mut()?.get_mut(id)?.stroke = stroke.clone();
+            s.doc_mut()?.get_mut(id)?.stroke = stroke.clone().into();
         }
     }
     Ok(out)

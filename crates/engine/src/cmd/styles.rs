@@ -86,7 +86,7 @@ pub fn specs() -> Vec<CommandSpec> {
                         || n.kind.text().is_some_and(|t| t.links_text_style(&sid)))
                 {
                     let n = doc.get_mut(nid)?;
-                    for r in [&mut n.styles.fill, &mut n.styles.stroke, &mut n.styles.effect, &mut n.styles.grid, &mut n.styles.text] {
+                    for r in { let st = &mut *n.styles; [&mut st.fill, &mut st.stroke, &mut st.effect, &mut st.grid, &mut st.text] } {
                         if r.as_deref() == Some(sid.as_str()) {
                             *r = None;
                         }
@@ -721,13 +721,13 @@ pub fn sync_text_styles(doc: &mut Document, ids: &[NodeId]) {
         t2.check_text_styles(|sid| defs.get(sid));
         let link = t2.text_style_link().flatten().map(str::to_string);
         if t2 != *t || link != n.styles.text {
-            updates.push((id, link, t2));
+            updates.push((id, link, *t2));
         }
     }
     for (id, link, t2) in updates {
         if let Ok(n) = doc.get_mut(id) {
             n.styles.text = link;
-            n.kind = NodeKind::Text(t2);
+            n.kind = NodeKind::Text(Box::new(t2));
         }
     }
 }
@@ -753,7 +753,8 @@ pub fn sync_list_styles(doc: &mut Document, before: &Document, ids: &[NodeId]) {
             continue;
         }
         let Ok(n) = doc.get_mut(id) else { continue };
-        for (gone, r) in [(fill, &mut n.styles.fill), (stroke, &mut n.styles.stroke), (effect, &mut n.styles.effect), (grid, &mut n.styles.grid)] {
+        let st = &mut *n.styles;
+        for (gone, r) in [(fill, &mut st.fill), (stroke, &mut st.stroke), (effect, &mut st.effect), (grid, &mut st.grid)] {
             if gone {
                 *r = None;
             }
