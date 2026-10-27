@@ -52,8 +52,120 @@ fn fold(s: &str) -> String {
     s.to_lowercase().replace('ς', "σ")
 }
 
+/// `*` (any run) and `?` (any one character) against `text`, both already folded.
+fn glob_match(pat: &[char], text: &[char]) -> bool {
+    match pat.split_first() {
+        None => text.is_empty(),
+        Some(('*', rest)) => (0..=text.len()).any(|i| glob_match(rest, &text[i..])),
+        Some((c, rest)) => text.split_first().is_some_and(|(t, tail)| (*c == '?' || c == t) && glob_match(rest, tail)),
+    }
+}
+
+/// A number, or `{min?, max?}`, as an inclusive range.
+fn range_filter(cmd: &str, p: &Value, key: &str) -> Result<Option<(f64, f64)>> {
+    let num = |v: &Value| f64_of(v).filter(|n| n.is_finite());
+    match get(p, key) {
+        None => Ok(None),
+        Some(Value::Object(o)) => {
+            let end = |k: &str, default: f64| match o.get(k) {
+                None | Some(Value::Null) => Ok(default),
+                Some(v) => num(v).ok_or_else(|| bad(cmd, format!("`{key}.{k}` must be a number"))),
+            };
+            Ok(Some((end("min", f64::NEG_INFINITY)?, end("max", f64::INFINITY)?)))
+        }
+        Some(v) => num(v).map(|n| Some((n, n))).ok_or_else(|| bad(cmd, format!("`{key}` must be a number or {{min, max}}"))),
+    }
+}
+
+/// Does a visible solid paint of colour `want` appear among `paints`?
+fn has_color(paints: &[figcraft_color::Paint], want: figcraft_color::Color) -> bool {
+    paints.iter().any(|p| p.visible && matches!(&p.kind, figcraft_color::PaintKind::Solid { color } if color.to_rgba8() == want.to_rgba8()))
+}
+
+/// The filters of `node.find` beyond the substring ones, parsed once.
+struct Extra {
+    name_regex: Option<regex::Regex>,
+    name_glob: Option<Vec<char>>,
+    fill: Option<figcraft_color::Color>,
+    stroke: Option<figcraft_color::Color>,
+    stroke_weight: Option<(f64, f64)>,
+    width: Option<(f64, f64)>,
+    height: Option<(f64, f64)>,
+    parent: Option<NodeId>,
+    variant: Vec<(String, String)>,
+}
+
+impl Extra {
+    fn parse(cmd: &str, p: &Value) -> Result<Self> {
+        let name_regex = match get(p, "nameRegex") {
+            None => None,
+            Some(v) => {
+                let src = v.as_str().ok_or_else(|| bad(cmd, "`nameRegex` must be a string"))?;
+                // The regex engine runs in linear time; the size limit bounds a hostile pattern's memory.
+                let built = regex::RegexBuilder::new(src).case_insensitive(true).size_limit(1 << 20).build();
+                Some(built.map_err(|e| bad(cmd, format!("`nameRegex`: {e}")))?)
+            }
+        };
+        let name_glob = match get(p, "nameGlob") {
+            None => None,
+            Some(v) => Some(fold(v.as_str().ok_or_else(|| bad(cmd, "`nameGlob` must be a string"))?).chars().collect()),
+        };
+        let colour = |key: &str| -> Result<Option<figcraft_color::Color>> {
+            get(p, key).map(|v| color_of(v).ok_or_else(|| bad(cmd, format!("`{key}` must be a colour like \"#RRGGBB\"")))).transpose()
+        };
+        let variant = match get(p, "variant") {
+            None => Vec::new(),
+            Some(Value::Object(o)) => o
+                .iter()
+                .map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string())).ok_or_else(|| bad(cmd, "`variant` must be {property: \"value\"}")))
+                .collect::<Result<_>>()?,
+            Some(_) => return Err(bad(cmd, "`variant` must be {property: \"value\"}")),
+        };
+        Ok(Self {
+            name_regex,
+            name_glob,
+            fill: colour("fill")?,
+            stroke: colour("stroke")?,
+            stroke_weight: range_filter(cmd, p, "strokeWeight")?,
+            width: range_filter(cmd, p, "width")?,
+            height: range_filter(cmd, p, "height")?,
+            parent: opt_id(cmd, p, "parent")?,
+            variant,
+        })
+    }
+
+    fn matches(&self, doc: &Document, n: &Node) -> bool {
+        let within = |r: Option<(f64, f64)>, v: f64| r.is_none_or(|(lo, hi)| v >= lo - 1e-9 && v <= hi + 1e-9);
+        if self.name_regex.as_ref().is_some_and(|r| !r.is_match(&n.name))
+            || self.name_glob.as_ref().is_some_and(|g| !glob_match(g, &fold(&n.name).chars().collect::<Vec<_>>()))
+            || self.fill.is_some_and(|c| !has_color(&n.fills, c))
+            || self.stroke.is_some_and(|c| !has_color(&n.strokes, c))
+            || self.stroke_weight.is_some() && (n.strokes.is_empty() || !within(self.stroke_weight, n.stroke.weight))
+            || !within(self.width, n.width)
+            || !within(self.height, n.height)
+            || self.parent.is_some_and(|p| n.parent != Some(p))
+        {
+            return false;
+        }
+        if self.variant.is_empty() {
+            return true;
+        }
+        // An instance has its main component's variant; a variant component its own.
+        let name = match &n.kind {
+            NodeKind::Instance { component, .. } => doc.node(*component).map(|c| c.name.as_str()),
+            NodeKind::Component { .. } => Some(n.name.as_str()),
+            _ => None,
+        };
+        name.is_some_and(|name| {
+            let props = crate::components::variant_props(name);
+            self.variant.iter().all(|(k, v)| props.get(k).is_some_and(|x| x.eq_ignore_ascii_case(v)))
+        })
+    }
+}
+
 fn node_find(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "node.find";
+    let extra = Extra::parse(cmd, p)?;
     let filter = |key| -> Result<Option<String>> {
         get(p, key).map(|v| v.as_str().map(fold).ok_or_else(|| bad(cmd, format!("`{key}` must be a string")))).transpose()
     };
@@ -83,7 +195,8 @@ fn node_find(s: &mut Session, p: &Value) -> Result<Value> {
         };
         let n = doc.get(id)?;
         stack.push(n.children.iter());
-        if name.as_ref().is_some_and(|q| !fold(&n.name).contains(q))
+        if !extra.matches(doc, n)
+            || name.as_ref().is_some_and(|q| !fold(&n.name).contains(q))
             || kind.as_ref().is_some_and(|q| !n.kind.type_name().eq_ignore_ascii_case(q))
             || text.as_ref().is_some_and(|q| !matches!(&n.kind, NodeKind::Text(t) if fold(&t.characters).contains(q)))
             || component.as_ref().is_some_and(
@@ -309,7 +422,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "node.find",
             "Find layers",
-            "{root? (strict descendants; default current page), name?, type? (canonical layer type), text?, component? (main component name), limit? (0-10000; default 100)}: every filter must match; name, text and component are case-insensitive substrings, type is exact (any case); returns {ids, total} and does not select",
+            "{root? (strict descendants; default current page), name?, type? (canonical layer type), text?, component? (main component name), nameRegex? (case-insensitive regular expression), nameGlob? (`*` and `?`, whole name, case-insensitive), fill? / stroke? (colour of a visible solid paint, e.g. \"#111111\"), strokeWeight? / width? / height? (a number, or {min?, max?} inclusive), parent? (direct parent id), variant? ({Property: \"Value\"} on a variant component or an instance of one), limit? (0-10000; default 100)}: every filter must match; name, text and component are case-insensitive substrings, type is exact (any case); returns {ids, total} and does not select",
             false,
             node_find
         ),
