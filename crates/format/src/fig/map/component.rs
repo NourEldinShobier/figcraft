@@ -218,18 +218,13 @@ impl<'a> Mapper<'a> {
     /// A layer's component property references, and inside an instance the values they take.
     pub(super) fn prop_refs(&mut self, o: &mut Obj, v: &View<'a>, inst: Option<&Inst<'a>>) {
         let mut refs = Obj::new();
-        for e in v.get("parameterConsumptionMap").and_then(|m| m.get("entries")).map(Kv::list).unwrap_or_default() {
-            let field = match e.get("variableField").and_then(Kv::str) {
-                Some("VISIBLE") => "visible",
-                Some("TEXT_DATA") => "characters",
-                Some("OVERRIDDEN_SYMBOL_ID") => "mainComponent",
-                Some("SLOT_CONTENT_ID") => "slot",
+        for (variable_field, def) in prop_ref_list(v) {
+            let field = match variable_field.as_str() {
+                "VISIBLE" => "visible",
+                "TEXT_DATA" => "characters",
+                "OVERRIDDEN_SYMBOL_ID" => "mainComponent",
+                "SLOT_CONTENT_ID" => "slot",
                 _ => continue,
-            };
-            let Some(def) =
-                e.get("variableData").and_then(|d| d.get("value")).and_then(|x| x.get("propRefValue")).and_then(|p| p.get("defId")).and_then(guid)
-            else {
-                continue;
             };
             // Expanded frames must follow their main frame's source link. A direct slot reference
             // makes the engine resolve ownership against the instance, where the property is not defined.
@@ -441,10 +436,27 @@ pub(super) fn assigned<'k, 's>(assignment: &'k Kv<'s>) -> Option<&'k Kv<'s>> {
 
 /// The property a layer's `field` is bound to (`parameterConsumptionMap`).
 pub(super) fn prop_ref(v: &View, field: &str) -> Option<String> {
-    v.get("parameterConsumptionMap")?.get("entries")?.list().iter().find_map(|e| {
-        if e.get("variableField").and_then(Kv::str) != Some(field) {
-            return None;
+    prop_ref_list(v).into_iter().find(|(f, _)| f == field).map(|(_, def)| def)
+}
+
+/// Every (field, property definition) a layer is bound to: per field, the reference of the topmost
+/// layer of the view that has one, from `parameterConsumptionMap` or the older `componentPropRefs`.
+/// An override row with a map of its own (variable bindings only) hides nothing below it.
+fn prop_ref_list(v: &View) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for layer in v.layers.iter().rev() {
+        let entries = layer.get("parameterConsumptionMap").and_then(|m| m.get("entries")).map(Kv::list).unwrap_or_default().iter().filter_map(|e| {
+            let def = e.get("variableData")?.get("value")?.get("propRefValue")?.get("defId").and_then(guid)?;
+            Some((e.get("variableField").and_then(Kv::str)?, def))
+        });
+        let legacy = layer.get("componentPropRefs").map(Kv::list).unwrap_or_default().iter().filter_map(|r| {
+            Some((r.get("componentPropNodeField").and_then(Kv::str)?, r.get("defID").and_then(guid)?))
+        });
+        for (field, def) in entries.chain(legacy) {
+            if !out.iter().any(|(f, _)| f == field) {
+                out.push((field.to_string(), def));
+            }
         }
-        e.get("variableData")?.get("value")?.get("propRefValue")?.get("defId").and_then(guid)
-    })
+    }
+    out
 }

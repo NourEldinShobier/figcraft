@@ -12,25 +12,27 @@ fn filter_number(value: &Kv) -> Option<f64> {
     number.is_finite().then_some(number)
 }
 
-/// The style a layer links in `key`, or in the older `legacy` field when `key` names none. An
-/// explicit NO_STYLE in `key` is a detach and wins over the legacy field.
-pub(super) fn style_link(v: &View, key: &str, legacy: &str) -> Option<String> {
-    match v.get(key).and_then(|r| r.get("guid")).and_then(guid) {
-        Some(id) => Some(id).filter(|g| g != NO_STYLE),
-        None => v.get(legacy).and_then(guid).filter(|g| g != NO_STYLE),
-    }
-}
-
 pub(super) fn color(c: &Kv) -> Value {
     let ch = |k: &str| num(c, k).unwrap_or(0.0);
     json!({"r": ch("r"), "g": ch("g"), "b": ch("b"), "a": num(c, "a").unwrap_or(1.0)})
 }
 
 impl<'a> Mapper<'a> {
+    /// The style a layer links in `key` (by guid, else by the asset key and version a library copy
+    /// names it with), or in the older `legacy` field when `key` names none. An explicit NO_STYLE
+    /// in `key` is a detach and wins over the legacy field.
+    pub(super) fn style_link(&self, v: &View, key: &str, legacy: &str) -> Option<String> {
+        let link = v.get(key);
+        match link.and_then(|r| r.get("guid")).and_then(guid) {
+            Some(id) => Some(id).filter(|g| g != NO_STYLE),
+            None => link.and_then(|r| self.resource_id(r)).or_else(|| v.get(legacy).and_then(guid).filter(|g| g != NO_STYLE)),
+        }
+    }
+
     /// The style node a layer links in `key` (or the older `legacy` field), recorded for the REST
     /// `styles` map under `slot`.
     pub(super) fn style(&mut self, v: &View<'a>, key: &str, legacy: &str, slot: &str, out: &mut Obj) -> Option<&'a Kv<'a>> {
-        let id = style_link(v, key, legacy)?;
+        let id = self.style_link(v, key, legacy)?;
         let node = *self.nodes.get(&id)?;
         node.get("styleType").and_then(Kv::str)?;
         out.insert(slot.into(), json!(id));
