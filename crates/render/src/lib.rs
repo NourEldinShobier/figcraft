@@ -8,6 +8,7 @@
 pub mod backdrop;
 pub mod blur;
 pub mod boolean;
+pub mod cvd;
 pub mod dots;
 pub mod draw;
 mod export_depth;

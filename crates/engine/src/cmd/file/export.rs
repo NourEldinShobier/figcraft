@@ -99,7 +99,14 @@ pub(super) fn export(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let format = setting.format;
     let icon = icon_preset_param(cmd, p)?;
-    let (bytes, warnings) = export_one(doc, &ids, &setting, scale, icon.as_ref())?;
+    let cvd = crate::cmd::a11y::cvd_param(cmd, p)?;
+    if cvd.is_some() && format != ExportFormat::Png {
+        return Err(bad(cmd, "cvd: PNG exports only"));
+    }
+    let (mut bytes, warnings) = export_one(doc, &ids, &setting, scale, icon.as_ref())?;
+    if let Some(c) = cvd {
+        bytes = crate::cmd::a11y::simulate_png(cmd, &bytes, c)?;
+    }
     let mut out = match string(p, "path") {
         Some(path) => {
             write(&path, &bytes)?;
