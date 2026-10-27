@@ -7,6 +7,14 @@ use std::net::TcpListener;
 use figcraft_mcp::{Attached, Backend, Headless, Server};
 use serde_json::{Value, json};
 
+fn token() -> figcraft_collab_net::control_auth::ControlToken {
+    figcraft_collab_net::control_auth::ControlToken::new("test_control_token_with_32_chars").unwrap()
+}
+
+fn attach(port: u16) -> Attached {
+    Attached::connect_with_token(&format!("127.0.0.1:{port}"), token()).unwrap()
+}
+
 fn fake_app() -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -17,6 +25,7 @@ fn fake_app() -> u16 {
             for line in BufReader::new(stream).lines() {
                 let Ok(line) = line else { break };
                 let v: Value = serde_json::from_str(&line).unwrap_or(Value::Null);
+                assert_eq!(v["token"], "test_control_token_with_32_chars");
                 let method = v["method"].as_str().unwrap_or("");
                 let reply = match h.call(method, v["params"].clone()) {
                     Ok(r) => json!({"id": v["id"], "ok": true, "result": r}),
@@ -40,7 +49,7 @@ fn call(s: &mut Server, tool: &str, args: Value) -> Value {
 #[test]
 fn attached_backend_forwards_everything() {
     let port = fake_app();
-    let backend = Attached::port(port).unwrap();
+    let backend = attach(port);
     assert!(backend.describe().contains(&port.to_string()));
     let mut s = Server::new(Box::new(backend));
     let r = call(&mut s, "create_node", json!({"type": "frame", "width": 64, "height": 32, "props": {"fill": "#FF0000"}}));
@@ -65,9 +74,20 @@ fn attached_backend_forwards_everything() {
 }
 
 #[test]
+fn remote_destinations_are_rejected_before_connecting() {
+    let result = Attached::connect_with_token("192.0.2.1:7979", token());
+    let error = match result {
+        Ok(_) => panic!("remote destination unexpectedly accepted"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+    assert!(error.to_string().contains("loopback"));
+}
+
+#[test]
 fn attached_to_nothing_fails_cleanly() {
     let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-    assert!(Attached::port(port).is_err());
+    assert!(Attached::connect_with_token(&format!("127.0.0.1:{port}"), token()).is_err());
 }
 
 #[test]
@@ -83,6 +103,7 @@ fn lost_mutation_reply_is_not_replayed_and_next_call_reconnects() {
             let mut line = String::new();
             BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap();
             let request: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(request["token"], "test_control_token_with_32_chars");
             let method = request["method"].as_str().unwrap();
             methods.push(method.to_string());
             let result = h.call(method, request["params"].clone()).unwrap();
@@ -92,7 +113,7 @@ fn lost_mutation_reply_is_not_replayed_and_next_call_reconnects() {
         }
         methods
     });
-    let mut backend = Attached::port(port).unwrap();
+    let mut backend = attach(port);
     let result = backend.call("engine.execute", json!({"command": "shape.rectangle", "params": {"width": 64, "height": 32}}));
     assert!(result.is_err(), "a lost reply must not turn into a successful replay: {result:?}");
     let error = result.unwrap_err();
@@ -118,6 +139,7 @@ fn a_connection_the_app_closed_while_idle_is_replaced_before_sending() {
             let mut line = String::new();
             BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap();
             let request: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(request["token"], "test_control_token_with_32_chars");
             let method = request["method"].as_str().unwrap();
             methods.push(method.to_string());
             let result = h.call(method, request["params"].clone()).unwrap();
@@ -127,7 +149,7 @@ fn a_connection_the_app_closed_while_idle_is_replaced_before_sending() {
         }
         methods
     });
-    let mut backend = Attached::port(port).unwrap();
+    let mut backend = attach(port);
     backend.call("engine.execute", json!({"command": "shape.rectangle", "params": {"width": 64, "height": 32}})).unwrap();
     closed_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -140,7 +162,7 @@ fn a_connection_the_app_closed_while_idle_is_replaced_before_sending() {
 #[test]
 fn reconnect_failure_reports_request_not_sent() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let mut backend = Attached::port(listener.local_addr().unwrap().port()).unwrap();
+    let mut backend = attach(listener.local_addr().unwrap().port());
     drop(listener);
     assert!(backend.call("document.inspect", json!({})).is_err());
     let error = backend.call("document.inspect", json!({})).unwrap_err();

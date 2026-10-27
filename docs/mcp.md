@@ -17,7 +17,9 @@ The server lives in `crates/mcp` (`figcraft-mcp`) and is started by the CLI:
 | `figcraft-cli mcp` | **Headless**: an in-process engine session with one untitled document. No window; renders with the CPU renderer. |
 | `figcraft-cli mcp --attach <port>` | **Attached**: drives a running FigCraft app through its control channel (`figcraft --control <port>`). The user sees every change live. |
 
-`--attach` also takes `host:port`. The control channel only listens on 127.0.0.1.
+`--attach` also takes `host:port`. The app listens on 127.0.0.1 only. Attached clients resolve the target once per connection and reject before dialing if any resolved address is non-loopback; remote hosts and DNS names with any remote result are refused.
+
+Attached mode is token-authenticated, and the token is handed over automatically. The app uses `FIGCRAFT_CONTROL_TOKEN` if it is set, otherwise it generates a random token at each start and writes it to a per-user file (`%LOCALAPPDATA%\figcraft\control-token-<port>` on Windows, `$XDG_STATE_HOME/figcraft/control-token-<port>` elsewhere, mode 0600). `figcraft-cli mcp --attach <port>` uses the variable if set, else reads that file, so `figcraft --control 7979` followed by `claude mcp add figcraft-app -- figcraft-cli mcp --attach 7979` works as before. To pin a token yourself, set one fresh random value (22–128 URL-safe characters, at least 128 random bits) in the environment of both processes; do not use `setx` or a command line. Headless `figcraft-cli mcp` needs no token. The token prevents access by local processes without it, but same-user malware that can read the file or inspect process environments can read it too.
 
 Attached calls are never automatically replayed after a transport failure: the app may have
 applied the request before its reply was lost. The error reports that the operation may have
@@ -118,7 +120,7 @@ The Linux AppImage bundles the CLI: `FigCraft.AppImage cli <args>` runs `figcraf
 ```sh
 # headless
 claude mcp add figcraft -- /path/to/figcraft-cli mcp
-# drive the running app (start it with: figcraft --control 7979)
+# drive the running app (start the app with: figcraft --control 7979; the token is handed over by a per-user file)
 claude mcp add figcraft-app -- /path/to/figcraft-cli mcp --attach 7979
 ```
 
