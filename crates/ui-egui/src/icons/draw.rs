@@ -191,6 +191,12 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
 }
 
 /// Draw `icon` on the 16-unit grid through `p`, which maps grid units to the target box.
+fn rounded_corner(p: &P, x: f32, y: f32, dx: f32, dy: f32) {
+    p.corner(x, y, dx, dy, 13.0, 8.0);
+    p.line(x, y, x + 2.5 * dx, y);
+    p.line(x, y, x, y + 2.5 * dy);
+}
+
 fn draw(p: &P, icon: Icon) {
     use Icon::*;
     match icon {
@@ -476,10 +482,11 @@ fn draw(p: &P, icon: Icon) {
             p.poly(&[(3.5, 5.5), (12.5, 5.5), (12.5, 1.5)], true);
             p.fill(&[(3.0, 9.0), (13.0, 9.0), (13.0, 14.0)]);
         }
-        CornerRadius | CornerTopLeft => p.corner(2.5, 2.5, 1.0, 1.0, 11.5, 6.0),
-        CornerTopRight => p.corner(13.5, 2.5, -1.0, 1.0, 11.5, 6.0),
-        CornerBottomRight => p.corner(13.5, 13.5, -1.0, -1.0, 11.5, 6.0),
-        CornerBottomLeft => p.corner(2.5, 13.5, 1.0, -1.0, 11.5, 6.0),
+        // A big rounded corner with short dashes where the sharp corner would have been.
+        CornerRadius | CornerTopLeft => rounded_corner(p, 2.5, 2.5, 1.0, 1.0),
+        CornerTopRight => rounded_corner(p, 13.5, 2.5, -1.0, 1.0),
+        CornerBottomRight => rounded_corner(p, 13.5, 13.5, -1.0, -1.0),
+        CornerBottomLeft => rounded_corner(p, 2.5, 13.5, 1.0, -1.0),
         Angle => {
             // Two rays from a vertex, the arc between them marking the angle (all unhinted, so
             // the arc meets the rays at every size).

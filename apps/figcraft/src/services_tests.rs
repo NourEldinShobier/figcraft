@@ -142,3 +142,21 @@ fn the_next_dialog_starts_in_the_folder_of_the_last_pick() {
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(start_folder(Some(dir)), None, "a folder deleted since: the system's own");
 }
+
+/// Portable mode (#1320): with `figcraft-settings.ini` in the folder, the preferences are saved to
+/// and loaded from it; without it they use `state.json`.
+#[test]
+fn portable_settings_file_is_used_when_present() {
+    let dir = root("portable");
+    let mut prefs = figcraft_engine::Prefs::default();
+    prefs.recent_files = vec!["a.figcraft".into()];
+    crate::services::write_prefs(&dir, &prefs);
+    assert!(dir.join("state.json").is_file() && !dir.join("figcraft-settings.ini").exists());
+
+    std::fs::write(dir.join("figcraft-settings.ini"), "").unwrap();
+    prefs.recent_files = vec!["b.figcraft".into()];
+    crate::services::write_prefs(&dir, &prefs);
+    assert!(std::fs::read_to_string(dir.join("figcraft-settings.ini")).unwrap().contains("b.figcraft"));
+    let svc = Desktop::load_from(Some(dir.clone()), Arc::new(Mutex::new(None)));
+    assert_eq!(svc.prefs.unwrap().recent_files, vec!["b.figcraft".to_string()]);
+}
