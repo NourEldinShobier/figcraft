@@ -480,6 +480,8 @@ pub fn tool_definitions() -> Vec<Value> {
                 &[],
             ),
             true,
+        ),
+        tool(
             "history",
             "Undo history",
             "The active document's undo stack as data (engine `history.list`, `history.revertTo`, `history.hash`). Default: list the newest `limit` steps, oldest first: `{entries: [{index, label, changedIds, changedCount, time, kind, applied}], applied, total, hash}`; a `batch` step carries its `label`. `revertTo` = an entry `index` undoes (or redoes) back to the state just before that entry as one operation and returns the new `hash` (refused across a version restore). `hash: true` returns just `{hash}`, a content hash of the document, to verify that two states are equal.",
