@@ -850,6 +850,8 @@ fn large_files_get_a_larger_value_budget() {
     assert!(kiwi::value_budget(83_491_232) > 30_514_899);
     // A real 194 MB design-system file (UX4G): a 39.5 MB canvas holding 29.7 million values.
     assert!(kiwi::value_budget(39_528_420) > 29_703_730);
+    // A real 9.5 MB design file (202 905 layers): a 9.4 MB canvas holding 26.4 million values.
+    assert!(kiwi::value_budget(9_400_000) > 26_371_279);
     // Still bounded by the largest canvas read.
     assert!(kiwi::value_budget(MAX_CANVAS as usize) <= 128 << 20);
 }

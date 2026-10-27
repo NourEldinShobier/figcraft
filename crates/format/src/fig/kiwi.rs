@@ -11,7 +11,7 @@ use std::fmt;
 /// Deepest struct/message nesting decoded.
 const MAX_DEPTH: usize = 64;
 /// Most values decoded from one message (every scalar, array element and field counts): at least
-/// [`MIN_VALUES`], and one per byte of the file's compressed canvas up to [`MAX_VALUES`], so a
+/// [`MIN_VALUES`], and four per byte of the file's compressed canvas up to [`MAX_VALUES`], so a
 /// large real file decodes while a small one can't expand into a huge tree, however far its
 /// chunks inflate. 32-bit targets (wasm32) have a 4 GB address space in all, so their ceiling is
 /// lower: past it the file is refused cleanly instead of running out of memory.
@@ -306,7 +306,8 @@ impl Schema {
 
 /// Most values decoded from a file whose compressed canvas is `packed` bytes.
 pub(crate) fn value_budget(packed: usize) -> usize {
-    packed.clamp(MIN_VALUES, MAX_VALUES)
+    // Repetitive canvases pack to well under a byte per value: a real 9.5 MB file holds 26 million.
+    packed.saturating_mul(4).clamp(MIN_VALUES, MAX_VALUES)
 }
 
 struct Decoder<'s, 'b> {
