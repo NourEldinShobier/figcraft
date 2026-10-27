@@ -15,7 +15,10 @@ mod export;
 mod load;
 mod open;
 mod save;
+mod source;
 mod version;
+
+pub use source::{SOURCE_FILE, read_source, specs as source_specs, write_source};
 
 pub(crate) use export::FORBIDDEN_FILE_NAME_CHARS;
 #[cfg(test)]
