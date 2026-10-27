@@ -377,7 +377,8 @@ fn path(cx: &mut Ctx, p: &usvg::Path, parent: NodeId, base: Affine) {
                 return;
             }
             path.apply_affine(Affine::translate((-bb.x0, -bb.y0)));
-            let rule = if fill.is_some_and(|f| f.rule() == usvg::FillRule::EvenOdd) { WindingRule::EvenOdd } else { WindingRule::NonZero };
+            let path = crate::snap_path(&path);
+            let rule =if fill.is_some_and(|f| f.rule() == usvg::FillRule::EvenOdd) { WindingRule::EvenOdd } else { WindingRule::NonZero };
             let vector = |path: &BezPath, filled: bool| {
                 let mut network = VectorNetwork::from_path(path);
                 for r in &mut network.regions {

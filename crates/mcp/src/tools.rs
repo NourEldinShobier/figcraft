@@ -93,6 +93,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "get_node",
     "select",
     "export",
+    "export_many",
     "screenshot",
     "open_file",
     "save_file",
@@ -106,6 +107,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "get_variable_defs",
     "get_design_context",
     "search_design_system",
+    "lint_icons",
 ];
 
 /// All tools, in `tools/list` order.
@@ -236,10 +238,35 @@ pub fn tool_definitions() -> Vec<Value> {
                     "svgIdAttribute": boolean("SVG: layer names as unique `id` attributes (default false)"),
                     "svgSimplifyStroke": boolean("SVG: strokes as `stroke` attributes where exact (default true); false writes outlines"),
                     "vdCompat": {"type": "string", "enum": ["bestEffort", "exact", "ignore"], "description": "XML: what a Vector Drawable can't draw exactly is approximated with a warning (bestEffort, default), left out with a warning (exact), or written as far as it maps without warnings (ignore: overlapping layer opacity dropped, even-odd fills kept as fillType=evenOdd, diamond gradients left out)"},
+                    "iconPreset": boolean("SVG: tidy for icons (transforms baked into the paths, no needless groups or view-box clips, numbers to 3 decimals, the layers' box as the view box)"),
+                    "currentColor": {"type": ["boolean", "string"], "description": "With iconPreset: true makes the icon's only colour `currentColor`; a hex colour like \"#111111\" does so for that colour"},
                 }),
                 &[],
             ),
             true,
+        ),
+        tool(
+            "export_many",
+            "Export many",
+            "Export each layer (default: the selection, else every top-level layer of the page) on its own in every format and scale of `formats` x `scales`, without export settings on the layers (engine `file.exportMany`): 6 icons x png/svg x 1/2/4x is one call. Names follow `naming` (`{name}`, `{id}`, `{scale}`, `{format}`, `{ext}`; default `{name}@{scale}x.{ext}` for raster with several scales, else `{name}.{ext}`; `/` in a name makes folders; repeated names get ` 2`). With `dir` the files are written there and the result lists `path`s; without it the files come back base64-encoded in `data` ({name: base64}). `iconPreset` (with optional `currentColor`) tidies SVGs for icons. Returns `{files: [{name, id, format, scale, bytes, path?}], data?}`.",
+            obj(
+                json!({
+                    "ids": ids_schema("Layers to export, each on its own (default: the selection, else the page's top-level layers)"),
+                    "formats": {"type": "array", "items": {"type": "string", "enum": ["png", "jpg", "webp", "svg", "pdf", "xml"]}, "description": "Formats (default [\"png\"])"},
+                    "scales": {"type": "array", "items": {"type": "number"}, "description": "Pixel scales for raster formats (default [1]; svg, pdf and xml ignore them)"},
+                    "naming": string("File name template, e.g. \"{name}@{scale}x.{ext}\""),
+                    "dir": string("Folder to write into (absolute path recommended); omit to get base64 `data`"),
+                    "iconPreset": boolean("SVG: tidy for icons (baked transforms, no needless groups or clips, 3 decimals, the layer's box as view box)"),
+                    "currentColor": {"type": ["boolean", "string"], "description": "With iconPreset: true = the icon's only colour, or a hex colour, becomes `currentColor`"},
+                    "svgOutlineText": boolean("SVG: text as outlines (default true)"),
+                    "svgIdAttribute": boolean("SVG: layer names as `id` attributes"),
+                    "svgSimplifyStroke": boolean("SVG: strokes as `stroke` attributes where exact (default true)"),
+                    "contentsOnly": boolean("Only the layers themselves (default true)"),
+                    "includeBoundingBox": boolean("Export the layers' own boxes (default false)"),
+                }),
+                &[],
+            ),
+            false,
         ),
         tool(
             "screenshot",
@@ -373,6 +400,25 @@ pub fn tool_definitions() -> Vec<Value> {
             ),
             true,
         ),
+        tool(
+            "lint_icons",
+            "Lint icon set",
+            "Check an icon set for inconsistencies (engine `inspect.lintIcons`): stroke width, cap and join, corner radius, colour use, pixel-grid alignment (edges on whole pixels at the grid size; half pixels for odd strokes), padding inside the live area, icon size and naming. `ids` is the icon-set frame (its small frames/groups/shapes are the icons) or icons themselves. Expected values default to the most common ones in the set; pass `strokeWeight`, `cap`, `join`, `color` to set them. Returns `{icons, grid, expected, issues: [{rule, severity, id, name, message, found, expected, fixable, fix?: {command, params}}], total, truncated, fixable, counts}`. Read-only: run a `fix` with run_command or batch.",
+            obj(
+                json!({
+                    "ids": ids_schema("The icon-set frame, or icons (default: the selection)"),
+                    "grid": num("Icon size in pixels (default 24)"),
+                    "strokeWeight": num("Stroke width every icon should use (default: the most common)"),
+                    "cap": string("Stroke cap every icon should use, e.g. round (default: the most common)"),
+                    "join": string("Stroke join every icon should use, e.g. round (default: the most common)"),
+                    "color": string("Colour every icon should use, e.g. #111111 (default: the most common)"),
+                    "padding": num("Free space kept at each edge, strokes included (default grid/12, 2 at 24)"),
+                    "tolerance": num("Allowed distance from the pixel grid (default 0.02)"),
+                }),
+                &[],
+            ),
+            true,
+        ),
     ]
 }
 
@@ -493,6 +539,7 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
         "get_node" => get_node(b, &a),
         "select" => select(b, &a),
         "export" => export(b, &a),
+        "export_many" => export_many(b, &a),
         "screenshot" => screenshot(b, &a),
         "open_file" => open_file(b, &a),
         "save_file" => save_file(b, &a),
@@ -510,6 +557,7 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
         "get_variable_defs" => read_command(b, "inspect.variableDefs", &a).map(|v| ToolResult::json(&v["variables"])),
         "get_design_context" => read_command(b, "inspect.designContext", &a).map(|v| ToolResult::json(&v)),
         "search_design_system" => read_command(b, "inspect.searchDesignSystem", &a).map(|v| ToolResult::json(&v)),
+        "lint_icons" => lint_icons(b, &a),
         other => Err(format!("unknown tool `{other}` (tools/list has: {})", TOOL_NAMES.join(", "))),
     };
     r.unwrap_or_else(ToolResult::error)
@@ -948,6 +996,24 @@ fn select(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Str
     Ok(ToolResult::json(&json!({"selection": sel})))
 }
 
+fn lint_icons(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let mut params = a.clone();
+    params.retain(|_, v| !v.is_null());
+    if let Some(ids) = ids_arg(a, "ids")? {
+        params.insert("ids".into(), json!(ids));
+    }
+    exec(b, "inspect.lintIcons", Value::Object(params)).map(|v| ToolResult::json(&v))
+}
+
+fn export_many(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let mut params = a.clone();
+    params.retain(|_, v| !v.is_null());
+    if let Some(ids) = ids_arg(a, "ids")? {
+        params.insert("ids".into(), json!(ids));
+    }
+    exec(b, "file.exportMany", Value::Object(params)).map(|v| ToolResult::json(&v))
+}
+
 fn export(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
     let mut params = Map::new();
     if let Some(ids) = ids_arg(a, "ids")? {
@@ -980,6 +1046,8 @@ fn export(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Str
         "svgOutlineText",
         "svgIdAttribute",
         "svgSimplifyStroke",
+        "iconPreset",
+        "currentColor",
         "vdCompat",
     ] {
         if let Some(v) = a.get(k).filter(|v| !v.is_null()) {

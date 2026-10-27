@@ -275,7 +275,7 @@ fn a_failing_command_names_its_step_and_rolls_back() {
         ]),
     );
     // Still the command's own kind of error, its message saying which step.
-    assert!(msg.starts_with("step 1: ") && msg.contains("is not text"), "{msg}");
+    assert!(msg.starts_with("step 1 (text.set): ") && msg.contains("is not text"), "{msg}");
     assert!(matches!(&s.doc().unwrap().node(text).unwrap().kind, figcraft_doc::NodeKind::Text(t) if t.characters == "orig"));
     assert_eq!(s.doc().unwrap().node(s.page().unwrap()).unwrap().name, name);
     assert_eq!(s.ds().unwrap().history.undo.len(), undo);
@@ -369,7 +369,7 @@ fn a_continue_batch_keeps_successful_steps_as_one_undo_entry() {
     assert_eq!(results[1]["command"], "text.set");
     assert_eq!(results[1]["ok"], false);
     let error = results[1]["error"].as_str().unwrap();
-    assert!(error.contains("step 1:") && error.contains("is not text"), "{error}");
+    assert!(error.contains("step 1 (text.set):") && error.contains("is not text"), "{error}");
     assert!(results[1].get("result").is_none());
     assert!(matches!(&s.doc().unwrap().node(text).unwrap().kind, figcraft_doc::NodeKind::Text(t) if t.characters == "novo"));
     assert_eq!(s.doc().unwrap().node(s.page().unwrap()).unwrap().name, "Depois do erro");
@@ -646,4 +646,22 @@ fn a_continue_batch_reports_runtime_errors_and_runs_later_steps() {
     assert_eq!(results[4]["ok"], true);
     assert_eq!(results[6]["ok"], true);
     assert_eq!(s.doc().unwrap().node(s.page().unwrap()).unwrap().name, "Done");
+}
+
+#[test]
+fn a_failed_batch_names_the_step_and_says_it_rolled_back() {
+    let mut s = Session::new();
+    let err = s
+        .execute(
+            "command.batch",
+            &json!({"commands": [
+                {"command": "node.create", "params": {"type": "frame"}},
+                {"command": "node.set", "params": {"ids": ["999"], "props": {"name": "x"}}}
+            ]}),
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("step 1 (node.set): "), "{err}");
+    assert!(err.ends_with("(the whole batch was rolled back: nothing changed)"), "{err}");
+    assert_eq!(s.doc().unwrap().node(s.page().unwrap()).unwrap().children.len(), 0);
 }

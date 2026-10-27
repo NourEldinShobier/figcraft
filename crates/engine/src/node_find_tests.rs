@@ -194,3 +194,41 @@ fn node_find_leaves_document_selection_page_and_history_untouched() {
     assert_ne!(s.doc().unwrap().get(layer).unwrap().name, "Previous edit");
     assert_eq!(s.ds().unwrap().history.undo.len(), undo - 1);
 }
+
+#[test]
+fn node_find_property_filters() {
+    let mut s = Session::new();
+    let page = s.page().unwrap();
+    let a = add(&mut s, page, NodeKind::Rectangle, "icon/arrow-left");
+    let b = add(&mut s, page, NodeKind::Rectangle, "icon/arrow-right");
+    let c = add(&mut s, page, NodeKind::Rectangle, "Button");
+    ex(&mut s, "node.set", json!({"ids": [a.0], "props": {"fill": "#112233", "stroke": "#FF0000", "strokeWeight": 2, "width": 24, "height": 24}}));
+    ex(&mut s, "node.set", json!({"ids": [b.0], "props": {"fill": "#112233", "stroke": "#FF0000", "strokeWeight": 1.5, "width": 24, "height": 30}}));
+    ex(&mut s, "node.set", json!({"ids": [c.0], "props": {"fill": "#ABCDEF", "width": 100, "height": 40}}));
+    found(&mut s, json!({"nameGlob": "icon/*"}), &[a, b]);
+    found(&mut s, json!({"nameGlob": "ICON/ARROW-?EFT"}), &[a]);
+    found(&mut s, json!({"nameGlob": "arrow"}), &[]);
+    found(&mut s, json!({"nameRegex": "^icon/arrow-(left|right)$"}), &[a, b]);
+    found(&mut s, json!({"nameRegex": "btn|button"}), &[c]);
+    found(&mut s, json!({"fill": "#112233"}), &[a, b]);
+    found(&mut s, json!({"stroke": "#ff0000"}), &[a, b]);
+    found(&mut s, json!({"strokeWeight": 2}), &[a]);
+    found(&mut s, json!({"strokeWeight": {"max": 1.5}}), &[b]);
+    found(&mut s, json!({"width": {"min": 50}}), &[c]);
+    found(&mut s, json!({"width": 24, "height": {"min": 25, "max": 35}}), &[b]);
+    found(&mut s, json!({"parent": page.0}), &[a, b, c]);
+    assert!(s.execute("node.find", &json!({"nameRegex": "("})).is_err());
+    assert!(s.execute("node.find", &json!({"fill": "nope"})).is_err());
+}
+
+#[test]
+fn node_find_matches_variant_properties_of_components_and_instances() {
+    let mut s = Session::new();
+    let page = s.page().unwrap();
+    let set = add(&mut s, page, NodeKind::ComponentSet { description: String::new() }, "Button");
+    let d = add(&mut s, set, NodeKind::Component { description: String::new(), props: Default::default() }, "State=Default, Size=S");
+    let h = add(&mut s, set, NodeKind::Component { description: String::new(), props: Default::default() }, "State=Hover, Size=S");
+    found(&mut s, json!({"variant": {"State": "hover"}}), &[h]);
+    found(&mut s, json!({"variant": {"Size": "S"}}), &[d, h]);
+    found(&mut s, json!({"variant": {"Size": "L"}}), &[]);
+}

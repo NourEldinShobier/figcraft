@@ -25,7 +25,7 @@ pub use export::{
     ExportJob, copy_png, drawn_layers, export_area, export_bytes, export_bytes_with, export_jobs, export_scale, exportable_layers, fig_bytes,
     frames_pdf, jobs_for, safe_file_name,
 };
-use export::{export, export_frames_pdf, export_layers, pdf_bytes};
+use export::{export, export_frames_pdf, export_layers, export_many, pdf_bytes};
 #[cfg(test)]
 pub(crate) use load::{installed_family, sketch_line};
 pub use load::{load, load_bytes, load_path};
@@ -107,7 +107,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.export",
             "Export",
-            "{ids? (default selection, else the page), format? (png|jpg|svg|pdf|webp|xml (an Android Vector Drawable, with `warnings` for what it changed or left out), or fig: the whole file as .fig, experimental, with `warnings` for what was left out; other apps may not open every file), scale? (default 1) | size? (2x|512w|512h or {by: scale|width|height, value}: a scale, or a width or height in pixels), path? (else returns base64 `data`), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options), svgIdAttribute? (SVG ids, XML android:name), vdCompat? (XML: bestEffort (default: approximate with a warning)|exact (leave out what can't be exact, with a warning)|ignore (no warnings))}",
+            "{ids? (default selection, else the page), format? (png|jpg|svg|pdf|webp|xml (an Android Vector Drawable, with `warnings` for what it changed or left out), or fig: the whole file as .fig, experimental, with `warnings` for what was left out; other apps may not open every file), scale? (default 1) | size? (2x|512w|512h or {by: scale|width|height, value}: a scale, or a width or height in pixels), path? (else returns base64 `data`), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options), svgIdAttribute? (SVG ids, XML android:name), iconPreset? (SVG as an icon: transforms baked, no needless groups or view clips, 3 decimals, the layers' box as view box) with currentColor? (true: the icon's only colour, or a hex colour, becomes `currentColor`), vdCompat? (XML: bestEffort (default: approximate with a warning)|exact (leave out what can't be exact, with a warning)|ignore (no warnings))}",
             false,
             export
         ),
@@ -117,6 +117,13 @@ pub fn specs() -> Vec<CommandSpec> {
             "{ids? (default the selection, else every layer on the page with export settings), assets? (true: the Inspect tab's assets in and under them instead: layers with export settings, icons as SVG, images as PNG), dir? (folder to write into; else each file comes back as base64 `data`), zip? (no dir: the files come back together as one base64 zip `data` instead), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options): for every PDF instead of each setting's own, vdCompat? (bestEffort|exact|ignore: for every XML instead of each setting's own)}  every layer once per export setting, named `<layer><suffix>.<format>` (\"@2x\" when a scaled export has no suffix; repeats get \" 2\"; slashes in a layer name make folders). Returns {files: [{name, id, bytes, path | data, warnings (XML only)}], skipped (layers without settings), data? (zip)}",
             false,
             export_layers
+        ),
+        spec!(
+            "file.exportMany",
+            "Export layers in several formats and scales",
+            "{ids? (default the selection, else every top-level layer of the page; each layer is exported on its own), formats? (list of png|jpg|webp|svg|pdf|xml; default [png]), scales? (list of numbers; default [1]; ignored by svg, pdf and xml), naming? (template with {name}, {id}, {scale}, {format}, {ext}; default `{name}@{scale}x.{ext}` for raster with several scales, else `{name}.{ext}`; `/` makes folders; repeats get \" 2\"), dir? (folder to write into; else the files come back as base64 in `data`, keyed by name), iconPreset? (true: SVGs as icons: transforms baked, no needless groups or clips, 3 decimals, the layer's box as view box), currentColor? (with iconPreset: true = the icon's only colour, or a hex colour, becomes `currentColor`), svgOutlineText?, svgIdAttribute?, svgSimplifyStroke?, contentsOnly?, includeBoundingBox?, bleed?, cropMarks?, bleedMarks?, cmyk?, vdCompat?}  no per-layer export settings needed. Returns {files: [{name, id, format, scale, bytes, path? , warnings? (XML)}], data? ({name: base64})}",
+            false,
+            export_many
         ),
         spec!("file.exportSvg", "Export selection as SVG", "{ids?, path?}", false, |s, p| {
             let mut q = p.clone();

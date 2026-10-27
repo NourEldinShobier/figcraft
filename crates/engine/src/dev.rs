@@ -7,4 +7,5 @@ pub mod dev_resources;
 pub mod devcompare;
 pub mod design_read;
 pub mod devinspect;
+pub mod lint_icons;
 pub mod tailwind;

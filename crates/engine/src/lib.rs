@@ -1,7 +1,7 @@
 //! The FigCraft engine.
 //!
 //! Every user-visible action is a command with a stable id (`node.create`, `align.left`,
-//! `layout.add`, `component.create`…) taking JSON params. The egui UI, the CLI, the control channel
+//! `layout.add`, `component.create`â€¦) taking JSON params. The egui UI, the CLI, the control channel
 //! and the MCP server all go through [`Session::execute`], so everything is scriptable and every
 //! change is one undo step. Pointer tools ([`tools`]) and text editing reduce to the same document
 //! edits and are journaled the same way.
@@ -180,6 +180,12 @@ mod autosave_tests;
 mod batch_rollback_tests;
 #[cfg(test)]
 mod batch_step_ref_tests;
+#[cfg(test)]
+mod node_readback_tests;
+#[cfg(test)]
+mod export_many_tests;
+#[cfg(test)]
+mod lint_icons_tests;
 #[cfg(test)]
 mod binding_lists_tests;
 #[cfg(test)]
