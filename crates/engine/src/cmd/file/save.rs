@@ -36,6 +36,8 @@ pub struct FileSnapshot {
     page: NodeId,
     versions: Vec<Version>,
     branches: Vec<figcraft_format::Branch>,
+    /// What [`encode`](Self::encode) left out of the history so the file reopens (for the user).
+    notes: std::sync::Mutex<Vec<String>>,
 }
 
 impl FileSnapshot {
@@ -49,6 +51,7 @@ impl FileSnapshot {
             page: ds.page,
             versions: ds.versions.clone(),
             branches: ds.branches.clone(),
+            notes: Default::default(),
         }
     }
 
@@ -57,8 +60,17 @@ impl FileSnapshot {
         let mut doc = (*self.doc).clone();
         doc.current_page = Some(self.page);
         let thumb = thumbnail(&doc);
-        figcraft_format::save_bytes_with_history(&doc, thumb.as_deref(), &self.versions, &self.branches)
-            .map_err(|e| EngineError::Other(e.to_string()))
+        let (bytes, notes) = figcraft_format::save_bytes_reporting(&doc, thumb.as_deref(), &self.versions, &self.branches)
+            .map_err(|e| EngineError::Other(e.to_string()))?;
+        if let Ok(mut n) = self.notes.lock() {
+            *n = notes;
+        }
+        Ok(bytes)
+    }
+
+    /// Tell the user what the last [`encode`](Self::encode) dropped from the history, if anything.
+    fn said(&self) -> Option<String> {
+        self.notes.lock().ok().filter(|n| !n.is_empty()).map(|n| n.join("; "))
     }
 
     /// Write `bytes` (this snapshot's [`encode`](Self::encode)) to the document's file: it is saved
@@ -73,6 +85,7 @@ impl FileSnapshot {
         refuse_overwriting_changes(ds, path)?;
         write(path, bytes)?;
         ds.note_on_disk();
+        let said = self.said();
         // The history or branches may have changed since: then they still count as unsaved.
         if ds.revision == self.revision {
             ds.versions_changed = false;
@@ -80,6 +93,7 @@ impl FileSnapshot {
         ds.saved_doc = self.doc;
         ds.revision += 1;
         branch_tabs_saved(s, self.uid);
+        s.message = said.or(s.message.take());
         Ok(true)
     }
 }
@@ -165,11 +179,13 @@ fn save_to(s: &mut Session, path: Option<String>) -> Result<Value> {
         return Ok(json!({"name": name, "bytes": bytes.len(), "data": base64::engine::general_purpose::STANDARD.encode(&bytes)}));
     };
     write(&path, &bytes)?;
+    let said = snapshot.said();
     ds.doc = snapshot.doc;
     ds.path = Some(path.clone());
     ds.note_on_disk();
     mark_saved(s, &json!({}))?;
     remember(s, &path);
+    s.message = said.or(s.message.take());
     Ok(json!({"path": path, "bytes": bytes.len()}))
 }
 
