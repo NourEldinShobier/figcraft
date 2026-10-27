@@ -251,6 +251,8 @@ mod devinspect_tests;
 #[cfg(test)]
 mod design_read_tests;
 #[cfg(test)]
+mod history_tests;
+#[cfg(test)]
 mod devmode_behaviour_tests;
 #[cfg(test)]
 mod devmode_tail_tests;

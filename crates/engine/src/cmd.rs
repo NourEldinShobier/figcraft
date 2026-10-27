@@ -7,7 +7,9 @@ pub mod create;
 pub mod edit;
 pub mod facilitate;
 pub mod file;
+pub mod history;
 pub mod image;
+pub mod layername;
 pub mod layout;
 pub mod library;
 pub mod lists;
@@ -91,6 +93,8 @@ fn registry() -> &'static Registry {
         list.extend(proto::specs());
         list.extend(proto_actions::specs());
         list.extend(comment::specs());
+        list.extend(history::specs());
+        list.extend(layername::specs());
         list.extend(crate::vectoredit::specs());
         list.extend(crate::shapebuilder::specs());
         list.extend(crate::codegen::specs());

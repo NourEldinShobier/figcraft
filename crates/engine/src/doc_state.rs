@@ -8,6 +8,10 @@ pub struct HistoryEntry {
     pub doc: Arc<Document>,
     pub selection: Vec<NodeId>,
     pub page: NodeId,
+    /// When the step was recorded (unix seconds).
+    pub time: u64,
+    /// `edit` (one command or gesture) or `batch` (a group of commands).
+    pub kind: &'static str,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -241,7 +245,7 @@ impl DocState {
 
     /// Push a snapshot undo step: the document was `before` (shown with `selection` on `page`).
     pub(crate) fn push_undo(&mut self, label: &str, before: Arc<Document>, selection: Vec<NodeId>, page: NodeId) {
-        self.history.undo.push(HistoryEntry { label: label.to_string(), doc: before, selection, page });
+        self.history.undo.push(HistoryEntry { label: label.to_string(), doc: before, selection, page, time: cmd::comment::now_secs(), kind: "edit" });
         if self.history.undo.len() > self.history.limit.max(1) {
             self.history.undo.remove(0);
         }
