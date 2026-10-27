@@ -66,6 +66,7 @@ pub use dev::component_codegen;
 pub use dev::dev_measurements;
 pub use dev::dev_resources;
 pub use dev::devcompare;
+pub use dev::design_read;
 pub use dev::devinspect;
 pub use dev::tailwind;
 pub use extensions::plugin_directory;
@@ -239,6 +240,8 @@ mod devcompare_tests;
 mod devfocus_tests;
 #[cfg(test)]
 mod devinspect_tests;
+#[cfg(test)]
+mod design_read_tests;
 #[cfg(test)]
 mod devmode_behaviour_tests;
 #[cfg(test)]
