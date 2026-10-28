@@ -364,6 +364,14 @@ impl VectorNetwork {
     /// the rest of its curve, the arc leaving along its direction there. `None` when no point is
     /// rounded.
     pub fn rounded(&self) -> Option<VectorNetwork> {
+        self.rounded_smooth(0.0)
+    }
+
+    /// [`Self::rounded`] with corner smoothing (0..=1): each corner eases in over up to
+    /// `1 + smoothing` times the plain corner length along both segments, drawn as one cubic whose
+    /// handles reach further toward the point the more smoothing there is (the continuous-corner
+    /// idea). The length shrinks to fit half of each segment, smoothing first.
+    pub fn rounded_smooth(&self, smoothing: f64) -> Option<VectorNetwork> {
         if !self.vertices.iter().any(|v| v.radius > 0.0) {
             return None;
         }
@@ -375,7 +383,10 @@ impl VectorNetwork {
                 }
             }
         }
-        let corners: Vec<Corner> = (0..self.vertices.len()).filter_map(|v| self.corner(v, incident.get(v)?)).collect();
+        // How far out each rounded point wants its smoothed corner to start (0 = not rounded).
+        let sm = if smoothing.is_finite() { smoothing.clamp(0.0, 1.0) } else { 0.0 };
+        let desire: Vec<f64> = (0..self.vertices.len()).map(|v| incident.get(v).map_or(0.0, |inc| self.want(v, inc, sm))).collect();
+        let corners: Vec<Corner> = (0..self.vertices.len()).filter_map(|v| self.corner(v, incident.get(v)?, smoothing, &desire)).collect();
         let mut out = self.clone();
         for v in &mut out.vertices {
             v.radius = 0.0;
@@ -444,9 +455,22 @@ impl VectorNetwork {
         Some(out)
     }
 
+    /// How far along its segments a smoothed corner at point `v` wants to start (0 when it isn't rounded).
+    fn want(&self, v: usize, incident: &[(usize, bool)], smoothing: f64) -> f64 {
+        let r = self.vertices.get(v).map_or(0.0, |x| x.radius);
+        let [(s1, a1), (s2, a2)] = *incident else { return 0.0 };
+        let (Some(c1), Some(c2)) = (self.outward(s1, a1), self.outward(s2, a2)) else { return 0.0 };
+        let (Some(u1), Some(u2)) = (start_dir(&c1), start_dir(&c2)) else { return 0.0 };
+        let angle = u1.dot(u2).clamp(-1.0, 1.0).acos();
+        if s1 == s2 || !(r > 0.0 && r.is_finite()) || angle < 1e-6 || std::f64::consts::PI - angle < 1e-6 {
+            return 0.0;
+        }
+        r / (angle / 2.0).tan() * (1.0 + smoothing)
+    }
+
     /// How point `v` (its `incident` segments) is rounded, if it is: not where the two segments
     /// run on smoothly or fold back.
-    fn corner(&self, v: usize, incident: &[(usize, bool)]) -> Option<Corner> {
+    fn corner(&self, v: usize, incident: &[(usize, bool)], smoothing: f64, desire: &[f64]) -> Option<Corner> {
         let r = self.vertices.get(v)?.radius;
         let [(s1, a1), (s2, a2)] = *incident else { return None };
         if !(r > 0.0 && r.is_finite()) || s1 == s2 {
@@ -462,13 +486,34 @@ impl VectorNetwork {
         if !(l1 > 1e-9 && l2 > 1e-9) {
             return None;
         }
-        let t = (r / (angle / 2.0).tan()).min(l1.min(l2) / 2.0);
+        let half = l1.min(l2) / 2.0;
+        let t = (r / (angle / 2.0).tan()).min(half);
         let ((a, d1, k1), (b, d2, k2)) = (trim(&c1, t, l1), trim(&c2, t, l2));
         // A cubic arc: handles of 4/3·tan(φ/4)·ρ along each end's direction, φ the turn between
         // them and ρ the radius of the circle through both ends (the corner radius between lines).
         let turn = (-d1.dot(d2)).clamp(-1.0, 1.0).acos();
         let chord = (b - a).hypot();
         let k = if turn < 1e-9 { chord / 3.0 } else { 4.0 / 3.0 * (turn / 4.0).tan() * chord / (2.0 * (turn / 2.0).sin()) };
+        let (mut a, mut b, mut d1, mut d2, mut k1, mut k2) = (a, b, d1, d2, k1, k2);
+        let (mut ka, mut kb) = (k, k);
+        let s = if smoothing.is_finite() { smoothing.clamp(0.0, 1.0) } else { 0.0 };
+        if s > 0.0 && t > 1e-9 {
+            // Smoothed: the corner starts up to (1 + s) times the plain radius's length out, as far
+            // as each segment's length allows when shared with the corner at its other end by their
+            // wants (asymmetric where one segment is short). One cubic with handles from the
+            // circular share of the length toward 0.9 of it: flatter in the middle, tangent at both ends.
+            let want = r / (angle / 2.0).tan() * (1.0 + s);
+            let share = |seg: usize, at_a: bool, len: f64| {
+                let other = self.segments.get(seg).map_or(0, |g| if at_a { g.b } else { g.a });
+                let d = desire.get(other).copied().unwrap_or(0.0);
+                if d > 0.0 { len * want / (want + d) } else { len }
+            };
+            let (p1, p2) = (want.min(share(s1, a1, l1)).max(t), want.min(share(s2, a2, l2)).max(t));
+            ((a, d1, k1), (b, d2, k2)) = (trim(&c1, p1, l1), trim(&c2, p2, l2));
+            let f = k / t + (0.9 - k / t).max(0.0) * s;
+            (ka, kb) = (f * p1, f * p2);
+        }
+        let k = ka.min(kb);
         if !(k.is_finite() && a.x.is_finite() && a.y.is_finite() && b.x.is_finite() && b.y.is_finite()) {
             return None;
         }
@@ -481,8 +526,8 @@ impl VectorNetwork {
             s2_at_a: a2,
             a,
             b,
-            ta: (d1.x * k, d1.y * k),
-            tb: (d2.x * k, d2.y * k),
+            ta: (d1.x * ka, d1.y * ka),
+            tb: (d2.x * kb, d2.y * kb),
             cut1: own(a1, k1),
             cut2: own(a2, k2),
         })
