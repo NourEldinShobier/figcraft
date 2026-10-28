@@ -135,7 +135,12 @@ fn review_export_names_are_unique_and_failures_are_reported() {
     assert!(files.iter().all(|p| std::fs::metadata(p).is_ok()), "{files:?}");
     let _ = std::fs::remove_dir_all(&dir);
     // A folder that can't be written: the copies stay and every failure is reported.
-    let r = ex(&mut s, "data.fill", json!({"id": f, "rows": [{"name": "x"}], "dir": "/nonexistent-figcraft-dir/out"}));
+    // (Missing folders are created, so the folder's parent is a file.)
+    let blocker = std::env::temp_dir().join(format!("figcraft-datafill-file-{}", std::process::id()));
+    std::fs::write(&blocker, b"x").unwrap();
+    let bad_dir = blocker.join("out");
+    let r = ex(&mut s, "data.fill", json!({"id": f, "rows": [{"name": "x"}], "dir": bad_dir.to_string_lossy()}));
+    let _ = std::fs::remove_file(&blocker);
     assert_eq!(r["ids"].as_array().unwrap().len(), 1);
     assert_eq!(r["errors"].as_array().map(Vec::len), Some(1), "{r}");
     assert!(s.doc().unwrap().contains(NodeId(r["ids"][0].as_u64().unwrap())));

@@ -230,7 +230,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "edit.duplicate",
             "Duplicate",
-            "{ids?, dx?, dy? (page offset; default: the offset of the last duplicate when ids are its copies, still selected; else top-level frames to the right with a 100 gap, everything else in place)}  a main component's copy is an instance of it (a variant stays a new variant in its set)",
+            "{ids?, index? (position among the parent's children of the first copy; default: right after the source, or after the previous copy of the same source in an auto layout), dx?, dy? (page offset; default: the offset of the last duplicate when ids are its copies, still selected; else top-level frames to the right with a 100 gap, everything else in place)}  a main component's copy is an instance of it (a variant stays a new variant in its set). Returns {ids (the copies, in the sources' stacking order), idMap ({old id: new id} for every duplicated layer and descendant)}",
             true,
             duplicate
         ),
@@ -439,7 +439,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "node.reparent",
             "Move layer into",
-            "{ids?, parent, index? (final position among parent's children, bottom first; default top)}",
+            "{ids?, parent, index? (final position among parent's children, bottom first; default top), keepRelative? (true: keep x/y/rotation relative to the new parent instead of the layer's place on the page)}",
             true,
             reparent
         ),
@@ -715,14 +715,34 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
     let ds = s.ds()?;
     let roots_now = z_sorted(&ds.doc, &roots(&ds.doc, &ids));
     let repeat = ds.last_duplicate.as_ref().filter(|d| !explicit && d.is_selection(&roots_now)).and_then(|d| d.offset(&ds.doc));
+    // Copies the last duplicate made of each source, for "append after the previous copy".
+    let previous: BTreeMap<NodeId, NodeId> = match &ds.last_duplicate {
+        Some(d) if d.sources.len() == d.copies.len() => d.sources.iter().copied().zip(d.copies.iter().copied()).collect(),
+        _ => BTreeMap::new(),
+    };
+    let at = match num(p, "index") {
+        Some(v) if v.is_finite() && v >= 0.0 => Some(v as usize),
+        Some(_) => return Err(bad("edit.duplicate", "`index` must be a number of 0 or more")),
+        None => None,
+    };
     let doc = s.doc_mut()?;
     let ids = roots_now;
     let mut out = Vec::new();
-    for i in ids.iter().copied() {
+    for (k, i) in ids.iter().copied().enumerate() {
         let n = doc.get(i)?;
         let parent = n.parent.ok_or_else(|| bad("edit.duplicate", "pages are duplicated with page.duplicate"))?;
         let top_frame = doc.node(parent).is_some_and(Node::is_page) && n.kind.is_frame_like();
-        let idx = doc.index_in_parent(i).map(|x| x + 1);
+        // In an auto layout, repeated copies of one layer line up after each other, not in reverse.
+        let in_flow = doc.node(parent).is_some_and(|pn| pn.layout.is_some());
+        let after_previous = previous
+            .get(&i)
+            .copied()
+            .filter(|c| in_flow && doc.node(*c).is_some_and(|cn| cn.parent == Some(parent)))
+            .and_then(|c| doc.index_in_parent(c));
+        let idx = match at {
+            Some(a) => Some(a + k),
+            None => after_previous.or_else(|| doc.index_in_parent(i)).map(|x| x + 1),
+        };
         let w = n.width;
         let nid = crate::components::copy_in_file(doc, i, parent, idx)?;
         let (dx, dy) = match (num(p, "dx"), num(p, "dy")) {
@@ -750,8 +770,9 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
     let map = crate::board::copy_map(doc, &ids, &out);
     crate::board::rejoin(doc, &crate::board::copied_items(doc, &map), &map, false);
     s.set_selection(out.clone());
+    let id_map: Map<String, Value> = map.iter().map(|(old, new)| (old.to_string(), json!(new))).collect();
     s.ds_mut()?.last_duplicate = Some(Duplicated { sources: ids, copies: out.clone() });
-    Ok(json!({"ids": out}))
+    Ok(json!({"ids": out, "idMap": id_map}))
 }
 
 fn bump_name(n: &str) -> String {

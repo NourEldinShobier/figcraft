@@ -109,6 +109,9 @@ pub(super) fn export(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let mut out = match string(p, "path") {
         Some(path) => {
+            if let Some(parent) = std::path::Path::new(&path).parent().filter(|d| !d.as_os_str().is_empty()) {
+                crate::file_access::create_dir_all(parent)?;
+            }
             write(&path, &bytes)?;
             json!({"path": path, "bytes": bytes.len(), "format": format.ext()})
         }
@@ -377,7 +380,13 @@ pub(in crate::cmd) fn icon_preset_param(cmd: &str, p: &Value) -> Result<Option<I
 }
 
 /// [`export_file`], with the icon preset applied to an SVG.
-pub(in crate::cmd) fn export_one(doc: &Document, ids: &[NodeId], setting: &ExportSetting, scale: f64, icon: Option<&IconPreset>) -> Result<(Vec<u8>, Vec<String>)> {
+pub(in crate::cmd) fn export_one(
+    doc: &Document,
+    ids: &[NodeId],
+    setting: &ExportSetting,
+    scale: f64,
+    icon: Option<&IconPreset>,
+) -> Result<(Vec<u8>, Vec<String>)> {
     match icon {
         Some(icon) if setting.format == ExportFormat::Svg => {
             let setting = ExportSetting { include_bounding_box: true, ..setting.clone() };
@@ -405,15 +414,41 @@ fn unique_name(name: String, taken: &mut std::collections::HashSet<String>) -> S
         Some(i) => name.split_at(i),
         None => (name.as_str(), ""),
     };
-    (2..)
-        .map(|n| format!("{stem} {n}{dot_ext}"))
-        .find(|candidate| taken.insert(candidate.clone()))
-        .unwrap_or(name)
+    (2..).map(|n| format!("{stem} {n}{dot_ext}")).find(|candidate| taken.insert(candidate.clone())).unwrap_or(name)
 }
 
 /// Each layer of `ids` on its own in every format and scale, no per-layer export settings needed.
 pub(super) fn export_many(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "file.exportMany";
+    const KEYS: &[&str] = &[
+        "ids",
+        "id",
+        "formats",
+        "scales",
+        "naming",
+        "flatten",
+        "dir",
+        "iconPreset",
+        "currentColor",
+        "svgOutlineText",
+        "svgIdAttribute",
+        "svgSimplifyStroke",
+        "contentsOnly",
+        "includeBoundingBox",
+        "bleed",
+        "cropMarks",
+        "bleedMarks",
+        "cmyk",
+        "vdCompat",
+        "format",
+        "suffix",
+    ];
+    if let Some(o) = p.as_object()
+        && let Some(k) = o.keys().find(|k| !KEYS.contains(&k.as_str()))
+    {
+        return Err(bad(cmd, format!("unknown key `{k}` (known: {})", KEYS.join(", "))));
+    }
+    let flatten = boolean(p, "flatten").unwrap_or(false);
     let doc = s.doc()?;
     let mut ids = targets(s, p);
     if ids.is_empty() {
@@ -423,11 +458,7 @@ pub(super) fn export_many(s: &mut Session, p: &Value) -> Result<Value> {
         None | Some(Value::Null) => vec![ExportFormat::Png],
         Some(Value::Array(a)) if !a.is_empty() && a.len() <= 8 => a
             .iter()
-            .map(|f| {
-                f.as_str()
-                    .and_then(ExportFormat::from_ext)
-                    .ok_or_else(|| bad(cmd, "`formats` entries: png|jpg|svg|pdf|webp|xml"))
-            })
+            .map(|f| f.as_str().and_then(ExportFormat::from_ext).ok_or_else(|| bad(cmd, "`formats` entries: png|jpg|svg|pdf|webp|xml")))
             .collect::<Result<_>>()?,
         Some(_) => return Err(bad(cmd, "`formats` must be a list of 1 to 8 of png|jpg|svg|pdf|webp|xml")),
     };
@@ -459,12 +490,13 @@ pub(super) fn export_many(s: &mut Session, p: &Value) -> Result<Value> {
             // SVG and PDF don't scale: one file.
             let own_scales = if format.is_vector() { &scales[..1] } else { &scales[..] };
             for &scale in own_scales {
-                let template = naming.clone().unwrap_or_else(|| {
-                    if !format.is_vector() && scales.len() > 1 { "{name}@{scale}x.{ext}" } else { "{name}.{ext}" }.to_string()
-                });
+                let template = naming
+                    .clone()
+                    .unwrap_or_else(|| if !format.is_vector() && scales.len() > 1 { "{name}@{scale}x.{ext}" } else { "{name}.{ext}" }.to_string());
                 let shown = if format.is_vector() { 1.0 } else { scale };
+                let layer_name = if flatten { node.name.replace('/', "_") } else { node.name.clone() };
                 let name = template
-                    .replace("{name}", &node.name)
+                    .replace("{name}", &layer_name)
                     .replace("{id}", &layer.to_string())
                     .replace("{scale}", &scale_label(shown))
                     .replace("{format}", format.ext())

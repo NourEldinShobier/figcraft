@@ -102,6 +102,10 @@ pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
         }
     };
     if props.is_empty() {
+        // Inside a batch an empty step (a generated list with nothing to change) does nothing.
+        if s.in_group() {
+            return ok();
+        }
         return Err(bad("node.set", "no properties given"));
     }
     for (k, v) in &props {
@@ -156,10 +160,29 @@ pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
             names.join(", ")
         ));
     }
+    let asked: Vec<(&str, f64)> =
+        ["width", "height"].into_iter().filter_map(|k| Some((k, f64_of(props.get(k)?).filter(|v| v.is_finite())?))).collect();
     let doc = s.doc_mut()?;
     let before = crate::cmd::styles::bound_before(doc, &ids);
-    for i in ids {
+    for i in ids.iter().copied() {
         crate::cmd::props::apply("node.set", doc, i, skipped.get(&i).unwrap_or(&props))?;
+    }
+    // A size that a min/max limit held back says so.
+    for i in &ids {
+        let Some(n) = doc.node(*i) else { continue };
+        for (k, want) in &asked {
+            let (min, max) = if *k == "width" { (n.child_layout.min_w, n.child_layout.max_w) } else { (n.child_layout.min_h, n.child_layout.max_h) };
+            let cap = if *k == "width" { ("minWidth", "maxWidth") } else { ("minHeight", "maxHeight") };
+            // The layout pass that follows holds the size to the limit.
+            let limit = match (min.filter(|m| want < m), max.filter(|m| want > m)) {
+                (Some(m), _) => Some((cap.0, m)),
+                (_, Some(m)) => Some((cap.1, m)),
+                _ => None,
+            };
+            if let Some((name, m)) = limit {
+                warnings.push(format!("`{k}` {want} is held to {m} on {} “{}”: {name} is {m} (set {name} to null to remove it)", n.id, n.name));
+            }
+        }
     }
     crate::cmd::styles::detach_edited(doc, &before);
     if let Some(o) = pivot {
@@ -249,10 +272,15 @@ pub(super) fn reparent(s: &mut Session, p: &Value) -> Result<Value> {
     // counted after the move, the way `node.reorder` counts it. The layers land together, keeping
     // their order, under the sibling that stays put and ends up just after them (none: on top).
     let above = index.and_then(|at| doc.get(parent).ok()?.children.iter().filter(|c| !ids.contains(c)).nth(at).copied());
+    let keep_relative = boolean(p, "keepRelative") == Some(true);
     for i in &ids {
+        let local = doc.get(*i)?.transform;
         // Counted with the layer still in place, as `reparent` expects.
         let at = above.and_then(|a| doc.node(parent)?.children.iter().position(|c| *c == a));
         doc.reparent(*i, parent, at)?;
+        if keep_relative {
+            doc.get_mut(*i)?.transform = local;
+        }
     }
     ok()
 }

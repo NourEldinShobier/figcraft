@@ -12,7 +12,7 @@ use crate::{Result, bad};
 pub const STROKE_SIDES: [&str; 4] = ["strokeTopWeight", "strokeRightWeight", "strokeBottomWeight", "strokeLeftWeight"];
 
 /// Keys `node.set` understands (documented for agents).
-pub const KEYS: &str = "name, visible, locked, opacity (0-1), blend, x, y (relative to the parent frame; groups don't count), width, height, rotation (degrees), \
+pub const KEYS: &str = "name, visible, locked, opacity (0-1), blend, x, y (relative to the parent frame; groups don't count), width, height, rotation (degrees, positive turns counter-clockwise on screen),\
 fills (paints or colours; gradients as {type: linearGradient|radialGradient|angularGradient|diamondGradient, stops: [\"#hex\", ...], from?, to?} too), fill (colour, {$var: variable id or name}, or \"none\"/null: no fill), strokes, stroke (colour, {$var: variable id or name}, or \"none\"/null: no stroke), strokeWeight (alias strokeWidth), strokeAlign (inside|center|outside), strokeSides [t,r,b,l], strokeTopWeight / strokeRightWeight / strokeBottomWeight / strokeLeftWeight (one side; turns on individual strokes), \
 strokeCap / startCap / endCap, strokeJoin, miterAngle (degrees: sharper joins bevel; or miterLimit as a ratio), dashes [..], widthProfile (preset uniform|wedge|taper|eye|rounded|pinch, [[t, scale], ...] or null), brush (preset id, {preset, spacing, sizeJitter, rotationJitter, scatter, seed} or null), cornerRadius (n or [tl,tr,br,bl]), cornerSmoothing (0-1), effects, \
 clip, isMask, layout (null|horizontal|vertical|grid|{...}), gap, crossGap, padding (n or [t,r,b,l]), paddingTop/Right/Bottom/Left, \
@@ -24,7 +24,7 @@ fontSize, lineHeight (auto|px|\"150%\"), letterSpacing (px|\"2%\"), textAlign (l
 (widthAndHeight|height|none|truncate), textDecoration, textDecorationStyle (solid|dotted|wavy), textDecorationThickness / textDecorationOffset \
 (auto|px|\"10%\" of the font size; the offset runs from the baseline down to an underline's top edge), textDecorationSkipInk (underlines break around descenders), \
 textDecorationColor (colour, or auto/null: the text's), textCase (original|upper|lower|title|smallCaps), paragraphSpacing, paragraphIndent, \
-listStyle (none|bulleted|numbered; with start/end: the paragraphs those chars touch), indentation (list nesting level 0-8, same range rule), \
+ranges ([{start, end, fill?, weight?, fontSize?, fontFamily?, fontStyle?, textDecoration?, ...}]: style those characters (offsets in the text after `characters` in the same call); `text.setRange` does one), listStyle (none|bulleted|numbered; with start/end: the paragraphs those chars touch), indentation (list nesting level 0-8, same range rule), \
 listSpacing (px between list items, in place of paragraphSpacing), hangingPunctuation, hangingList (markers outside the box), leadingTrim (vertical trim: none|capHeight), maxLines, features ({tag: bool}, e.g. {\"liga\": false, \"tnum\": true}), \
 fontVariations / variationSettings ({axis: number}, e.g. {\"wght\": 550, \"wdth\": 85}; null = none), \
 path (a vector's SVG path data: replaces its geometry, keeping the layer, its paints, styles and bindings; width/height in the same call scale it as \
@@ -410,6 +410,8 @@ fn apply_order(k: &str, v: &Value) -> u8 {
     }
     match k {
         "path" | "width" | "height" | "w" | "h" => 0,
+        // After `characters`, so the offsets count the new text.
+        "ranges" => 7,
         "rotation" => 2,
         "x" | "y" => 3,
         "fillStyle" | "strokeStyle" | "effectStyle" | "textStyle" | "gridStyle" => 4,
@@ -536,7 +538,9 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                     set_paints(doc.get_mut(id)?, false, vec![Paint::solid(c)]);
                 }
             }
-            "strokeWeight" | "strokeWidth" => doc.get_mut(id)?.stroke.weight = f64_of(v).ok_or_else(|| bad(cmd, "`strokeWeight` must be a number"))?.max(0.0),
+            "strokeWeight" | "strokeWidth" => {
+                doc.get_mut(id)?.stroke.weight = f64_of(v).ok_or_else(|| bad(cmd, "`strokeWeight` must be a number"))?.max(0.0)
+            }
             "strokeAlign" => doc.get_mut(id)?.stroke.align = enum_of(v).ok_or_else(|| bad(cmd, "strokeAlign: inside|center|outside"))?,
             "strokeSides" => {
                 doc.get_mut(id)?.stroke.sides = if v.is_null() { None } else { Some(four(v).ok_or_else(|| bad(cmd, "strokeSides: [t,r,b,l]"))?) }
@@ -859,6 +863,13 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                 }
             }
             "start" | "end" => {}
+            "ranges" => {
+                let list = v.as_array().ok_or_else(|| bad(cmd, "`ranges` must be a list of {start, end, fill?, weight?, ...text style keys}"))?;
+                let t = text_mut(cmd, doc.get_mut(id)?)?;
+                for (i, r) in list.iter().enumerate() {
+                    set_range(cmd, t, i, r)?;
+                }
+            }
             "pointCount" => {
                 let c = f64_of(v).ok_or_else(|| bad(cmd, "`pointCount` must be a number"))?.round();
                 match &mut doc.get_mut(id)?.kind {
@@ -1025,16 +1036,16 @@ fn set_path(cmd: &str, doc: &mut Document, id: NodeId, v: &Value, props: &Map<St
 pub fn override_group(k: &str) -> &'static str {
     match k {
         "fills" | "fill" => "fills",
-        "strokes" | "stroke" | "strokeWeight" | "strokeWidth" | "strokeAlign" | "dashes" | "strokeCap" | "startCap" | "endCap" | "strokeJoin" | "strokeSides"
-        | "strokeTopWeight" | "strokeRightWeight" | "strokeBottomWeight" | "strokeLeftWeight" | "miterLimit" | "miterAngle" | "widthProfile"
-        | "brush" | "strokeBrush" => "strokes",
+        "strokes" | "stroke" | "strokeWeight" | "strokeWidth" | "strokeAlign" | "dashes" | "strokeCap" | "startCap" | "endCap" | "strokeJoin"
+        | "strokeSides" | "strokeTopWeight" | "strokeRightWeight" | "strokeBottomWeight" | "strokeLeftWeight" | "miterLimit" | "miterAngle"
+        | "widthProfile" | "brush" | "strokeBrush" => "strokes",
         "effects" => "effects",
         "opacity" | "blend" | "blendMode" => "opacity",
         "visible" => "visible",
         "name" => "name",
         "characters" | "text" => "characters",
-        "features" | "fontFeatures" | "openTypeFeatures" | "listStyle" | "indentation" | "listSpacing" | "maxLines" | "variationSettings"
-        | "hangingPunctuation" | "hangingList" => "textStyle",
+        "ranges" | "features" | "fontFeatures" | "openTypeFeatures" | "listStyle" | "indentation" | "listSpacing" | "maxLines"
+        | "variationSettings" | "hangingPunctuation" | "hangingList" => "textStyle",
         "cornerRadius" | "cornerSmoothing" | "topLeftRadius" | "topRightRadius" | "bottomRightRadius" | "bottomLeftRadius" => "corners",
         "width" | "height" | "w" | "h" => "size",
         "sizingH" | "sizingV" | "layoutSizingHorizontal" | "layoutSizingVertical" | "minWidth" | "maxWidth" | "minHeight" | "maxHeight" => "resizing",
@@ -1057,6 +1068,50 @@ fn string_val(v: &Value) -> Option<String> {
         Value::Number(n) => Some(n.to_string()),
         _ => None,
     }
+}
+
+/// Text style keys a character range takes (`fill` and `weight` are short for `textFills` / `fontWeight`).
+const RANGE_KEYS: &[&str] = &[
+    "fontFamily",
+    "fontStyle",
+    "fontWeight",
+    "fontSize",
+    "lineHeight",
+    "letterSpacing",
+    "textDecoration",
+    "textCase",
+    "hyperlink",
+    "textFills",
+    "textDecorationStyle",
+    "textDecorationThickness",
+    "textDecorationOffset",
+    "textDecorationSkipInk",
+    "textDecorationColor",
+];
+
+/// Style characters `start..end` of `t` from one entry of `ranges`.
+fn set_range(cmd: &str, t: &mut TextData, i: usize, r: &Value) -> Result<()> {
+    let o = r.as_object().ok_or_else(|| bad(cmd, format!("ranges[{i}] must be an object")))?;
+    let len = t.char_count();
+    let at = |k: &str| o.get(k).and_then(f64_of).filter(|v| v.is_finite() && *v >= 0.0).map(|v| v as usize);
+    let (Some(start), Some(end)) = (at("start"), at("end")) else {
+        return Err(bad(cmd, format!("ranges[{i}] needs `start` and `end` (character offsets)")));
+    };
+    if start >= end || end > len {
+        return Err(bad(cmd, format!("ranges[{i}]: `start` {start} and `end` {end} must satisfy 0 <= start < end <= {len} (the text's length)")));
+    }
+    for (k, v) in o {
+        match k.as_str() {
+            "start" | "end" => {}
+            "fill" => apply_text_style(cmd, t, start, end, "textFills", &json!([v]))?,
+            "weight" => apply_text_style(cmd, t, start, end, "fontWeight", v)?,
+            k if RANGE_KEYS.contains(&k) => apply_text_style(cmd, t, start, end, k, v)?,
+            other => {
+                return Err(bad(cmd, format!("ranges[{i}]: unknown key `{other}` (known: start, end, fill, weight, {})", RANGE_KEYS.join(", "))));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn range_of(props: &Map<String, Value>, len: usize) -> (usize, usize) {
