@@ -197,6 +197,14 @@ impl<'a> Mapper<'a> {
                 if let Some(op) = view.str("booleanOperation") {
                     o.insert("booleanOperation".into(), json!(if op == "XOR" { "EXCLUDE" } else { op }));
                 }
+                // The result the file computed, kept to draw it as saved (see `StoredOutline`).
+                self.geometry(&mut o, &view);
+                o.remove("strokeGeometry");
+                // Derived geometry of an instance is already at the instance's size.
+                let derived = entries.iter().any(|e| e.entry != Entry::Stale && e.row.get("fillGeometry").is_some());
+                if let Some((w, h)) = if derived { view.size() } else { View::of(base).size() } {
+                    o.insert("outlineSize".into(), json!({"x": w, "y": h}));
+                }
             }
             _ => {}
         }

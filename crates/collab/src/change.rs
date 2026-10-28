@@ -183,6 +183,7 @@ node_props! {
     DevResources => dev_resources,
     Measurements => measurements,
     Board => board,
+    Outline => outline,
 }
 
 /// A document-level property. Lists of entries with ids (styles, comments, variable collections,

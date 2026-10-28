@@ -541,6 +541,9 @@ pub struct Node {
     /// On a board: what this object is (a sticky note, a connector, a stamp…).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub board: Option<crate::BoardItem>,
+    /// A boolean group imported from a file: the result the file stored (see [`crate::StoredOutline`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline: Option<Box<crate::StoredOutline>>,
 }
 
 pub(crate) fn yes() -> bool {
@@ -653,6 +656,7 @@ impl Node {
             dev_resources: Vec::new(),
             measurements: Vec::new(),
             board: None,
+            outline: None,
         }
     }
 

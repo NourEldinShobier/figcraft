@@ -290,6 +290,8 @@ fn vectors_ellipses_stars_and_booleans() {
     counted["pointCount"] = json!(6);
     let mut boolean = base("Bool", "BOOLEAN_OPERATION");
     boolean["booleanOperation"] = json!("SUBTRACT");
+    boolean["fillGeometry"] = json!([{"path": "M0 0L15 0L15 15Z", "windingRule": "NONZERO"}]);
+    boolean["outlineSize"] = json!({"x": 15, "y": 15});
     boolean["children"] =
         json!([base("A", "RECTANGLE"), {"id": "B", "name": "B", "type": "ELLIPSE", "relativeTransform": at(5.0, 5.0), "size": {"x": 10, "y": 10}}]);
     let (doc, warnings) = one(json!([tri, wire, empty, arc, star, plain_star, counted, boolean]));
@@ -311,6 +313,8 @@ fn vectors_ellipses_stars_and_booleans() {
     assert!(matches!(b.kind, NodeKind::BooleanOp { op: BoolOp::Subtract }));
     assert_eq!(b.children.len(), 2);
     assert!(close(b.width, 15.0), "booleans wrap their children");
+    let o = b.outline.as_deref().expect("stored outline");
+    assert_eq!((o.path.elements().len(), o.width, o.height, o.even_odd), (4, 15.0, 15.0, false));
 }
 
 #[test]

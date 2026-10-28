@@ -1,7 +1,7 @@
 //! Recursive scene drawing.
 
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use figcraft_color::{BlendMode, Paint, PaintKind};
@@ -344,6 +344,27 @@ fn round_result(path: BezPath, radius: f64, smoothing: f64) -> BezPath {
     net.rounded_smooth(smoothing).map_or(path, |r| r.fill_path())
 }
 
+/// The result a file stored for boolean group `n`, scaled to its size, while it still matches the
+/// operands (and operation, rounding) it was computed from. The first drawing records the match.
+fn stored_outline(n: &Node, operands: &[(BezPath, figcraft_doc::BoolOp)], radius: f64, smoothing: f64) -> Option<(BezPath, FillRule)> {
+    let s = n.outline.as_deref()?;
+    let mut h = DefaultHasher::new();
+    for (p, op) in operands {
+        hash_path(p, &mut h);
+        (*op as u8).hash(&mut h);
+    }
+    (radius.to_bits(), smoothing.to_bits()).hash(&mut h);
+    let key = h.finish();
+    if *s.key.get_or_init(|| key) != key || !(s.width > 0.0 && s.height > 0.0) {
+        return None;
+    }
+    let mut p = (*s.path).clone();
+    if n.width != s.width || n.height != s.height {
+        p.apply_affine(Affine::scale_non_uniform(n.width / s.width, n.height / s.height));
+    }
+    Some((p, if s.even_odd { FillRule::EvenOdd } else { FillRule::Winding }))
+}
+
 /// [`node_outline`] `depth` levels into a boolean or group nesting (one budget for both).
 fn node_outline_at(doc: &Document, n: &Node, depth: usize) -> Option<(BezPath, FillRule)> {
     match &n.kind {
@@ -359,7 +380,11 @@ fn node_outline_at(doc: &Document, n: &Node, depth: usize) -> Option<(BezPath, F
                     Some((p, c.bool_op.unwrap_or(*op)))
                 })
                 .collect();
-            Some((round_result(crate::boolean::fold_cached(&operands), n.corners.radii[0], n.corners.smoothing), FillRule::EvenOdd))
+            let (radius, smoothing) = (n.corners.radii[0], n.corners.smoothing);
+            if let Some(stored) = stored_outline(n, &operands, radius, smoothing) {
+                return Some(stored);
+            }
+            Some((round_result(crate::boolean::fold_cached(&operands), radius, smoothing), FillRule::EvenOdd))
         }
         NodeKind::Text(_) => {
             let (l, dy) = figcraft_text::layout_node(n)?;

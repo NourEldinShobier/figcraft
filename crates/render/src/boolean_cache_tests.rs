@@ -326,3 +326,28 @@ fn boolean_corner_smoothing_reshapes_the_rounding() {
     let (sa, pa) = (smooth.area().abs(), plain.area().abs());
     assert!((sa - pa).abs() > 1.0, "{sa} vs {pa}");
 }
+
+#[test]
+fn a_stored_outline_is_drawn_until_an_operand_changes() {
+    use figcraft_doc::StoredOutline;
+    use figcraft_geom::Point;
+    let (mut d, _, b, kids) = row_of_squares(BoolOp::Union, 2);
+    // Stored result: a square the operands never produce, saved at half the group's size, so it
+    // is drawn scaled by two.
+    let (w, h) = (d.node(b).unwrap().width, d.node(b).unwrap().height);
+    let mut sq = BezPath::new();
+    sq.move_to((25.0, 25.0));
+    sq.line_to((35.0, 25.0));
+    sq.line_to((35.0, 35.0));
+    sq.line_to((25.0, 35.0));
+    sq.close_path();
+    d.get_mut(b).unwrap().outline = Some(Box::new(StoredOutline::new(sq, w / 2.0, h / 2.0, false)));
+    let p = outline(&d, b);
+    assert_ne!(p.winding(Point::new(60.0, 60.0)), 0, "stored outline, scaled");
+    assert_eq!(p.winding(Point::new(15.0, 15.0)), 0, "not the computed union");
+    // Editing an operand drops it for the computed union.
+    d.get_mut(kids[0]).unwrap().width = 30.0;
+    let p = outline(&d, b);
+    assert_ne!(p.winding(Point::new(15.0, 15.0)), 0, "computed again");
+    assert_eq!(p.winding(Point::new(60.0, 60.0)), 0);
+}

@@ -896,6 +896,9 @@ impl<'a> Ctx<'a> {
             }
         }
         let outlined = matches!(n.kind, NodeKind::Vector { .. }) && self.vector(n, j);
+        if matches!(n.kind, NodeKind::BooleanOp { .. }) {
+            n.outline = self.stored_outline(j).map(Box::new);
+        }
         if matches!(n.kind, NodeKind::Component { .. } | NodeKind::ComponentSet { .. }) {
             let defs = self.prop_defs(n.id, j);
             match &mut n.kind {
@@ -972,6 +975,17 @@ impl<'a> Ctx<'a> {
         }
         n.kind = NodeKind::Vector { network };
         outline
+    }
+
+    /// A boolean group's stored result (`fillGeometry` plus `outlineSize`, our extension of the
+    /// `.fig` import's JSON): drawn as saved until an operand changes.
+    fn stored_outline(&mut self, j: &Value) -> Option<figcraft_doc::StoredOutline> {
+        let size = j.get("outlineSize")?;
+        let (w, h) = (num(size, "x")?, num(size, "y")?);
+        let (path, winding) = self.geometry(j, "fillGeometry")?;
+        (w > 0.0 && h > 0.0 && w.is_finite() && h.is_finite()).then(|| {
+            figcraft_doc::StoredOutline::new(path, w, h, winding == WindingRule::EvenOdd)
+        })
     }
 
     /// The paths of a `fillGeometry` / `strokeGeometry` list (node-local SVG path data).
