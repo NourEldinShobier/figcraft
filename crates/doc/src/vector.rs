@@ -364,6 +364,14 @@ impl VectorNetwork {
     /// the rest of its curve, the arc leaving along its direction there. `None` when no point is
     /// rounded.
     pub fn rounded(&self) -> Option<VectorNetwork> {
+        self.rounded_smooth(0.0)
+    }
+
+    /// [`Self::rounded`] with corner smoothing (0..=1): each corner eases in over up to
+    /// `1 + smoothing` times the plain corner length along both segments, drawn as one cubic whose
+    /// handles reach further toward the point the more smoothing there is (the continuous-corner
+    /// idea). The length shrinks to fit half of each segment, smoothing first.
+    pub fn rounded_smooth(&self, smoothing: f64) -> Option<VectorNetwork> {
         if !self.vertices.iter().any(|v| v.radius > 0.0) {
             return None;
         }
@@ -375,7 +383,7 @@ impl VectorNetwork {
                 }
             }
         }
-        let corners: Vec<Corner> = (0..self.vertices.len()).filter_map(|v| self.corner(v, incident.get(v)?)).collect();
+        let corners: Vec<Corner> = (0..self.vertices.len()).filter_map(|v| self.corner(v, incident.get(v)?, smoothing)).collect();
         let mut out = self.clone();
         for v in &mut out.vertices {
             v.radius = 0.0;
@@ -446,7 +454,7 @@ impl VectorNetwork {
 
     /// How point `v` (its `incident` segments) is rounded, if it is: not where the two segments
     /// run on smoothly or fold back.
-    fn corner(&self, v: usize, incident: &[(usize, bool)]) -> Option<Corner> {
+    fn corner(&self, v: usize, incident: &[(usize, bool)], smoothing: f64) -> Option<Corner> {
         let r = self.vertices.get(v)?.radius;
         let [(s1, a1), (s2, a2)] = *incident else { return None };
         if !(r > 0.0 && r.is_finite()) || s1 == s2 {
@@ -462,13 +470,24 @@ impl VectorNetwork {
         if !(l1 > 1e-9 && l2 > 1e-9) {
             return None;
         }
-        let t = (r / (angle / 2.0).tan()).min(l1.min(l2) / 2.0);
+        let half = l1.min(l2) / 2.0;
+        let t = (r / (angle / 2.0).tan()).min(half);
         let ((a, d1, k1), (b, d2, k2)) = (trim(&c1, t, l1), trim(&c2, t, l2));
         // A cubic arc: handles of 4/3·tan(φ/4)·ρ along each end's direction, φ the turn between
         // them and ρ the radius of the circle through both ends (the corner radius between lines).
         let turn = (-d1.dot(d2)).clamp(-1.0, 1.0).acos();
         let chord = (b - a).hypot();
-        let k = if turn < 1e-9 { chord / 3.0 } else { 4.0 / 3.0 * (turn / 4.0).tan() * chord / (2.0 * (turn / 2.0).sin()) };
+        let mut k = if turn < 1e-9 { chord / 3.0 } else { 4.0 / 3.0 * (turn / 4.0).tan() * chord / (2.0 * (turn / 2.0).sin()) };
+        let (mut a, mut b, mut d1, mut d2, mut k1, mut k2) = (a, b, d1, d2, k1, k2);
+        let p = (t * (1.0 + (if smoothing.is_finite() { smoothing } else { 0.0 }).clamp(0.0, 1.0))).min(half);
+        if p > t * (1.0 + 1e-9) {
+            // Smoothed: start further out; handles go from the circular share of the length toward
+            // 0.9 of it, so the curve is flatter in the middle and meets the segments tangentially.
+            let s = p / t - 1.0;
+            let f0 = k / t;
+            ((a, d1, k1), (b, d2, k2)) = (trim(&c1, p, l1), trim(&c2, p, l2));
+            k = p * (f0 + (0.9 - f0).max(0.0) * s);
+        }
         if !(k.is_finite() && a.x.is_finite() && a.y.is_finite() && b.x.is_finite() && b.y.is_finite()) {
             return None;
         }
