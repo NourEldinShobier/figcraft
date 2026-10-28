@@ -333,6 +333,17 @@ pub fn node_outline(doc: &Document, n: &Node) -> Option<(BezPath, FillRule)> {
     node_outline_at(doc, n, 0)
 }
 
+/// A boolean result with its corners rounded by `radius` (the group's own corner radius; 0 or
+/// below leaves it as is). Points the result runs through smoothly stay as they are.
+fn round_result(path: BezPath, radius: f64) -> BezPath {
+    if !(radius > 0.0 && radius.is_finite()) || path.elements().is_empty() {
+        return path;
+    }
+    let mut net = figcraft_doc::VectorNetwork::from_path(&path);
+    net.vertices.iter_mut().for_each(|v| v.radius = radius);
+    net.rounded().map_or(path, |r| r.fill_path())
+}
+
 /// [`node_outline`] `depth` levels into a boolean or group nesting (one budget for both).
 fn node_outline_at(doc: &Document, n: &Node, depth: usize) -> Option<(BezPath, FillRule)> {
     match &n.kind {
@@ -348,7 +359,7 @@ fn node_outline_at(doc: &Document, n: &Node, depth: usize) -> Option<(BezPath, F
                     Some((p, c.bool_op.unwrap_or(*op)))
                 })
                 .collect();
-            Some((crate::boolean::fold_cached(&operands), FillRule::EvenOdd))
+            Some((round_result(crate::boolean::fold_cached(&operands), n.corners.radii[0]), FillRule::EvenOdd))
         }
         NodeKind::Text(_) => {
             let (l, dy) = figcraft_text::layout_node(n)?;

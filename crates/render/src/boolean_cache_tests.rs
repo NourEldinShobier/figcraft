@@ -273,3 +273,32 @@ fn rounded_side_borders_follow_their_corners_in_booleans() {
     assert_eq!(p.winding(Point::new(3.0, 3.0)), 0, "the rounded corner leaves the square's tip out");
     assert_eq!(p.winding(Point::new(50.0, 50.0)), 0, "hollow inside");
 }
+
+/// A boolean group's own corner radius rounds its result: an L of two rectangles gets its convex
+/// corners cut and its inner corner filled, where without a radius both stay sharp.
+#[test]
+fn boolean_corner_radius_rounds_the_result() {
+    use figcraft_geom::Point;
+    let l_shape = |radius: f64| {
+        let mut d = Document::new("round");
+        let p = d.first_page().unwrap();
+        let b = d.create(p, NodeKind::BooleanOp { op: BoolOp::Union }, "B", 0.0, 0.0, 0.0, 0.0).unwrap();
+        d.get_mut(b).unwrap().fills = vec![Paint::solid(Color::BLACK)];
+        d.create(b, NodeKind::Rectangle, "tall", 10.0, 10.0, 20.0, 60.0).unwrap();
+        d.create(b, NodeKind::Rectangle, "wide", 10.0, 50.0, 80.0, 20.0).unwrap();
+        d.fit_to_children(b).unwrap();
+        d.get_mut(b).unwrap().corners.radii = [radius; 4];
+        (outline(&d, b), render(&d, p))
+    };
+    let (sharp, sharp_px) = l_shape(0.0);
+    let (round, round_px) = l_shape(6.0);
+    // Inner corner at (30, 50) (the outline is in the group's own space, 10 left and up): its notch is empty when sharp and filled when rounded.
+    assert_eq!(sharp.winding(Point::new(21.0, 39.0)), 0);
+    assert_ne!(round.winding(Point::new(21.0, 39.0)), 0);
+    assert!(!dark(&sharp_px, 31, 49) && dark(&round_px, 31, 49));
+    // The outer top-left corner at (10, 10) is cut.
+    assert_ne!(sharp.winding(Point::new(0.5, 0.5)), 0);
+    assert_eq!(round.winding(Point::new(0.5, 0.5)), 0);
+    // The middle of an edge is untouched.
+    assert_ne!(round.winding(Point::new(10.0, 1.0)), 0);
+}

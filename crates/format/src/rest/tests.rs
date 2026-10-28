@@ -780,3 +780,15 @@ fn packed_pages_import_like_the_whole_tree() {
     assert_eq!(doc.node_count(), expected.node_count());
     assert_eq!(serde_json::to_string(&doc).unwrap(), serde_json::to_string(&expected).unwrap());
 }
+
+#[test]
+fn boolean_group_keeps_its_corner_radius() {
+    let (doc, _) = one(json!([
+        {"id": "2:1", "name": "Merged", "type": "BOOLEAN_OPERATION", "booleanOperation": "UNION", "relativeTransform": at(0.0, 0.0),
+         "size": {"x": 40, "y": 40}, "cornerRadius": 12, "cornerSmoothing": 1.0,
+         "children": [{"id": "2:2", "name": "Part", "type": "RECTANGLE", "relativeTransform": at(0.0, 0.0), "size": {"x": 40, "y": 40}}]}
+    ]));
+    let merged = named(&doc, "Merged");
+    assert!(matches!(merged.kind, NodeKind::BooleanOp { .. }));
+    assert_eq!(merged.corners.radii, [12.0; 4]);
+}
