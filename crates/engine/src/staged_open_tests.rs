@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 
 use crate::Session;
 use crate::cmd::file::{Preloaded, preload_staged};
+use figcraft_format::fig::PageFirst;
 
 fn fresh() -> Session {
     let mut s = Session::new();
@@ -33,9 +34,9 @@ fn json_of(doc: &Document) -> String {
     String::from_utf8(out).unwrap()
 }
 
-fn delivered(params: &Value, min_nodes: usize) -> Vec<Option<Preloaded>> {
+fn delivered(params: &Value, page_first: PageFirst) -> Vec<Option<Preloaded>> {
     let mut got = Vec::new();
-    preload_staged(params, min_nodes, &mut |r| got.push(r)).unwrap();
+    preload_staged(params, page_first, &mut |r| got.push(r)).unwrap();
     got
 }
 
@@ -43,7 +44,7 @@ fn delivered(params: &Value, min_nodes: usize) -> Vec<Option<Preloaded>> {
 fn the_first_page_opens_read_only_and_the_whole_file_replaces_it() {
     let path = two_page_fig("two.fig");
     let params = json!({"path": path});
-    let mut got = delivered(&params, 0);
+    let mut got = delivered(&params, PageFirst::ALWAYS);
     assert_eq!(got.len(), 1, "one early delivery; the whole file follows through it");
 
     let mut s = fresh();
@@ -84,7 +85,7 @@ fn a_page_first_open_ends_with_the_document_of_a_plain_open() {
     plain.execute("file.open", &params).unwrap();
 
     let mut s = fresh();
-    s.preloaded = delivered(&params, 0).pop().unwrap();
+    s.preloaded = delivered(&params, PageFirst::ALWAYS).pop().unwrap();
     s.execute("file.open", &params).unwrap();
     s.poll_loading();
     assert_eq!(json_of(s.doc().unwrap()), json_of(plain.doc().unwrap()));
@@ -94,7 +95,7 @@ fn a_page_first_open_ends_with_the_document_of_a_plain_open() {
 fn small_files_and_single_page_files_open_whole() {
     let path = two_page_fig("small.fig");
     let params = json!({"path": path});
-    let mut got = delivered(&params, usize::MAX);
+    let mut got = delivered(&params, PageFirst::APP);
     assert_eq!(got.len(), 1);
     let mut s = fresh();
     s.preloaded = got.pop().unwrap();
@@ -109,7 +110,7 @@ fn small_files_and_single_page_files_open_whole() {
     let (bytes, _) = figcraft_format::fig::export(&doc, None).unwrap();
     let one = std::env::temp_dir().join(format!("figcraft-staged-{}", std::process::id())).join("one.fig");
     std::fs::write(&one, bytes).unwrap();
-    let got = delivered(&json!({"path": one.to_string_lossy()}), 0);
+    let got = delivered(&json!({"path": one.to_string_lossy()}), PageFirst::ALWAYS);
     assert_eq!(got.len(), 1, "a single page has no early stage");
 }
 
@@ -118,7 +119,7 @@ fn a_tab_whose_file_never_arrives_closes_with_a_message() {
     let path = two_page_fig("lost.fig");
     let params = json!({"path": path});
     let mut s = fresh();
-    s.preloaded = delivered(&params, 0).pop().unwrap();
+    s.preloaded = delivered(&params, PageFirst::ALWAYS).pop().unwrap();
     s.execute("file.open", &params).unwrap();
     // The worker's sender is gone without a result: simulate by swapping in a dead channel.
     let (tx, rx) = std::sync::mpsc::channel();
@@ -140,14 +141,14 @@ fn open_timing() {
     use std::time::Instant;
     let Ok(path) = std::env::var("FIGCRAFT_FIG_SNAPSHOT") else { return };
     let staged = std::env::var("FIGCRAFT_STAGED").map_or(true, |v| v != "0");
-    let min_nodes = if staged { crate::cmd::file::STAGED_MIN_NODES } else { usize::MAX };
+    let page_first = if staged { PageFirst::ALWAYS } else { PageFirst::OFF };
     let params = json!({"path": path});
     let t0 = Instant::now();
     let (tx, rx) = std::sync::mpsc::channel();
     let worker = {
         let params = params.clone();
         std::thread::spawn(move || {
-            preload_staged(&params, min_nodes, &mut |r| {
+            preload_staged(&params, page_first, &mut |r| {
                 let _ = tx.send((r, Instant::now()));
             })
         })
@@ -158,14 +159,24 @@ fn open_timing() {
     let t_open = Instant::now();
     let opened = s.execute("file.open", &params).unwrap();
     let shown = t0.elapsed();
-    println!("TIMING staged={staged} worker_to_first={:.2}s ui_open={:.2}s first_page_shown={:.2}s", (at - t0).as_secs_f64(), t_open.elapsed().as_secs_f64(), shown.as_secs_f64());
+    println!(
+        "TIMING staged={staged} worker_to_first={:.2}s ui_open={:.2}s first_page_shown={:.2}s",
+        (at - t0).as_secs_f64(),
+        t_open.elapsed().as_secs_f64(),
+        shown.as_secs_f64()
+    );
     println!("TIMING first_summary={}", opened["summary"]);
     if s.is_loading() {
         loop {
             let t = Instant::now();
             let done = s.poll_loading();
             if let Some(d) = done.first() {
-                println!("TIMING swap_on_ui_thread={:.2}s whole_file_at={:.2}s summary={}", t.elapsed().as_secs_f64(), t0.elapsed().as_secs_f64(), d.result.as_ref().unwrap()["summary"]);
+                println!(
+                    "TIMING swap_on_ui_thread={:.2}s whole_file_at={:.2}s summary={}",
+                    t.elapsed().as_secs_f64(),
+                    t0.elapsed().as_secs_f64(),
+                    d.result.as_ref().unwrap()["summary"]
+                );
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(50));

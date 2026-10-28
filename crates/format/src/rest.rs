@@ -259,6 +259,102 @@ pub(crate) fn import_packed(
     import_parts(v, None, images, networks, max_nodes, true, Some(packed))
 }
 
+/// The `.fig` import with its pages built one at a time as the mapper makes them, so the first
+/// page can be shown (see [`Incremental::preview`]) while the others are still being mapped. The
+/// document at [`Incremental::finish`] is the one [`import_packed`] gives: the same steps in the
+/// same order (pages in file order, the library copies after them, the cross-references last).
+pub(crate) struct Incremental<'a> {
+    cx: Ctx<'a>,
+    blank: Option<NodeId>,
+    /// Library copies, packed; built after the last page.
+    contexts: Vec<Vec<u8>>,
+    /// Pages after the first, packed, to build in [`Self::finish`].
+    deferred: Vec<PackedPage>,
+}
+
+impl<'a> Incremental<'a> {
+    /// Start from the file JSON as mapped with only the first page (no pages in it), the packed
+    /// library copies and the vector networks made so far.
+    pub(crate) fn start(
+        file: &Value,
+        contexts: Vec<Vec<u8>>,
+        images: ImageResolver<'a>,
+        networks: Vec<Option<VectorNetwork>>,
+        max_nodes: usize,
+    ) -> Self {
+        let name = text(file, "name").filter(|n| !n.trim().is_empty()).map_or("Imported file", clip_str);
+        let mut cx = Ctx::new(Document::new(name), images);
+        cx.fig_sources = Some(fig_sources::Sources::new(max_nodes));
+        let blank = cx.doc.first_page();
+        cx.collect_meta(file);
+        cx.variables(file);
+        cx.style_definitions(file);
+        cx.networks = networks;
+        cx.max_nodes = max_nodes.saturating_add(contexts.len());
+        Self { cx, blank, contexts, deferred: Vec::new() }
+    }
+
+    /// Keep a later page (packed, as small as it gets) for [`Self::finish`], which builds it once
+    /// the message is gone: a built page held while the message is still around is memory the
+    /// plain import never needs at that time. `networks`: those the mapper made since the last page.
+    pub(crate) fn defer_page(&mut self, page: PackedPage, networks: Vec<Option<VectorNetwork>>) {
+        self.cx.networks.extend(networks);
+        self.deferred.push(page);
+    }
+
+    /// Build the next page (the first, at the start).
+    pub(crate) fn add_page(&mut self, page: PackedPage) -> Result<(), FormatError> {
+        let id = self.cx.page_head(&page.header);
+        for bytes in page.children {
+            let layer = unpack(&bytes)?;
+            drop(bytes);
+            self.cx.build(&layer, id, Space::default(), None, 0, false);
+        }
+        Ok(())
+    }
+
+    /// The document as it is with the pages added so far, finished on a copy: instances of
+    /// components on pages not added yet stay frames. The import goes on with the original.
+    pub(crate) fn preview(&self) -> Result<Document, FormatError> {
+        let mut copy = Self { cx: self.cx.clone(), blank: self.blank, contexts: Vec::new(), deferred: Vec::new() };
+        copy.finish_with(&self.contexts)?;
+        Ok(copy.cx.doc)
+    }
+
+    /// The whole document, with the warnings. `file`: the file JSON as mapped with every page.
+    pub(crate) fn finish(mut self, file: &Value) -> Result<(Document, Vec<String>), FormatError> {
+        self.cx.collect_meta(file);
+        self.cx.capped_mains =
+            file.get(FIG_CAPPED_MAINS_FIELD).and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
+        let contexts = std::mem::take(&mut self.contexts);
+        for page in std::mem::take(&mut self.deferred) {
+            self.add_page(page)?;
+        }
+        let mut done = self;
+        done.finish_with(&contexts)?;
+        let warnings = done.cx.warnings.finish();
+        Ok((done.cx.doc, warnings))
+    }
+
+    fn finish_with(&mut self, contexts: &[Vec<u8>]) -> Result<(), FormatError> {
+        let cx = &mut self.cx;
+        for bytes in contexts {
+            let context = unpack(bytes)?;
+            let store = cx.doc.ensure_library_store();
+            cx.build(&context, store, Space::default(), None, 0, false);
+        }
+        if let Some(p) = self.blank
+            && cx.doc.pages.len() > 1
+        {
+            let _ = cx.doc.remove(p);
+        }
+        cx.doc.current_page = cx.doc.first_page();
+        cx.styles_take_bindings();
+        cx.finish();
+        Ok(())
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn import_parts(
     v: &Value,
@@ -477,6 +573,7 @@ impl Default for Space {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct Ctx<'a> {
     doc: Document,
     images: ImageResolver<'a>,
@@ -488,9 +585,9 @@ pub(crate) struct Ctx<'a> {
     /// REST node id → imported node.
     ids: BTreeMap<String, NodeId>,
     fig_sources: Option<fig_sources::Sources>,
-    component_meta: BTreeMap<&'a str, &'a Value>,
-    set_meta: BTreeMap<&'a str, &'a Value>,
-    style_meta: BTreeMap<&'a str, &'a Value>,
+    component_meta: BTreeMap<String, Value>,
+    set_meta: BTreeMap<String, Value>,
+    style_meta: BTreeMap<String, Value>,
     // The layers kept for `finish` hold their own JSON without the children ([`shallow`]), so a
     // layer's tree can be dropped once it is built.
     /// Instances (imported as frames until their main is resolved) with their JSON.
@@ -554,10 +651,12 @@ impl<'a> Ctx<'a> {
         self.warnings.add(msg.into());
     }
 
-    fn collect_meta(&mut self, e: &'a Value) {
+    fn collect_meta(&mut self, e: &Value) {
         for (key, into) in [("components", &mut self.component_meta), ("componentSets", &mut self.set_meta), ("styles", &mut self.style_meta)] {
             for (k, v) in e.get(key).and_then(Value::as_object).into_iter().flatten() {
-                into.entry(k.as_str()).or_insert(v);
+                if !into.contains_key(k.as_str()) {
+                    into.insert(k.clone(), v.clone());
+                }
             }
         }
     }
@@ -944,7 +1043,7 @@ impl<'a> Ctx<'a> {
     /// Shared styles with their values (`styleDefinitions`, written by the `.fig` import: a list of
     /// `{id, name, description, styleType, node}`, the node being a layer that shows the style), in
     /// the file's order. Layers then link to them; styles that no layer uses come across too.
-    fn style_definitions(&mut self, v: &'a Value) {
+    fn style_definitions(&mut self, v: &Value) {
         for d in list(v, "styleDefinitions").iter().take(MAX_STYLES) {
             let (Some(id), Some(node)) = (text(d, "id").filter(|i| !i.is_empty()).map(clip_str), d.get("node")) else { continue };
             if self.doc.styles.iter().any(|s| s.id == id) {
@@ -1253,8 +1352,7 @@ impl<'a> Ctx<'a> {
                 continue;
             };
             let set = self.doc.node(main).and_then(|n| n.parent);
-            let default =
-                name.as_ref().and_then(|p| [Some(main), set].into_iter().flatten().find_map(|o| self.slot_defaults.get(&(o, p.clone()))));
+            let default = name.as_ref().and_then(|p| [Some(main), set].into_iter().flatten().find_map(|o| self.slot_defaults.get(&(o, p.clone()))));
             let value = name.as_ref().and_then(|p| inst.get("componentProperties")?.get(p)?.get("value"));
             let own = name.is_some()
                 && match (value, default) {
@@ -1436,7 +1534,7 @@ fn bool_of(v: &Value) -> Option<bool> {
     })
 }
 
-fn description(meta: &BTreeMap<&str, &Value>, j: &Value) -> String {
+fn description(meta: &BTreeMap<String, Value>, j: &Value) -> String {
     text(j, "id").and_then(|id| meta.get(id)).and_then(|m| text(m, "description")).map(|d| clip_str(d).to_string()).unwrap_or_default()
 }
 

@@ -4,7 +4,6 @@
 use figcraft_doc::{Document, NodeKind};
 
 use super::kiwi::Kv;
-use super::map;
 
 type Fields = Vec<(&'static str, Kv<'static>)>;
 
@@ -60,8 +59,20 @@ fn json_of(doc: &Document) -> String {
     String::from_utf8(out).unwrap()
 }
 
-fn build(json: &serde_json::Value, packed: crate::rest::Packed, networks: Vec<Option<figcraft_doc::VectorNetwork>>) -> Document {
-    crate::rest::import_packed(json, packed, &|_: &str| None, networks, 1_000).unwrap().0
+fn no_images(_: &str) -> Option<Vec<u8>> {
+    None
+}
+
+fn whole(msg: Kv<'static>) -> (Document, Vec<String>) {
+    super::import_message(msg, "Staged", 1_000, &no_images, None).unwrap()
+}
+
+/// The import page-first: the early documents, then the whole one with its warnings.
+fn page_first(msg: Kv<'static>, max_share: f64) -> (Vec<Document>, Document, Vec<String>) {
+    let mut firsts = Vec::new();
+    let mut hook = |doc: Document| firsts.push(doc);
+    let (doc, warnings) = super::import_message(msg, "Staged", 1_000, &no_images, Some((max_share, &mut hook))).unwrap();
+    (firsts, doc, warnings)
 }
 
 fn linked(doc: &Document, instance: &str) -> Option<String> {
@@ -72,17 +83,11 @@ fn linked(doc: &Document, instance: &str) -> Option<String> {
 
 #[test]
 fn the_first_page_comes_first_and_the_whole_import_is_unchanged() {
-    let msg = message();
-    let (json, packed, warnings, networks) = map::to_rest_packed(&msg, "Staged", 1_000);
-    let whole = build(&json, packed, networks);
-
-    let mut firsts: Vec<Document> = Vec::new();
-    let mut hook = |json: serde_json::Value, packed, networks| firsts.push(build(&json, packed, networks));
-    let (json2, packed2, warnings2, networks2) = map::to_rest_packed_staged(&msg, "Staged", 1_000, &mut hook);
-    let staged = build(&json2, packed2, networks2);
+    let (plain, warnings) = whole(message());
+    let (firsts, staged, warnings2) = page_first(message(), 1.0);
 
     assert_eq!(warnings, warnings2);
-    assert_eq!(json_of(&whole), json_of(&staged));
+    assert_eq!(json_of(&plain), json_of(&staged));
 
     assert_eq!(firsts.len(), 1, "the first page is handed over once");
     let first = &firsts[0];
@@ -104,8 +109,17 @@ fn a_single_page_file_has_no_early_stage() {
         node(2, Some(1), "CANVAS", "Only", vec![]),
         node(30, Some(2), "RECTANGLE", "R", vec![("size", xy(5.0, 5.0))]),
     ];
-    let mut calls = 0;
-    let mut hook = |_: serde_json::Value, _, _| calls += 1;
-    map::to_rest_packed_staged(&o(vec![("nodeChanges", Kv::Array(nodes))]), "One", 1_000, &mut hook);
-    assert_eq!(calls, 0);
+    let (firsts, doc, _) = page_first(o(vec![("nodeChanges", Kv::Array(nodes))]), 1.0);
+    assert!(firsts.is_empty());
+    assert!(doc.nodes().any(|n| n.name == "R"));
+}
+
+#[test]
+fn a_first_page_over_the_allowed_share_is_not_staged() {
+    // "First" holds 4 of the 8 layers under the pages.
+    let (firsts, staged, warnings) = page_first(message(), 0.2);
+    let (plain, plain_warnings) = whole(message());
+    assert!(firsts.is_empty());
+    assert_eq!(warnings, plain_warnings);
+    assert_eq!(json_of(&staged), json_of(&plain));
 }

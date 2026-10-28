@@ -70,10 +70,6 @@ pub struct Preloaded {
     later: Option<std::sync::mpsc::Receiver<Preloaded>>,
 }
 
-/// `.fig` files with at least this many node changes (and several pages) open page-first in the
-/// app: the first page shows while the rest of the file is still being built.
-pub const STAGED_MIN_NODES: usize = 100_000;
-
 fn data_key(name: &str) -> String {
     format!("data:{name}")
 }
@@ -82,16 +78,16 @@ fn data_key(name: &str) -> String {
 /// so it can run on any thread. `None` when `p` names no file to decode (the command reports why).
 pub fn preload(p: &Value) -> Option<Preloaded> {
     let mut whole = None;
-    preload_staged(p, usize::MAX, &mut |r| whole = r)?;
+    preload_staged(p, figcraft_format::fig::PageFirst::OFF, &mut |r| whole = r)?;
     whole
 }
 
 /// [`preload`] that may deliver the file in two steps, so the caller can show the first page of a
-/// large `.fig` file (at least `min_nodes` node changes, several pages) early. `deliver` is called
+/// large `.fig` file (as far as `page_first` allows) early. `deliver` is called
 /// once with the result, or with the first page alone: that [`Preloaded`] opens the file as a tab
 /// that is still loading, and [`Session::poll_loading`] later swaps in the whole file, which this
 /// function sends through the channel the first one carries. `None` when `p` names no file.
-pub fn preload_staged(p: &Value, min_nodes: usize, deliver: &mut dyn FnMut(Option<Preloaded>)) -> Option<()> {
+pub fn preload_staged(p: &Value, page_first: figcraft_format::fig::PageFirst, deliver: &mut dyn FnMut(Option<Preloaded>)) -> Option<()> {
     let variables = variables_param("file.open", p).ok()?;
     let (key, on_disk, bytes_path) = if let Some(path) = string(p, "path") {
         // Stamped before reading: a change made during the read makes the next save refuse.
@@ -105,14 +101,14 @@ pub fn preload_staged(p: &Value, min_nodes: usize, deliver: &mut dyn FnMut(Optio
         deliver(Some(Preloaded { key: key.clone(), result: Ok((l, true, on_disk.clone())), later: rx.take() }));
     };
     let result = match &bytes_path {
-        Some(path) => load_path_staged(path, variables.as_ref(), min_nodes, &mut early),
+        Some(path) => load_path_staged(path, variables.as_ref(), page_first, &mut early),
         None => {
             let (data, name) = (string(p, "data")?, string(p, "name")?);
             let data = data.split_once(',').map_or(data.as_str(), |(_, b)| b);
             base64::engine::general_purpose::STANDARD
                 .decode(data.trim())
                 .map_err(|e| bad("file.open", e.to_string()))
-                .and_then(|bytes| load_with_staged(&bytes, &name, variables.as_ref(), &figcraft_format::rest::no_images, min_nodes, &mut early))
+                .and_then(|bytes| load_with_staged(&bytes, &name, variables.as_ref(), &figcraft_format::rest::no_images, page_first, &mut early))
         }
     };
     let whole = Preloaded { key, result: result.map(|(l, rest)| (l, rest, on_disk)), later: None };
@@ -260,7 +256,8 @@ impl Session {
                 Err(why) => {
                     let active_uid = self.docs.get(self.active).map(|d| d.uid);
                     self.remove_tabs(|d| d.uid == uid);
-                    self.active = active_uid.and_then(|a| self.docs.iter().position(|d| d.uid == a)).unwrap_or(i.min(self.docs.len().saturating_sub(1)));
+                    self.active =
+                        active_uid.and_then(|a| self.docs.iter().position(|d| d.uid == a)).unwrap_or(i.min(self.docs.len().saturating_sub(1)));
                     self.message = Some(why.clone());
                     done.push(LoadingDone { uid, result: Err(why) });
                 }

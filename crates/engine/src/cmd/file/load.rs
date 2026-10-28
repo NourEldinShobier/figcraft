@@ -60,21 +60,21 @@ pub fn load_bytes(bytes: &[u8], name_hint: &str) -> Result<(Document, Vec<String
 /// [`load`] with the version history, also telling whether the file was REST API file JSON. A REST
 /// import reads its variables from `variables`, else from a variables JSON next to the file.
 pub fn load_path(path: &str, variables: Option<&Value>) -> Result<(figcraft_format::Loaded, bool)> {
-    load_path_staged(path, variables, usize::MAX, &mut |_| {})
+    load_path_staged(path, variables, figcraft_format::fig::PageFirst::OFF, &mut |_| {})
 }
 
-/// [`load_path`] that, for a `.fig` file of at least `min_nodes` node changes and several pages,
+/// [`load_path`] that, for a `.fig` file `page_first` allows,
 /// first hands `first` the document with only its first page (see
 /// [`figcraft_format::fig::import_staged`]).
 pub(super) fn load_path_staged(
     path: &str,
     variables: Option<&Value>,
-    min_nodes: usize,
+    page_first: figcraft_format::fig::PageFirst,
     first: &mut dyn FnMut(figcraft_format::Loaded),
 ) -> Result<(figcraft_format::Loaded, bool)> {
     let bytes = read(path)?;
     let sibling = if variables.is_none() { sibling_variables(path) } else { None };
-    load_with_staged(&bytes, path, variables.or(sibling.as_ref()), &rest_images(path), min_nodes, first)
+    load_with_staged(&bytes, path, variables.or(sibling.as_ref()), &rest_images(path), page_first, first)
 }
 
 /// Load from bytes. Returns the document with its notes (repairs of a native file, or import
@@ -86,7 +86,7 @@ pub(super) fn load_with(
     variables: Option<&Value>,
     images: figcraft_format::rest::ImageResolver,
 ) -> Result<(figcraft_format::Loaded, bool)> {
-    load_with_staged(bytes, name_hint, variables, images, usize::MAX, &mut |_| {})
+    load_with_staged(bytes, name_hint, variables, images, figcraft_format::fig::PageFirst::OFF, &mut |_| {})
 }
 
 pub(super) fn load_with_staged(
@@ -94,7 +94,7 @@ pub(super) fn load_with_staged(
     name_hint: &str,
     variables: Option<&Value>,
     images: figcraft_format::rest::ImageResolver,
-    min_nodes: usize,
+    page_first: figcraft_format::fig::PageFirst,
     first: &mut dyn FnMut(figcraft_format::Loaded),
 ) -> Result<(figcraft_format::Loaded, bool)> {
     match ext(name_hint).as_str() {
@@ -115,7 +115,7 @@ pub(super) fn load_with_staged(
             Ok((doc.into(), false))
         }
         _ => {
-            if let Some(r) = load_fig_staged(bytes, &file_stem(name_hint), min_nodes, first) {
+            if let Some(r) = load_fig_staged(bytes, &file_stem(name_hint), page_first, first) {
                 return Ok((r?, true));
             }
             if let Some(r) = load_sketch(bytes, &file_stem(name_hint)) {
@@ -351,37 +351,43 @@ pub(crate) fn installed_family(family: &str, installed: &[String]) -> Option<Str
 
 /// Gives `None` when `bytes` are not a `.fig` file. Then other readers can try.
 pub(crate) fn load_fig(bytes: &[u8], name: &str) -> Option<Result<figcraft_format::Loaded>> {
-    load_fig_staged(bytes, name, usize::MAX, &mut |_| {})
+    load_fig_staged(bytes, name, figcraft_format::fig::PageFirst::OFF, &mut |_| {})
 }
 
 /// [`load_fig`] that first gives `first` the first page alone (instances of components on later
-/// pages stay unlinked in it) when the file has at least `min_nodes` node changes and several pages.
+/// pages stay unlinked in it) when `page_first` allows it for the file.
 pub(crate) fn load_fig_staged(
     bytes: &[u8],
     name: &str,
-    min_nodes: usize,
+    page_first: figcraft_format::fig::PageFirst,
     first: &mut dyn FnMut(figcraft_format::Loaded),
 ) -> Option<Result<figcraft_format::Loaded>> {
     if !figcraft_format::fig::is_fig(bytes) {
         return None;
     }
     let mut early = |mut doc: Document| {
-        link_instances(&mut doc);
+        settle_imported(&mut doc);
         first(doc.into());
     };
-    let r = figcraft_format::fig::import_staged(bytes, name, min_nodes, &mut early);
+    let r = figcraft_format::fig::import_staged(bytes, name, page_first, &mut early);
     Some(r.map_err(|e| EngineError::Other(e.to_string())).map(|(mut doc, warnings)| {
         link_instances(&mut doc);
         figcraft_format::Loaded { issues: warnings, ..doc.into() }
     }))
 }
 
-/// Link imported instances to their mains (layer sources, overrides found by comparing values),
-/// innermost first so outer instances settle last.
-fn link_instances(doc: &mut Document) {
+/// What an import needs for the layers to look as saved (alpha of bound colours, style variables,
+/// paint bindings); the first page of a page-first open gets this much and no instance links.
+fn settle_imported(doc: &mut Document) {
     crate::cmd::styles::unfold_imported_bound_alpha(doc);
     crate::style_vars::after_load(doc);
     crate::cmd::styles::apply_paint_bindings_on_load(doc);
+}
+
+/// Link imported instances to their mains (layer sources, overrides found by comparing values),
+/// innermost first so outer instances settle last.
+fn link_instances(doc: &mut Document) {
+    settle_imported(doc);
     let mut insts: Vec<(usize, NodeId)> =
         doc.nodes().filter(|n| matches!(n.kind, NodeKind::Instance { .. })).map(|n| (doc.ancestors(n.id).len(), n.id)).collect();
     insts.sort_by_key(|a| std::cmp::Reverse(a.0));

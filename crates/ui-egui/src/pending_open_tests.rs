@@ -85,7 +85,7 @@ fn a_page_first_open_shows_the_first_page_then_the_whole_file_with_its_report() 
 
     let mut u = Ui::new(Session::new());
     u.app.session.docs.clear();
-    figcraft_engine::cmd::file::preload_staged(&params, 0, &mut |r| u.app.session.preloaded = r).unwrap();
+    figcraft_engine::cmd::file::preload_staged(&params, figcraft_format::fig::PageFirst::ALWAYS, &mut |r| u.app.session.preloaded = r).unwrap();
     u.app.run_user("file.open", params);
     assert!(u.app.session.is_loading());
     assert_eq!(u.app.session.doc().unwrap().pages.len(), 1);

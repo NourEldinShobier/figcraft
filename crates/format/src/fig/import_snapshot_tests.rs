@@ -26,9 +26,15 @@ fn import_snapshot() {
     let staged = std::env::var("FIGCRAFT_FIG_STAGED").is_ok_and(|v| v == "1");
     let (doc, warnings) = if staged {
         let mut first = |doc: figcraft_doc::Document| {
-            println!("SNAPSHOT first_page_at={:.2}s pages={} nodes={} resident_kb={}", started.elapsed().as_secs_f64(), doc.pages.len(), doc.node_count(), resident_kb());
+            println!(
+                "SNAPSHOT first_page_at={:.2}s pages={} nodes={} resident_kb={}",
+                started.elapsed().as_secs_f64(),
+                doc.pages.len(),
+                doc.node_count(),
+                resident_kb()
+            );
         };
-        super::import_staged(&bytes, "snapshot", 0, &mut first).unwrap()
+        super::import_staged(&bytes, "snapshot", super::PageFirst::ALWAYS, &mut first).unwrap()
     } else {
         super::import(&bytes, "snapshot").unwrap()
     };
@@ -44,10 +50,7 @@ fn import_snapshot() {
 /// Working set of this process in KB (Windows `tasklist`; 0 elsewhere or on failure).
 fn resident_kb() -> u64 {
     let pid = std::process::id();
-    let Ok(out) = std::process::Command::new("tasklist")
-        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
-        .output()
-    else {
+    let Ok(out) = std::process::Command::new("tasklist").args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"]).output() else {
         return 0;
     };
     let s = String::from_utf8_lossy(&out.stdout);
