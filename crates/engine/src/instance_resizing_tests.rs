@@ -119,10 +119,11 @@ fn layers_in_instances_resize_but_keep_their_place() {
     ex(&mut s, "node.set", json!({"id": it, "props": {"width": 150}}));
     assert_eq!(node(&s, it).width, 150.0, "a text box resizes");
     assert!(node(&s, it).overrides.contains("size"));
-    // Its place, rotation and constraints are still the main's.
+    // Its place, rotation and constraints are overrides too.
     for props in [json!({"x": 50}), json!({"rotation": 15}), json!({"constraints": {"horizontal": "right"}})] {
-        assert!(s.execute("node.set", &json!({"id": it, "props": props})).is_err(), "{props} is refused");
+        ex(&mut s, "node.set", json!({"id": it, "props": props}));
     }
+    assert!(node(&s, it).overrides.contains("position") && node(&s, it).overrides.contains("constraints"));
     // The instance's own resizing is its own, not an override.
     ex(&mut s, "node.set", json!({"id": i, "props": {"minWidth": 100}}));
     assert!(!node(&s, i).overrides.contains("resizing"));
