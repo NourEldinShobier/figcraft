@@ -485,17 +485,8 @@ fn what_instances_cannot_override_is_refused() {
     // (what, command, params (`$` stands for the instance's copy of the layer), layer, derivation)
     type Row = (&'static str, &'static str, Value, Layer, &'static str);
     let rows: Vec<Row> = vec![
-        ("move a layer", "node.set", json!({"id": "$", "props": {"x": 50}}), Layer::Bg, "\"position of any layers within the component\""),
-        ("nudge a layer", "transform.nudge", json!({"ids": ["$"], "dx": 1, "dy": 0}), Layer::Bg, "position"),
-        ("rotate a layer", "node.set", json!({"id": "$", "props": {"rotation": 15}}), Layer::Bg, "position and rotation come with the layer's place"),
-        ("flip a layer", "object.flipH", json!({"ids": ["$"]}), Layer::Bg, "position"),
-        (
-            "change constraints",
-            "node.set",
-            json!({"id": "$", "props": {"constraints": {"horizontal": "right"}}}),
-            Layer::Bg,
-            "\"any constraints applied to the layers\"",
-        ),
+        // Moving, nudging, rotating, flipping and re-constraining a layer are overrides here: see
+        // `instance_geometry_tests`.
         (
             "take a layer out of auto layout",
             "node.set",

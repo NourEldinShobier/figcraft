@@ -186,6 +186,7 @@ pub(crate) fn copy_group(from: &Node, to: &mut Node, g: &str) {
             (b.sizing_h, b.sizing_v, b.min_w, b.max_w, b.min_h, b.max_h) = (a.sizing_h, a.sizing_v, a.min_w, a.max_w, a.min_h, a.max_h);
         }
         "position" => to.transform = from.transform,
+        "constraints" => to.constraints = from.constraints,
         "modes" => to.var_modes = from.var_modes.clone(),
         "component" => {
             if let (NodeKind::Instance { component: a, .. }, NodeKind::Instance { component: b, .. }) = (&from.kind, &mut to.kind) {

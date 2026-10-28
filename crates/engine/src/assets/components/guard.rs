@@ -1,4 +1,3 @@
-use super::diff::geometry_derived;
 use super::rebase::rebase_instance;
 use super::variants::instance_issues;
 use super::*;
@@ -89,7 +88,7 @@ pub fn check_override_edit(before: &Document, after: &Document) -> Result<(), St
 
 /// What about layer `id` an edit from `before` to `after` changed that only its main can: the
 /// auto layout of an instance or a layer in one but its padding, gap and alignment, or the
-/// position (rotation too), constraints or place in auto layout (absolute, grid cell) of a layer
+/// place in auto layout (absolute, grid cell) of a layer
 /// inside an instance (its size and resizing are overrides). `None` when the edit is fine, also
 /// when the main changed the same way in this edit (a library update).
 pub fn refused_override(before: &Document, after: &Document, id: NodeId) -> Option<&'static str> {
@@ -122,12 +121,8 @@ pub fn refused_override(before: &Document, after: &Document, id: NodeId) -> Opti
     if !inside_instance(after, id) || !inside_instance(before, id) {
         return None;
     }
-    if n.transform != b.transform && ma.transform == mb.transform && !geometry_derived(after, before, id, "position") {
-        return Some("A layer's position");
-    }
-    if n.constraints != b.constraints && ma.constraints == mb.constraints {
-        return Some("A layer's constraints");
-    }
+    // Position and constraints of a layer inside an instance are overrides ("position",
+    // "constraints" groups).
     if placing(n) != placing(b) && placing(ma) == placing(mb) {
         return Some("A layer's place in auto layout");
     }

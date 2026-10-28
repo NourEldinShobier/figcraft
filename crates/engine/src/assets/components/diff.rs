@@ -68,6 +68,9 @@ pub fn diff_groups(a: &Node, b: &Node) -> Vec<&'static str> {
     if a.transform != b.transform {
         out.push("position");
     }
+    if a.constraints != b.constraints {
+        out.push("constraints");
+    }
     if let (NodeKind::Text(x), NodeKind::Text(y)) = (&a.kind, &b.kind) {
         if x.characters != y.characters {
             out.push("characters");

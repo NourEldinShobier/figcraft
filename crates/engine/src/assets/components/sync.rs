@@ -223,7 +223,7 @@ pub(super) fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize
     // A resized instance: children follow their constraints (auto layout re-flows later).
     let (iw, ih) = doc.node(inst).map(|n| (n.width, n.height)).unwrap_or((comp.width, comp.height));
     if (iw - comp.width).abs() > 1e-9 || (ih - comp.height).abs() > 1e-9 {
-        figcraft_layout::apply_constraints(doc, inst, comp.width, comp.height);
+        constrain_resized(doc, inst, comp.id, comp.width, comp.height);
         remeasure = map.values().copied().collect();
     }
     // Geometry overrides of children win over constraints.
@@ -456,4 +456,29 @@ pub(super) fn insert_linked(doc: &mut Document, n: Node) -> Result<(), DocError>
         p.children.retain(|c| seen.insert(*c));
     }
     Ok(())
+}
+
+/// Children of the resized instance `inst` follow their constraints from its main's size. An
+/// icon-like main (no text, no auto layout anywhere inside) scales every layer that keeps the
+/// default left/top constraints with the instance, so a resized icon draws smaller or larger as a
+/// whole; layers with constraints of their own keep them.
+pub fn constrain_resized(doc: &mut Document, inst: NodeId, main: NodeId, ow: f64, oh: f64) {
+    let icon = doc.subtree(main).into_iter().all(|d| doc.node(d).is_some_and(|n| n.layout.is_none() && !matches!(n.kind, NodeKind::Text(_))));
+    let mut swapped = Vec::new();
+    if icon {
+        for d in doc.subtree(inst).into_iter().filter(|d| *d != inst) {
+            if let Some(n) = doc.node_mut(d)
+                && n.constraints == Constraints::default()
+            {
+                n.constraints = Constraints { horizontal: HConstraint::Scale, vertical: VConstraint::Scale };
+                swapped.push(d);
+            }
+        }
+    }
+    figcraft_layout::apply_constraints(doc, inst, ow, oh);
+    for d in swapped {
+        if let Some(n) = doc.node_mut(d) {
+            n.constraints = Constraints::default();
+        }
+    }
 }

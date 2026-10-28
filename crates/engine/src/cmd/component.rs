@@ -172,11 +172,18 @@ pub fn specs() -> Vec<CommandSpec> {
             hide_when_publishing
         ),
         spec!("component.detach", "Detach instance", "{ids?}", true, detach),
-        spec!("component.resetInstance", "Reset all changes", "{ids?}", true, reset_instance),
+        spec!("component.resetInstance", "Reset all changes", "{ids?, size? (true: the instance also goes back to its main's size)}", true, reset_instance),
+        spec!("instance.resetOverrides", "Reset overrides and size", "{ids?}  as component.resetInstance with size: true: layer overrides, property values and the instance's own size reset to the main's", true, |s, p| {
+            let mut q = p.clone();
+            if let Some(o) = q.as_object_mut() {
+                o.insert("size".into(), json!(true));
+            }
+            reset_instance(s, &q)
+        }),
         spec!(
             "component.resetOverride",
             "Reset override",
-            "{id?, group? (fills|strokes|effects|opacity|visible|name|corners|characters|textStyle|padding|gap|alignment|grids|exports|interactions|size|position|modes|component|props|slot; all when omitted)}",
+            "{id?, group? (fills|strokes|effects|opacity|visible|name|corners|characters|textStyle|padding|gap|alignment|grids|exports|interactions|size|position|constraints|modes|component|props|slot; all when omitted)}",
             true,
             reset_override
         ),
@@ -214,7 +221,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "instance.swapAt",
             "Swap instance at point",
-            "{component (component or set: its default variant), x, y (page point)}  swaps the instance there (preferring one showing the same component set; Alt-drop from the Assets panel); only text layers keep their overrides (by matching names)",
+            "{component (component or set: its default variant), x, y (page point), keepOverrides?}  swaps the instance there (preferring one showing the same component set; Alt-drop from the Assets panel); only text layers keep their overrides (by matching names) unless keepOverrides: true keeps every override whose layer name matches (strokes, fills, ...); the instance keeps its size either way",
             true,
             swap_at
         ),

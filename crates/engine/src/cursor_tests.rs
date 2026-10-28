@@ -215,13 +215,14 @@ fn an_edit_an_instance_refuses_shows_not_allowed_and_is_undone() {
     s.pointer(&ev(PointerKind::Up, (600.0, 100.0), NONE)).unwrap();
     let before = s.doc().unwrap().world_bounds(inner).unwrap();
     assert_eq!((before.x0, before.x1), (450.0, 600.0), "the resize stays");
-    // Moving it: only the main component can.
+    // Moving it is an override of its position too.
     s.pointer(&ev(PointerKind::Down, (500.0, 100.0), NONE)).unwrap();
     s.pointer(&ev(PointerKind::Move, (510.0, 110.0), NONE)).unwrap();
     s.pointer(&ev(PointerKind::Move, (520.0, 120.0), NONE)).unwrap();
-    assert_eq!(s.tool.overlay.cursor, Cursor::NotAllowed);
+    assert_ne!(s.tool.overlay.cursor, Cursor::NotAllowed);
     s.pointer(&ev(PointerKind::Up, (520.0, 120.0), NONE)).unwrap();
-    assert_eq!(s.doc().unwrap().world_bounds(inner).unwrap(), before, "the move was undone");
+    let after = s.doc().unwrap().world_bounds(inner).unwrap();
+    assert_eq!((after.x0, after.y0), (before.x0 + 20.0, before.y0 + 20.0), "the move stays");
 }
 
 #[test]

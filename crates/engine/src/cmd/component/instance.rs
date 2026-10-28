@@ -52,13 +52,14 @@ fn keep_main_modes(doc: &mut Document, i: NodeId) -> Result<()> {
 pub(super) fn reset_instance(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "component.resetInstance";
     let ids = req_targets(cmd, s, p)?;
+    let size = boolean(p, "size").unwrap_or(false);
     let doc = s.doc_mut()?;
     let mut done = Vec::new();
     for i in ids {
         let Some(inst) = owning_instance(doc, i) else { continue };
         let top = !inside_instance(doc, inst);
         for d in doc.subtree(inst) {
-            let keep: Vec<&str> = if d == inst && top { vec!["size"] } else { vec![] };
+            let keep: Vec<&str> = if d == inst && top && !size { vec!["size"] } else { vec![] };
             if let Some(n) = doc.node(d)
                 && n.overrides.iter().any(|g| !keep.contains(&g.as_str()))
                 && let Some(n) = doc.node_mut(d)
@@ -404,7 +405,9 @@ pub(crate) fn swap_at(s: &mut Session, p: &Value) -> Result<Value> {
     let family = crate::drop::swap_family(doc, c);
     let target = crate::drop::swap_target(doc, page, pt, family.as_deref(), Some(c))
         .ok_or_else(|| EngineError::Disabled(cmd.into(), "there is no instance at that point to swap".into()))?;
-    keep_text_overrides(s.doc_mut()?, target);
+    if !boolean(p, "keepOverrides").unwrap_or(false) {
+        keep_text_overrides(s.doc_mut()?, target);
+    }
     swap(s, &json!({"ids": [target], "component": c}))?;
     s.set_selection(vec![target]);
     Ok(json!({"id": target, "component": c}))
