@@ -548,3 +548,17 @@ fn a_cluster_is_shaped_with_one_face() {
         assert_eq!(faces.len(), 1, "{s:?}");
     }
 }
+
+#[test]
+fn a_word_a_hair_wider_than_its_box_stays_whole() {
+    if face().is_none() {
+        return;
+    }
+    let word = layout(&text("Downloads", TextAutoResize::WidthAndHeight), None, None).width;
+    let mut one = text("Downloads", TextAutoResize::Truncate);
+    one.max_lines = 1;
+    // 1% over the box: the word is kept; 10% over: it is still cut.
+    let kept = layout(&one, Some(word / 1.01), Some(1000.0));
+    assert!(!kept.truncated && kept.lines.len() == 1);
+    assert!(layout(&one, Some(word / 1.10), Some(1000.0)).truncated);
+}

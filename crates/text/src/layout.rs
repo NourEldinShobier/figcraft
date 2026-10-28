@@ -102,6 +102,13 @@ pub struct Decoration {
 /// Most dots or wave samples drawn for one decoration.
 const MAX_DECO_STEPS: usize = 2_500;
 
+/// A single word that overflows its box by up to 1.5% still fits instead of breaking inside the
+/// word: imported boxes are sized by the design app's own Inter build (and rounded after instance
+/// scaling), so a word that fills its box there can measure a hair wider with ours.
+fn overflow_slack(maxw: f64, has_break: bool) -> f64 {
+    if has_break { 0.0 } else { maxw * 0.015 }
+}
+
 impl Decoration {
     /// The line's outline: a bar, a row of dots or a wave, `thickness` thick.
     pub fn path(&self) -> BezPath {
@@ -502,7 +509,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         let hung = items.get(line_start).filter(|f| hang_start && ltr && opens(f.ch)).map_or(0.0, |f| f.adv)
             + if hang_end && ltr && closes(it.ch) { w } else { 0.0 };
         if let Some(maxw) = wrap
-            && x + w - it.spacing > maxw - line_indent + hung + 1e-6
+            && x + w - it.spacing > maxw - line_indent + hung + 1e-6 + overflow_slack(maxw, last_break.is_some_and(|b| b >= line_start))
             && i > line_start
             && !it.is_space()
         {
