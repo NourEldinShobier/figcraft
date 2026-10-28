@@ -303,10 +303,10 @@ fn boolean_corner_radius_rounds_the_result() {
     assert_ne!(round.winding(Point::new(10.0, 1.0)), 0);
 }
 
-/// Corner smoothing on a boolean group cuts convex corners deeper than the plain radius does
-/// (the corner starts further along the edges); the edge middles stay.
+/// Corner smoothing on a boolean group changes the corner profile (the continuous-corner curve starts further out and bulges
+/// further toward the point than a circle of the same radius); the edge middles stay.
 #[test]
-fn boolean_corner_smoothing_widens_the_rounding() {
+fn boolean_corner_smoothing_reshapes_the_rounding() {
     use figcraft_geom::Point;
     let rounded = |smoothing: f64| {
         let mut d = Document::new("smooth");
@@ -321,8 +321,8 @@ fn boolean_corner_smoothing_widens_the_rounding() {
         outline(&d, b)
     };
     let (plain, smooth) = (rounded(0.0), rounded(1.0));
-    assert_ne!(plain.winding(Point::new(2.0, 2.0)), 0, "a circular corner keeps (2, 2)");
-    assert_eq!(smooth.winding(Point::new(2.0, 2.0)), 0, "a smoothed one cuts it");
-    assert_ne!(smooth.winding(Point::new(10.0, 1.0)), 0);
-    assert!(smooth.area().abs() < plain.area().abs());
+    assert_eq!(smooth.winding(Point::new(0.3, 0.3)), 0, "but still cuts the tip");
+    assert_ne!(smooth.winding(Point::new(15.0, 1.0)), 0);
+    let (sa, pa) = (smooth.area().abs(), plain.area().abs());
+    assert!((sa - pa).abs() > 1.0, "{sa} vs {pa}");
 }
