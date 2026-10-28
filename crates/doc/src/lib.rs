@@ -406,6 +406,31 @@ impl Document {
         self.nodes.values().map(Arc::as_ref)
     }
 
+    /// This document with no layers: everything else (pages, styles, variables, id counter, ...)
+    /// as it is. With [`set_nodes_of`](Self::set_nodes_of), [`put_node`](Self::put_node) and
+    /// [`drop_node`](Self::drop_node) it lets a stored delta rebuild a document exactly.
+    pub fn shell(&self) -> Document {
+        let mut d = self.clone();
+        d.nodes = imbl::OrdMap::new();
+        d
+    }
+
+    /// Take every layer from `other` (shared, not copied), keeping the rest of `self`.
+    pub fn set_nodes_of(&mut self, other: &Document) {
+        self.nodes = other.nodes.clone();
+    }
+
+    /// Put `node` in place of the layer with its id (or add it) without any of the checks and
+    /// bookkeeping of the editing methods: for replaying stored states only.
+    pub fn put_node(&mut self, node: Node) {
+        self.nodes.insert(node.id, Arc::new(node));
+    }
+
+    /// Remove one layer record without touching its parent or children (replaying only).
+    pub fn drop_node(&mut self, id: NodeId) {
+        self.nodes.remove(&id);
+    }
+
     /// Add a page at the end.
     pub fn add_page(&mut self, name: &str) -> NodeId {
         let id = self.alloc_id();
