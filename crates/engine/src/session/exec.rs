@@ -19,6 +19,10 @@ impl Session {
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
         board::refuse_on_board(self, id)?;
+        // Writing a file out would write the first page alone.
+        if self.ds().is_ok_and(|d| d.loading.is_some()) && (id.starts_with("file.save") || id.starts_with("file.export") || id == "file.duplicate") {
+            return Err(EngineError::Disabled(id.into(), crate::doc_state::LOADING_READ_ONLY.into()));
+        }
         // Revert replaces the document's uid: refuse before ending previews or syncing branches.
         if id == "file.revert" && self.live().doc_uid.is_some() {
             return Err(EngineError::Disabled(id.into(), "leave the live session before reverting to the saved file".into()));
@@ -54,6 +58,7 @@ impl Session {
             .and_then(|v| self.check_unique_keys(id, &before).map(|()| v))
             .and_then(|v| self.check_instance_structure(id, &before).map(|()| v))
             .and_then(|v| self.check_preview(id, &before).map(|()| v))
+            .and_then(|v| self.check_loading(id, &before).map(|()| v))
             .and_then(|v| self.check_live_access(id, &before).map(|()| v))
             .and_then(|v| self.check_finite_geometry(id, &before).map(|()| v));
         match &result {
@@ -107,6 +112,18 @@ impl Session {
             return Ok(());
         }
         Err(EngineError::Disabled(id.to_string(), PREVIEW_READ_ONLY.into()))
+    }
+
+    /// A tab that shows only the first page of a file still loading is read-only: refuse an edit
+    /// (it is rolled back).
+    fn check_loading(&self, id: &str, before: &Option<(Arc<Document>, Vec<NodeId>, NodeId, u64)>) -> Result<()> {
+        let Some((bdoc, _, _, uid)) = before else { return Ok(()) };
+        match self.docs.iter().find(|d| d.uid == *uid) {
+            Some(ds) if ds.loading.is_some() && !Arc::ptr_eq(&ds.doc, bdoc) => {
+                Err(EngineError::Disabled(id.to_string(), crate::doc_state::LOADING_READ_ONLY.into()))
+            }
+            _ => Ok(()),
+        }
     }
 
     /// A layer's position and size stay finite: infinity and NaN are written as `null`, so a file

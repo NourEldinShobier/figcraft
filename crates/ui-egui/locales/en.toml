@@ -987,6 +987,7 @@ name = "English"
 "Opened as a new document" = "Opened as a new document"
 "Opened “{name}” in a new tab" = "Opened “{name}” in a new tab"
 "Opening the file…" = "Opening the file…"
+"Loading the other pages…" = "Loading the other pages…"
 "Opening {n} files as new files" = { one = "Opening as a new file", other = "Opening {n} files as new files" }
 "Open|comments" = "Open"
 "Options" = "Options"

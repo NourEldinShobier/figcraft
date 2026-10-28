@@ -21,7 +21,18 @@ impl std::io::Write for HashWriter {
 fn import_snapshot() {
     let Ok(path) = std::env::var("FIGCRAFT_FIG_SNAPSHOT") else { return };
     let bytes = std::fs::read(&path).unwrap();
-    let (doc, warnings) = super::import(&bytes, "snapshot").unwrap();
+    // FIGCRAFT_FIG_STAGED=1: through the page-first path, which must end with the same document.
+    let started = std::time::Instant::now();
+    let staged = std::env::var("FIGCRAFT_FIG_STAGED").is_ok_and(|v| v == "1");
+    let (doc, warnings) = if staged {
+        let mut first = |doc: figcraft_doc::Document| {
+            println!("SNAPSHOT first_page_at={:.2}s pages={} nodes={} resident_kb={}", started.elapsed().as_secs_f64(), doc.pages.len(), doc.node_count(), resident_kb());
+        };
+        super::import_staged(&bytes, "snapshot", 0, &mut first).unwrap()
+    } else {
+        super::import(&bytes, "snapshot").unwrap()
+    };
+    println!("SNAPSHOT whole_at={:.2}s", started.elapsed().as_secs_f64());
     println!("SNAPSHOT resident_after_import_kb={}", resident_kb());
     let mut w = HashWriter(Sha256::new());
     crate::write_json(&doc, &mut w).unwrap();

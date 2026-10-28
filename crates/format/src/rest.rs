@@ -202,7 +202,7 @@ pub(crate) fn import_with_networks_plain(
 /// The layers of a `.fig` file's REST JSON, each serialized as it was mapped: the tree of
 /// `serde_json::Value`s takes several times the memory of its text, and the layers are built one
 /// at a time, so only the one being built is ever a tree. `v`'s `document` holds no pages.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct Packed {
     pub pages: Vec<PackedPage>,
     /// Library copies (see [`FIG_LIBRARY_CONTEXTS_FIELD`]), each as one serialized layer.
@@ -210,6 +210,7 @@ pub(crate) struct Packed {
 }
 
 /// A page without its layers, and its top-level layers.
+#[derive(Clone)]
 pub(crate) struct PackedPage {
     pub header: Value,
     pub children: Vec<Vec<u8>>,
@@ -429,7 +430,7 @@ fn children(v: &Value) -> &[Value] {
 
 /// Distinct warnings in first-seen order, with repeat counts. Shared with the `.fig` mapper
 /// (`crate::fig::map`), whose notes repeat per layer in the same way.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct Warnings {
     list: Vec<(String, usize)>,
     index: BTreeMap<String, usize>,

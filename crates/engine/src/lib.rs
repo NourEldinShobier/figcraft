@@ -367,6 +367,8 @@ mod open_issues_tests;
 #[cfg(test)]
 mod preload_tests;
 #[cfg(test)]
+mod staged_open_tests;
+#[cfg(test)]
 mod outline_options_tests;
 #[cfg(test)]
 mod page_clipboard_tests;

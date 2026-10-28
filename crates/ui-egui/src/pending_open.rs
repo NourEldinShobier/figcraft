@@ -66,10 +66,20 @@ fn start_load(app: &mut FigApp, ctx: &egui::Context) {
     let (params, ctx) = (pending.params.clone(), ctx.clone());
     let spawned = std::thread::Builder::new().name("open-file".into()).spawn(move || {
         // A panic in a decoder only loses the preload: the open then reads the file on the UI thread,
-        // where the engine's guard turns it into an error.
-        let result = std::panic::catch_unwind(|| figcraft_engine::cmd::file::preload(&params)).unwrap_or(None);
-        let _ = tx.send(result);
-        ctx.request_repaint_of(egui::ViewportId::ROOT);
+        // where the engine's guard turns it into an error. A large `.fig` file is sent in two steps:
+        // the first page now, the whole file through the document it opens (`poll_loading_tabs`).
+        let sent = std::cell::Cell::new(false);
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            figcraft_engine::cmd::file::preload_staged(&params, figcraft_engine::cmd::file::STAGED_MIN_NODES, &mut |result| {
+                sent.set(true);
+                let _ = tx.send(result);
+                ctx.request_repaint_of(egui::ViewportId::ROOT);
+            })
+        }));
+        if !sent.get() {
+            let _ = tx.send(None);
+            ctx.request_repaint_of(egui::ViewportId::ROOT);
+        }
     });
     pending.load = if spawned.is_ok() { Load::Running { rx, since: std::time::Instant::now() } } else { Load::Done(None) };
 }
@@ -209,9 +219,49 @@ fn read_contents(app: &mut FigApp, ctx: &egui::Context) -> bool {
     reading
 }
 
+/// Tabs opened with only their first page: when the rest of the file is built the whole document
+/// replaces it, and the import report and font check that wait for the whole file run then.
+fn poll_loading_tabs(app: &mut FigApp, ctx: &egui::Context) {
+    if !app.session.is_loading() {
+        return;
+    }
+    // The worker can't wake the window for the second step: look again soon.
+    ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    if app.session.ds().is_ok_and(|d| d.is_loading()) {
+        let t = Tokens::get(ctx);
+        egui::Area::new(egui::Id::new("loading_pages")).order(egui::Order::Foreground).anchor(egui::Align2::CENTER_BOTTOM, [0.0, -24.0]).interactable(false).show(
+            ctx,
+            |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Spinner::new().size(12.0));
+                        ui.label(egui::RichText::new(tr("Loading the other pages…")).color(t.text_secondary));
+                    });
+                });
+            },
+        );
+    }
+    for done in app.session.poll_loading() {
+        match done.result {
+            Ok(result) => {
+                if let Some(mut report) = crate::import_report::Report::from_result("file.open", &json!({}), &result) {
+                    report.uid = done.uid;
+                    app.ui.import_report = Some(report);
+                }
+                if !cfg!(target_arch = "wasm32") {
+                    app.ui.font_checks.push(done.uid);
+                }
+            }
+            Err(why) => app.show_error(why),
+        }
+        app.observe_presentation();
+    }
+}
+
 /// The card while files wait, then (once it has been on screen and their contents are read) open
 /// them. Called before the import report, so a report for these files shows after them.
 pub fn pending_opens(app: &mut FigApp, ctx: &egui::Context) {
+    poll_loading_tabs(app, ctx);
     let reading = read_contents(app, ctx);
     if app.ui.pending_opens.is_empty() {
         app.ui.pending_open_frames = 0;

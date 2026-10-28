@@ -60,9 +60,21 @@ pub fn load_bytes(bytes: &[u8], name_hint: &str) -> Result<(Document, Vec<String
 /// [`load`] with the version history, also telling whether the file was REST API file JSON. A REST
 /// import reads its variables from `variables`, else from a variables JSON next to the file.
 pub fn load_path(path: &str, variables: Option<&Value>) -> Result<(figcraft_format::Loaded, bool)> {
+    load_path_staged(path, variables, usize::MAX, &mut |_| {})
+}
+
+/// [`load_path`] that, for a `.fig` file of at least `min_nodes` node changes and several pages,
+/// first hands `first` the document with only its first page (see
+/// [`figcraft_format::fig::import_staged`]).
+pub(super) fn load_path_staged(
+    path: &str,
+    variables: Option<&Value>,
+    min_nodes: usize,
+    first: &mut dyn FnMut(figcraft_format::Loaded),
+) -> Result<(figcraft_format::Loaded, bool)> {
     let bytes = read(path)?;
     let sibling = if variables.is_none() { sibling_variables(path) } else { None };
-    load_with(&bytes, path, variables.or(sibling.as_ref()), &rest_images(path))
+    load_with_staged(&bytes, path, variables.or(sibling.as_ref()), &rest_images(path), min_nodes, first)
 }
 
 /// Load from bytes. Returns the document with its notes (repairs of a native file, or import
@@ -73,6 +85,17 @@ pub(super) fn load_with(
     name_hint: &str,
     variables: Option<&Value>,
     images: figcraft_format::rest::ImageResolver,
+) -> Result<(figcraft_format::Loaded, bool)> {
+    load_with_staged(bytes, name_hint, variables, images, usize::MAX, &mut |_| {})
+}
+
+pub(super) fn load_with_staged(
+    bytes: &[u8],
+    name_hint: &str,
+    variables: Option<&Value>,
+    images: figcraft_format::rest::ImageResolver,
+    min_nodes: usize,
+    first: &mut dyn FnMut(figcraft_format::Loaded),
 ) -> Result<(figcraft_format::Loaded, bool)> {
     match ext(name_hint).as_str() {
         "svg" => {
@@ -92,7 +115,7 @@ pub(super) fn load_with(
             Ok((doc.into(), false))
         }
         _ => {
-            if let Some(r) = load_fig(bytes, &file_stem(name_hint)) {
+            if let Some(r) = load_fig_staged(bytes, &file_stem(name_hint), min_nodes, first) {
                 return Ok((r?, true));
             }
             if let Some(r) = load_sketch(bytes, &file_stem(name_hint)) {
@@ -328,7 +351,25 @@ pub(crate) fn installed_family(family: &str, installed: &[String]) -> Option<Str
 
 /// Gives `None` when `bytes` are not a `.fig` file. Then other readers can try.
 pub(crate) fn load_fig(bytes: &[u8], name: &str) -> Option<Result<figcraft_format::Loaded>> {
-    let r = figcraft_format::fig::try_import(bytes, name)?;
+    load_fig_staged(bytes, name, usize::MAX, &mut |_| {})
+}
+
+/// [`load_fig`] that first gives `first` the first page alone (instances of components on later
+/// pages stay unlinked in it) when the file has at least `min_nodes` node changes and several pages.
+pub(crate) fn load_fig_staged(
+    bytes: &[u8],
+    name: &str,
+    min_nodes: usize,
+    first: &mut dyn FnMut(figcraft_format::Loaded),
+) -> Option<Result<figcraft_format::Loaded>> {
+    if !figcraft_format::fig::is_fig(bytes) {
+        return None;
+    }
+    let mut early = |mut doc: Document| {
+        link_instances(&mut doc);
+        first(doc.into());
+    };
+    let r = figcraft_format::fig::import_staged(bytes, name, min_nodes, &mut early);
     Some(r.map_err(|e| EngineError::Other(e.to_string())).map(|(mut doc, warnings)| {
         link_instances(&mut doc);
         figcraft_format::Loaded { issues: warnings, ..doc.into() }

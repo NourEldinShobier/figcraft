@@ -5,7 +5,7 @@ use super::*;
 
 impl<'a> Mapper<'a> {
     /// The DOCUMENT with its pages.
-    pub(super) fn document(&mut self) -> Value {
+    pub(super) fn document(&mut self, name: &str, mut first: Option<super::FirstPage>) -> Value {
         let doc_id = self.nodes.iter().find(|(_, n)| n.get("type").and_then(Kv::str) == Some("DOCUMENT")).map(|(id, _)| id.clone());
         let pages: Vec<String> = match &doc_id {
             Some(d) => self.children(d),
@@ -44,12 +44,21 @@ impl<'a> Mapper<'a> {
         self.reserved = 0;
         let mut out: Vec<Value> = Vec::new();
         let mut pages = 0usize;
+        let total = visible.len();
         for (p, n) in visible {
             let page = self.page(&p, n);
             pages += 1;
             match &mut self.packed {
                 Some(packed) => packed.pages.push(crate::rest::PackedPage { header: page, children: std::mem::take(&mut self.page_chunks) }),
                 None => out.push(page),
+            }
+            if pages == 1
+                && total > 1
+                && self.packed.is_some()
+                && let Some(f) = first.take()
+            {
+                let (file, packed, networks) = self.first_page_file(name);
+                f(file, packed, networks);
             }
         }
         if pages == 0 {
@@ -58,6 +67,35 @@ impl<'a> Mapper<'a> {
         let mut doc = json!({"id": doc_id.unwrap_or_else(|| "0:0".into()), "type": "DOCUMENT"});
         doc["children"] = Value::Array(out);
         doc
+    }
+
+    /// The file JSON as it stands with only the first page mapped (styles, components and
+    /// variables met so far; the style samples are mapped now and again at the end, without
+    /// counting twice), with the first page and library copies packed, and the networks so far.
+    pub(super) fn first_page_file(&mut self, name: &str) -> (Value, crate::rest::Packed, Vec<Option<VectorNetwork>>) {
+        let (count, warnings) = (self.count, self.warnings.clone());
+        let mut out = json!({"name": name});
+        out["document"] = json!({"id": "0:0", "type": "DOCUMENT", "children": []});
+        if !self.styles.is_empty() {
+            out["styles"] = Value::Object(self.styles.clone());
+        }
+        if !self.components.is_empty() {
+            out["components"] = Value::Object(self.components.clone());
+        }
+        if !self.sets.is_empty() {
+            out["componentSets"] = Value::Object(self.sets.clone());
+        }
+        if let Some(vars) = self.variables() {
+            out["meta"] = vars;
+        }
+        let styles = self.style_definitions();
+        if !styles.is_empty() {
+            out["styleDefinitions"] = Value::Array(styles);
+        }
+        self.count = count;
+        self.warnings = warnings;
+        let packed = self.packed.as_ref().map(|p| crate::rest::Packed { pages: p.pages.iter().take(1).cloned().collect(), contexts: p.contexts.clone() });
+        (out, packed.unwrap_or_default(), self.networks.clone())
     }
 
     /// The ids of the components the visible pages use, directly or through the components they

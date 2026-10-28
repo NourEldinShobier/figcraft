@@ -25,6 +25,8 @@ mod export_tests;
 #[cfg(test)]
 mod import_snapshot_tests;
 #[cfg(test)]
+mod staged_tests;
+#[cfg(test)]
 mod interop_tests;
 pub mod kiwi;
 #[cfg(test)]
@@ -99,6 +101,20 @@ pub fn try_import(bytes: &[u8], name: &str) -> Option<Result<(Document, Vec<Stri
 /// Build a document from a `.fig` file. Returns it with the warnings about what was skipped or
 /// approximated. `name`: the document name when the file doesn't carry one.
 pub fn import(bytes: &[u8], name: &str) -> Result<(Document, Vec<String>), FormatError> {
+    import_staged(bytes, name, usize::MAX, &mut |_| {})
+}
+
+/// [`import`] that, for a file of at least `min_nodes` node changes with more than one page, first
+/// hands `first` a document with only the first page (instances of components on other pages are
+/// not linked in it, styles and variables are the ones met so far) as soon as that page is built,
+/// then goes on to the whole file. The returned document is the one [`import`] gives, whatever
+/// `first` did. `first` runs on the calling thread.
+pub fn import_staged(
+    bytes: &[u8],
+    name: &str,
+    min_nodes: usize,
+    first: &mut dyn FnMut(Document),
+) -> Result<(Document, Vec<String>), FormatError> {
     let mut archive = Archive::open(bytes)?;
     // The budgets follow the compressed canvas, which the file itself bounds (its zip member may
     // inflate too).
@@ -111,11 +127,21 @@ pub fn import(bytes: &[u8], name: &str) -> Result<(Document, Vec<String>), Forma
     let max_nodes = layer_budget(packed);
     drop(message);
     let file_name = archive.file_name.as_deref().filter(|n| !n.trim().is_empty()).unwrap_or(name);
-    let (json, packed, mut warnings, networks) = map::to_rest_packed(&msg, file_name, max_nodes);
     // The message goes before the layers are built, so the images it carries are copied out first.
     let embedded: BTreeMap<String, Vec<u8>> = embedded_images(&msg).into_iter().map(|(hash, bytes)| (hash, bytes.to_vec())).collect();
-    drop(msg);
     let images = |r: &str| archive.image(r).or_else(|| embedded.get(r).cloned());
+    let nodes = msg.get("nodeChanges").map_or(0, |changes| changes.list().len());
+    let (json, packed, mut warnings, networks) = if nodes >= min_nodes {
+        let mut preview = |json: serde_json::Value, packed, networks| {
+            if let Ok((doc, _)) = crate::rest::import_packed(&json, packed, &images, networks, max_nodes) {
+                first(doc);
+            }
+        };
+        map::to_rest_packed_staged(&msg, file_name, max_nodes, &mut preview)
+    } else {
+        map::to_rest_packed(&msg, file_name, max_nodes)
+    };
+    drop(msg);
     let (doc, more) = crate::rest::import_packed(&json, packed, &images, networks, max_nodes)?;
     drop_later(json);
     // Both stages stop at the same cap and say so in the same words: one note (#981).

@@ -48,21 +48,45 @@ const MAX_ASSET_PART: usize = 256;
 /// vector networks its layers name by `vectorNetworkRef` (for [`crate::rest::import_with_networks`]).
 #[cfg(test)]
 pub(super) fn to_rest(msg: &Kv, name: &str, max_nodes: usize) -> (Value, Vec<String>, Vec<Option<VectorNetwork>>) {
-    let (out, _, warnings, networks) = map_file(msg, name, max_nodes, false);
+    let (out, _, warnings, networks) = map_file(msg, name, max_nodes, false, None);
     (out, warnings, networks)
 }
 
 /// [`to_rest`] with the pages' layers and the library copies packed (see [`crate::rest::Packed`])
 /// instead of in the returned tree, which then holds no pages.
 pub(super) fn to_rest_packed(msg: &Kv, name: &str, max_nodes: usize) -> (Value, crate::rest::Packed, Vec<String>, Vec<Option<VectorNetwork>>) {
-    let (out, packed, warnings, networks) = map_file(msg, name, max_nodes, true);
+    let (out, packed, warnings, networks) = map_file(msg, name, max_nodes, true, None);
     (out, packed.unwrap_or_default(), warnings, networks)
 }
 
-fn map_file(msg: &Kv, name: &str, max_nodes: usize, pack: bool) -> (Value, Option<crate::rest::Packed>, Vec<String>, Vec<Option<VectorNetwork>>) {
+/// What [`to_rest_packed_staged`] hands over once the first page is mapped: the file JSON as it
+/// would be with only that page, its packed layers (library copies included) and the vector
+/// networks made so far.
+pub(super) type FirstPage<'f> = &'f mut dyn FnMut(Value, crate::rest::Packed, Vec<Option<VectorNetwork>>);
+
+/// [`to_rest_packed`] that also calls `first` when the first page is mapped and more pages follow.
+/// The mapping itself is unchanged: pages are still mapped in file order by the same mapper, so the
+/// result is the one [`to_rest_packed`] gives.
+pub(super) fn to_rest_packed_staged(
+    msg: &Kv,
+    name: &str,
+    max_nodes: usize,
+    first: FirstPage,
+) -> (Value, crate::rest::Packed, Vec<String>, Vec<Option<VectorNetwork>>) {
+    let (out, packed, warnings, networks) = map_file(msg, name, max_nodes, true, Some(first));
+    (out, packed.unwrap_or_default(), warnings, networks)
+}
+
+fn map_file(
+    msg: &Kv,
+    name: &str,
+    max_nodes: usize,
+    pack: bool,
+    first: Option<FirstPage>,
+) -> (Value, Option<crate::rest::Packed>, Vec<String>, Vec<Option<VectorNetwork>>) {
     let mut m = Mapper::new(msg, max_nodes);
     m.packed = pack.then(crate::rest::Packed::default);
-    let doc = m.document();
+    let doc = m.document(name, first);
     // Large values are moved in, never passed through `json!`, which serialises its arguments:
     // a deep copy of the whole tree, briefly holding it twice.
     let mut out = json!({"name": name});
