@@ -850,7 +850,7 @@ fn draw_content(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize,
                 f(pix);
             }
             if !matches!(n.kind, NodeKind::BooleanOp { .. }) && !n.children.is_empty() && !n.hides_contents() {
-                if clips {
+                if clips && !children_inside_clip(ctx, n) {
                     draw_children_clipped(ctx, pix, n, xf, depth, outline.as_ref().map(|(p, _)| p));
                 } else {
                     draw_children(ctx, pix, n, xf, depth);
@@ -950,6 +950,57 @@ fn draw_masked(ctx: &Ctx, pix: &mut Pixmap, mask_id: NodeId, content: &[NodeId],
         }
     }
     pix.draw_pixmap(0, 0, layer.as_ref(), &PixmapPaint::default(), Transform::identity(), Some(&mask));
+}
+
+/// Whether the clip of frame `n` cuts nothing off: every child paints inside the frame's outline,
+/// so clipping would only multiply the anti-aliased edge a child shares with the frame (a progress
+/// bar filling its track) by the clip's own, thinning it. A child reaching into a rounded corner
+/// counts only when it is a plain shape with that corner at the frame's, at least as round.
+fn children_inside_clip(ctx: &Ctx, n: &Node) -> bool {
+    const EPS: f64 = 1e-6;
+    let fr = n.local_rect();
+    let round = |c: &Node, i: usize| {
+        let r = c.corners.radii.get(i).copied().unwrap_or(0.0);
+        if r.is_finite() { r.max(0.0).min(c.width / 2.0).min(c.height / 2.0) } else { 0.0 }
+    };
+    let corner_at = |r: Rect, i: usize| match i {
+        0 => (r.x0, r.y0),
+        1 => (r.x1, r.y0),
+        2 => (r.x1, r.y1),
+        _ => (r.x0, r.y1),
+    };
+    n.children.iter().filter_map(|id| ctx.bounds.node(ctx.doc, *id)).filter(|c| c.visible).all(|c| {
+        let backdrop = c.effects.iter().any(|e| e.visible && matches!(e.kind, EffectKind::BackgroundBlur { .. } | EffectKind::Glass(_)));
+        let k = c.transform.as_coeffs();
+        if c.is_mask || backdrop || (k[0] - 1.0).abs() > EPS || (k[3] - 1.0).abs() > EPS || k[1].abs() > EPS || k[2].abs() > EPS {
+            return false;
+        }
+        let m = effect_margin(c).abs();
+        let (cb, _) = bounds_within(ctx.doc, c, 0, None, Some(ctx.bounds));
+        let pb = figcraft_geom::transform_rect_bbox(c.transform, cb.inflate(m, m));
+        if pb.x0 < fr.x0 - EPS || pb.y0 < fr.y0 - EPS || pb.x1 > fr.x1 + EPS || pb.y1 > fr.y1 + EPS {
+            return false;
+        }
+        let own = figcraft_geom::transform_rect_bbox(c.transform, c.local_rect());
+        (0..4).all(|i| {
+            let rc = round(n, i);
+            let (cx, cy) = corner_at(fr, i);
+            let zone = Rect::new(if i == 0 || i == 3 { cx } else { cx - rc }, if i < 2 { cy } else { cy - rc }, 0.0, 0.0);
+            let zone = Rect::new(zone.x0, zone.y0, zone.x0 + rc, zone.y0 + rc);
+            let reaches = pb.x0 < zone.x1 - EPS && pb.x1 > zone.x0 + EPS && pb.y0 < zone.y1 - EPS && pb.y1 > zone.y0 + EPS;
+            let (ox, oy) = corner_at(own, i);
+            !reaches
+                || (c.children.is_empty()
+                    && (pb.x0 - own.x0).abs() < EPS
+                    && (pb.y0 - own.y0).abs() < EPS
+                    && (pb.x1 - own.x1).abs() < EPS
+                    && (pb.y1 - own.y1).abs() < EPS
+                    && (ox - cx).abs() < EPS
+                    && (oy - cy).abs() < EPS
+                    && round(c, i) >= rc - EPS
+                    && (c.corners.smoothing - n.corners.smoothing).abs() < EPS)
+        })
+    })
 }
 
 fn draw_children_clipped(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize, clip: Option<&BezPath>) {

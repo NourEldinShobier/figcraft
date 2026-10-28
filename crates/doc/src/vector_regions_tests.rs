@@ -87,7 +87,8 @@ fn curved_edges_count_where_the_curve_runs() {
     let mut n = VectorNetwork {
         vertices: vec![Vertex::new(0.0, 0.0), Vertex::new(120.0, 0.0)],
         segments: vec![Segment { a: 0, b: 1, ta: (0.0, -80.0), tb: (0.0, -80.0) }, Segment::line(1, 0)],
-        regions: vec![region(vec![vec![0, 1]], WindingRule::NonZero)], strokes: Default::default(),
+        regions: vec![region(vec![vec![0, 1]], WindingRule::NonZero)],
+        strokes: Default::default(),
     };
     // 9. Inside the bulge, above the chord; 10. below the chord; 11. above the curve's top (-60).
     assert_eq!(n.region_at(p(60.0, -40.0)), Some(0));
@@ -106,7 +107,8 @@ fn a_single_curved_segment_loop_encloses_its_area() {
     let n = VectorNetwork {
         vertices: vec![Vertex::new(0.0, 0.0)],
         segments: vec![Segment { a: 0, b: 0, ta: (100.0, -100.0), tb: (-100.0, -100.0) }],
-        regions: vec![region(vec![vec![0]], WindingRule::NonZero)], strokes: Default::default(),
+        regions: vec![region(vec![vec![0]], WindingRule::NonZero)],
+        strokes: Default::default(),
     };
     assert_eq!(n.region_at(p(0.0, -40.0)), Some(0));
     assert_eq!(n.region_at(p(0.0, 40.0)), None);
@@ -265,8 +267,8 @@ fn regions_with_their_own_fills_form_their_own_groups() {
 
 #[test]
 fn segments_with_their_own_stroke_are_split_off() {
-    use figcraft_color::{Color, Paint};
     use crate::vector::SegmentStroke;
+    use figcraft_color::{Color, Paint};
     let mut n = VectorNetwork::default();
     let s = square(&mut n, 0.0, 0.0, 10.0);
     let look = SegmentStroke { paints: vec![Paint::solid(Color::new(0.0, 0.0, 1.0, 1.0))], weight: Some(3.0) };

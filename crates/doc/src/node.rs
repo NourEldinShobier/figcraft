@@ -762,7 +762,8 @@ impl Node {
         let miter = self.spread_miter_reach();
         self.effects.iter().filter(|e| e.visible).fold(b, |r, e| match &e.kind {
             EffectKind::DropShadow(s) => {
-                let g = s.radius.abs() * 1.5 + s.spread.max(0.0) + miter;
+                // The blur is cut off at its radius (see the renderer's `blur_shadow`).
+                let g = s.radius.abs() + s.spread.max(0.0) + miter;
                 let (dx, dy) = s.offset;
                 if g.is_finite() && dx.is_finite() && dy.is_finite() { r.union(b.inflate(g, g) + figcraft_geom::kurbo::Vec2::new(dx, dy)) } else { r }
             }
