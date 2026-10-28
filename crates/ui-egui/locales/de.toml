@@ -913,6 +913,7 @@ status = "draft — needs native review"
 "Opened as a new document" = "Als neues Dokument geöffnet"
 "Opened “{name}” in a new tab" = "„{name}“ in neuem Tab geöffnet"
 "Opening the file…" = "Datei wird geöffnet…"
+"Loading the other pages…" = "Weitere Seiten werden geladen…"
 "Opening {n} files as new files" = { one = "Wird als neue Datei geöffnet", other = "{n} Dateien werden als neue Dateien geöffnet" }
 "Open|comments" = "Offen"
 "Options" = "Optionen"

@@ -111,7 +111,39 @@ pub struct DocState {
     /// The file on disk as this tab last read or wrote it: a save refuses to replace what another
     /// app (figcraft-cli, say) wrote to it since (#1330).
     pub(crate) on_disk: Option<library::Stamp>,
+    /// Set while the tab shows only the first page of a large `.fig` file and the whole file is
+    /// still being built ([`Session::poll_loading`] swaps it in). The tab is read-only until then.
+    pub(crate) loading: Option<Loading>,
 }
+
+/// The whole file on its way to a tab opened page-first (see [`cmd::file::preload_staged`]).
+#[derive(Clone)]
+pub(crate) struct Loading(Arc<std::sync::Mutex<std::sync::mpsc::Receiver<cmd::file::Preloaded>>>);
+
+impl Loading {
+    pub(crate) fn new(rx: std::sync::mpsc::Receiver<cmd::file::Preloaded>) -> Self {
+        Self(Arc::new(std::sync::Mutex::new(rx)))
+    }
+
+    /// The result when it has arrived; an error when the worker ended without one.
+    pub(crate) fn poll(&self) -> Option<std::result::Result<cmd::file::Preloaded, ()>> {
+        use std::sync::mpsc::TryRecvError;
+        match self.0.lock().ok()?.try_recv() {
+            Ok(done) => Some(Ok(done)),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => Some(Err(())),
+        }
+    }
+}
+
+impl std::fmt::Debug for Loading {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Loading")
+    }
+}
+
+/// Why edits are refused while the rest of a file is still loading.
+pub const LOADING_READ_ONLY: &str = "the file's other pages are still loading: wait for them before editing or saving";
 
 /// A version shown on the canvas in place of the document: read-only until it's restored or the
 /// preview ends, which puts the document back as it was.
@@ -175,9 +207,30 @@ impl DocState {
             last_duplicate: None,
             images_left_in_file: None,
             on_disk: None,
+            loading: None,
         };
         st.zoom_to_fit();
         st
+    }
+
+    /// Whether the tab shows only the first page of a file whose other pages are still loading.
+    pub fn is_loading(&self) -> bool {
+        self.loading.is_some()
+    }
+
+    /// Replaces the first page this tab was opened with by the whole file `loaded`: same tab, view
+    /// and page (by position); no selection, undo steps or edits (the tab was read-only).
+    pub(crate) fn finish_loading(&mut self, loaded: figcraft_format::Loaded) {
+        let page = self.doc.pages.iter().position(|p| *p == self.page);
+        let mut whole = Self::new(loaded.doc, self.path.clone()).with_versions(loaded.versions).with_branches(loaded.branches);
+        whole.uid = self.uid;
+        whole.view = self.view.clone();
+        whole.view_from_prefs = self.view_from_prefs;
+        whole.on_disk = self.on_disk.clone();
+        if let Some(p) = page.and_then(|i| whole.doc.pages.get(i)) {
+            whole.page = *p;
+        }
+        *self = whole;
     }
 
     pub fn with_images_left_in_file(mut self, path: &str, count: usize) -> Self {

@@ -1,4 +1,8 @@
-use super::load::{ext, file_stem, import_summary, load_path, load_with, read, rest_images, sibling_variables, variables_param};
+use crate::doc_state::Loading;
+
+use super::load::{
+    ext, file_stem, import_summary, load_path, load_path_staged, load_with, load_with_staged, read, rest_images, sibling_variables, variables_param,
+};
 use super::*;
 
 /// How many files File ▸ Open recent keeps.
@@ -61,6 +65,9 @@ pub(super) fn open_recent(s: &mut Session, p: &Value) -> Result<Value> {
 pub struct Preloaded {
     key: String,
     result: Result<(figcraft_format::Loaded, bool, Option<crate::library::Stamp>)>,
+    /// Set when `result` holds only the first page of a large `.fig` file: the whole file arrives
+    /// here later (see [`preload_staged`]).
+    later: Option<std::sync::mpsc::Receiver<Preloaded>>,
 }
 
 fn data_key(name: &str) -> String {
@@ -70,16 +77,48 @@ fn data_key(name: &str) -> String {
 /// Decode the file `file.open` would open for `p` (`path`, or `data` and `name`) with no session,
 /// so it can run on any thread. `None` when `p` names no file to decode (the command reports why).
 pub fn preload(p: &Value) -> Option<Preloaded> {
+    let mut whole = None;
+    preload_staged(p, figcraft_format::fig::PageFirst::OFF, &mut |r| whole = r)?;
+    whole
+}
+
+/// [`preload`] that may deliver the file in two steps, so the caller can show the first page of a
+/// large `.fig` file (as far as `page_first` allows) early. `deliver` is called
+/// once with the result, or with the first page alone: that [`Preloaded`] opens the file as a tab
+/// that is still loading, and [`Session::poll_loading`] later swaps in the whole file, which this
+/// function sends through the channel the first one carries. `None` when `p` names no file.
+pub fn preload_staged(p: &Value, page_first: figcraft_format::fig::PageFirst, deliver: &mut dyn FnMut(Option<Preloaded>)) -> Option<()> {
     let variables = variables_param("file.open", p).ok()?;
-    if let Some(path) = string(p, "path") {
+    let (key, on_disk, bytes_path) = if let Some(path) = string(p, "path") {
         // Stamped before reading: a change made during the read makes the next save refuse.
-        let on_disk = crate::library::stat(&path).ok();
-        let result = load_path(&path, variables.as_ref()).map(|(l, rest)| (l, rest, on_disk));
-        return Some(Preloaded { key: format!("path:{path}"), result });
+        (format!("path:{path}"), crate::library::stat(&path).ok(), Some(path))
+    } else {
+        (data_key(&string(p, "name")?), None, None)
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut rx = Some(rx);
+    let mut early = |l: figcraft_format::Loaded| {
+        deliver(Some(Preloaded { key: key.clone(), result: Ok((l, true, on_disk.clone())), later: rx.take() }));
+    };
+    let result = match &bytes_path {
+        Some(path) => load_path_staged(path, variables.as_ref(), page_first, &mut early),
+        None => {
+            let (data, name) = (string(p, "data")?, string(p, "name")?);
+            let data = data.split_once(',').map_or(data.as_str(), |(_, b)| b);
+            base64::engine::general_purpose::STANDARD
+                .decode(data.trim())
+                .map_err(|e| bad("file.open", e.to_string()))
+                .and_then(|bytes| load_with_staged(&bytes, &name, variables.as_ref(), &figcraft_format::rest::no_images, page_first, &mut early))
+        }
+    };
+    let whole = Preloaded { key, result: result.map(|(l, rest)| (l, rest, on_disk)), later: None };
+    // The first page went out: the rest follows it.
+    if rx.is_none() {
+        let _ = tx.send(whole);
+    } else {
+        deliver(Some(whole));
     }
-    let (data, name) = (string(p, "data")?, string(p, "name")?);
-    let result = decode_data(&data, &name, variables.as_ref()).map(|(l, rest)| (l, rest, None));
-    Some(Preloaded { key: data_key(&name), result })
+    Some(())
 }
 
 pub(super) fn open(s: &mut Session, p: &Value) -> Result<Value> {
@@ -90,8 +129,9 @@ pub(super) fn open(s: &mut Session, p: &Value) -> Result<Value> {
         && let Some(d) = string(p, "data")
     {
         let name = req_string("file.open", p, "name")?;
-        let pre = pre.filter(|x| x.key == data_key(&name)).map(|x| x.result);
-        return open_data(s, &d, &name, variables.as_ref(), pre);
+        let mut pre = pre.filter(|x| x.key == data_key(&name));
+        let later = pre.as_mut().and_then(|x| x.later.take());
+        return open_data(s, &d, &name, variables.as_ref(), pre.map(|x| x.result), later);
     }
     let path = req_string("file.open", p, "path")?;
     // Already open: switch to it.
@@ -100,8 +140,10 @@ pub(super) fn open(s: &mut Session, p: &Value) -> Result<Value> {
         remember(s, &path);
         return Ok(json!({"index": i}));
     }
+    let mut later = None;
     let (loaded, rest, on_disk) = match pre.filter(|x| x.key == format!("path:{path}")) {
-        Some(pre) => {
+        Some(mut pre) => {
+            later = pre.later.take();
             // The read happened elsewhere: the roots an automation caller is confined to still apply.
             crate::file_access::allow(&path, crate::file_access::Access::Read)?;
             pre.result?
@@ -130,10 +172,17 @@ pub(super) fn open(s: &mut Session, p: &Value) -> Result<Value> {
         .with_branches(loaded.branches)
         .with_images_left_in_file(&path, images_left_out);
     ds.on_disk = on_disk.filter(|_| native);
+    let loading = later.is_some();
+    ds.loading = later.map(Loading::new);
     s.docs.push(ds);
     s.active = s.docs.len() - 1;
     let mut out = json!({"index": s.active, "summary": summary});
-    out[if warnings { "warnings" } else { "repairs" }] = json!(loaded.issues);
+    if loading {
+        // The notes and counts are those of the whole file, which comes later ([`Session::poll_loading`]).
+        out["loading"] = json!(true);
+    } else {
+        out[if warnings { "warnings" } else { "repairs" }] = json!(loaded.issues);
+    }
     Ok(out)
 }
 
@@ -145,6 +194,7 @@ fn open_data(
     name: &str,
     variables: Option<&Value>,
     pre: Option<Result<(figcraft_format::Loaded, bool, Option<crate::library::Stamp>)>>,
+    later: Option<std::sync::mpsc::Receiver<Preloaded>>,
 ) -> Result<Value> {
     let (loaded, rest) = match pre {
         Some(pre) => pre.map(|(l, rest, _)| (l, rest))?,
@@ -152,11 +202,69 @@ fn open_data(
     };
     let warnings = rest || ext(name) == "svg";
     let summary = import_summary(&loaded.doc);
-    s.docs.push(DocState::new(loaded.doc, None).with_versions(loaded.versions).with_branches(loaded.branches));
+    let loading = later.is_some();
+    let mut ds = DocState::new(loaded.doc, None).with_versions(loaded.versions).with_branches(loaded.branches);
+    ds.loading = later.map(Loading::new);
+    s.docs.push(ds);
     s.active = s.docs.len() - 1;
     let mut out = json!({"index": s.active, "summary": summary});
-    out[if warnings { "warnings" } else { "repairs" }] = json!(loaded.issues);
+    if loading {
+        out["loading"] = json!(true);
+    } else {
+        out[if warnings { "warnings" } else { "repairs" }] = json!(loaded.issues);
+    }
     Ok(out)
+}
+
+/// A tab opened page-first that has its whole file now (or lost it).
+pub struct LoadingDone {
+    /// The tab's `uid`.
+    pub uid: u64,
+    /// What `file.open` would have answered for the whole file (`index`, `summary`, `warnings` or
+    /// `repairs`), or why it failed: the tab is closed then.
+    pub result: std::result::Result<Value, String>,
+}
+
+impl Session {
+    /// Whether a tab shows the first page of a file whose other pages are still being built.
+    pub fn is_loading(&self) -> bool {
+        self.docs.iter().any(|d| d.loading.is_some())
+    }
+
+    /// Swaps in the whole document of each tab opened page-first whose file has arrived: the tab
+    /// keeps its identity, view and page; selection restarts. A file that failed to load closes its
+    /// tab and leaves a message. Call it every frame while [`Session::is_loading`].
+    pub fn poll_loading(&mut self) -> Vec<LoadingDone> {
+        let mut done = Vec::new();
+        let waiting: Vec<(u64, crate::doc_state::Loading)> = self.docs.iter().filter_map(|d| Some((d.uid, d.loading.clone()?))).collect();
+        for (uid, loading) in waiting {
+            let Some(arrived) = loading.poll() else { continue };
+            let outcome = match arrived {
+                Ok(pre) => pre.result.map_err(|e| e.to_string()),
+                Err(()) => Err("the file stopped loading before its other pages were ready".to_string()),
+            };
+            let Some(i) = self.docs.iter().position(|d| d.uid == uid) else { continue };
+            match outcome {
+                Ok((loaded, rest, _)) => {
+                    let summary = import_summary(&loaded.doc);
+                    let issues = json!(loaded.issues);
+                    self.docs[i].finish_loading(loaded);
+                    let mut result = json!({"index": i, "summary": summary});
+                    result[if rest { "warnings" } else { "repairs" }] = issues;
+                    done.push(LoadingDone { uid, result: Ok(result) });
+                }
+                Err(why) => {
+                    let active_uid = self.docs.get(self.active).map(|d| d.uid);
+                    self.remove_tabs(|d| d.uid == uid);
+                    self.active =
+                        active_uid.and_then(|a| self.docs.iter().position(|d| d.uid == a)).unwrap_or(i.min(self.docs.len().saturating_sub(1)));
+                    self.message = Some(why.clone());
+                    done.push(LoadingDone { uid, result: Err(why) });
+                }
+            }
+        }
+        done
+    }
 }
 
 fn decode_data(data: &str, name: &str, variables: Option<&Value>) -> Result<(figcraft_format::Loaded, bool)> {

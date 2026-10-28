@@ -440,7 +440,8 @@ impl<'a> Mapper<'a> {
         }
         // The layer key (`figcraftKey`, our extension of the file JSON).
         let (kid, kkey) = crate::fig::export::KEY;
-        let key = v.list("pluginData").iter().find(|p| p.get("pluginID").and_then(Kv::str) == Some(kid) && p.get("key").and_then(Kv::str) == Some(kkey));
+        let key =
+            v.list("pluginData").iter().find(|p| p.get("pluginID").and_then(Kv::str) == Some(kid) && p.get("key").and_then(Kv::str) == Some(kkey));
         if let Some(k) = key.and_then(|p| p.get("value")).and_then(Kv::str) {
             o.insert("figcraftKey".into(), json!(k));
         }
@@ -697,8 +698,9 @@ impl<'a> Mapper<'a> {
                 entry["segments"] = Value::Array(segments);
                 entry["regions"] = Value::Array(regions);
                 self.networks.push(crate::rest::network(&entry));
-                self.network_ids.insert(key, self.networks.len() - 1);
-                self.networks.len() - 1
+                let index = self.networks_taken + self.networks.len() - 1;
+                self.network_ids.insert(key, index);
+                index
             }
         };
         o.insert("vectorNetworkRef".into(), json!(id));

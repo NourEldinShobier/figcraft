@@ -5,7 +5,7 @@ use super::*;
 
 impl<'a> Mapper<'a> {
     /// The DOCUMENT with its pages.
-    pub(super) fn document(&mut self) -> Value {
+    pub(super) fn document(&mut self, name: &str, staged: Option<(f64, super::Sink)>) -> Value {
         let doc_id = self.nodes.iter().find(|(_, n)| n.get("type").and_then(Kv::str) == Some("DOCUMENT")).map(|(id, _)| id.clone());
         let pages: Vec<String> = match &doc_id {
             Some(d) => self.children(d),
@@ -44,12 +44,32 @@ impl<'a> Mapper<'a> {
         self.reserved = 0;
         let mut out: Vec<Value> = Vec::new();
         let mut pages = 0usize;
+        // Staged only for several pages whose first holds no more than the allowed share of the layers.
+        let mut sink = staged.filter(|_| visible.len() > 1 && self.packed.is_some()).and_then(|(max_share, sink)| {
+            let sizes: Vec<usize> = visible_pages.iter().map(|p| self.subtree_size(p)).collect();
+            let total: usize = sizes.iter().sum();
+            (total > 0 && (sizes[0] as f64) <= max_share * total as f64).then_some(sink)
+        });
+        self.staged = sink.is_some();
         for (p, n) in visible {
             let page = self.page(&p, n);
             pages += 1;
+            let page = crate::rest::PackedPage { header: page, children: std::mem::take(&mut self.page_chunks) };
+            if let Some(sink) = sink.as_mut() {
+                if pages == 1 {
+                    let file = self.first_page_file(name);
+                    let networks = self.take_networks();
+                    let contexts = self.packed.as_mut().map(|p| std::mem::take(&mut p.contexts)).unwrap_or_default();
+                    sink(Staged::First { file, page, contexts, networks });
+                } else {
+                    let networks = self.take_networks();
+                    sink(Staged::Page { page, networks });
+                }
+                continue;
+            }
             match &mut self.packed {
-                Some(packed) => packed.pages.push(crate::rest::PackedPage { header: page, children: std::mem::take(&mut self.page_chunks) }),
-                None => out.push(page),
+                Some(packed) => packed.pages.push(page),
+                None => out.push(page.header),
             }
         }
         if pages == 0 {
@@ -58,6 +78,52 @@ impl<'a> Mapper<'a> {
         let mut doc = json!({"id": doc_id.unwrap_or_else(|| "0:0".into()), "type": "DOCUMENT"});
         doc["children"] = Value::Array(out);
         doc
+    }
+
+    /// The layers under page `id`, itself included.
+    fn subtree_size(&self, id: &str) -> usize {
+        let mut pending = vec![id.to_string()];
+        let mut seen = BTreeSet::new();
+        while let Some(next) = pending.pop() {
+            if seen.insert(next.clone()) {
+                pending.extend(self.children(&next));
+            }
+        }
+        seen.len()
+    }
+
+    /// The networks made since the last call, which the numbering goes on after.
+    fn take_networks(&mut self) -> Vec<Option<VectorNetwork>> {
+        self.networks_taken += self.networks.len();
+        std::mem::take(&mut self.networks)
+    }
+
+    /// The file JSON as it stands with only the first page mapped (styles, components and
+    /// variables met so far; the style samples are mapped now and again at the end, without
+    /// counting twice).
+    pub(super) fn first_page_file(&mut self, name: &str) -> Value {
+        let (count, warnings) = (self.count, self.warnings.clone());
+        let mut out = json!({"name": name});
+        out["document"] = json!({"id": "0:0", "type": "DOCUMENT", "children": []});
+        if !self.styles.is_empty() {
+            out["styles"] = Value::Object(self.styles.clone());
+        }
+        if !self.components.is_empty() {
+            out["components"] = Value::Object(self.components.clone());
+        }
+        if !self.sets.is_empty() {
+            out["componentSets"] = Value::Object(self.sets.clone());
+        }
+        if let Some(vars) = self.variables() {
+            out["meta"] = vars;
+        }
+        let styles = self.style_definitions();
+        if !styles.is_empty() {
+            out["styleDefinitions"] = Value::Array(styles);
+        }
+        self.count = count;
+        self.warnings = warnings;
+        out
     }
 
     /// The ids of the components the visible pages use, directly or through the components they

@@ -63,10 +63,10 @@ pub use dev::annotations;
 pub use dev::code_connect;
 pub use dev::codegen;
 pub use dev::component_codegen;
+pub use dev::design_read;
 pub use dev::dev_measurements;
 pub use dev::dev_resources;
 pub use dev::devcompare;
-pub use dev::design_read;
 pub use dev::devinspect;
 pub use dev::tailwind;
 pub use extensions::plugin_directory;
@@ -181,12 +181,6 @@ mod batch_rollback_tests;
 #[cfg(test)]
 mod batch_step_ref_tests;
 #[cfg(test)]
-mod node_readback_tests;
-#[cfg(test)]
-mod export_many_tests;
-#[cfg(test)]
-mod lint_icons_tests;
-#[cfg(test)]
 mod binding_lists_tests;
 #[cfg(test)]
 mod board_connector_tests;
@@ -239,6 +233,8 @@ mod datafill_tests;
 #[cfg(test)]
 mod design_paste_tests;
 #[cfg(test)]
+mod design_read_tests;
+#[cfg(test)]
 mod dev_measurements_tests;
 #[cfg(test)]
 mod dev_resources_tests;
@@ -248,10 +244,6 @@ mod devcompare_tests;
 mod devfocus_tests;
 #[cfg(test)]
 mod devinspect_tests;
-#[cfg(test)]
-mod design_read_tests;
-#[cfg(test)]
-mod history_tests;
 #[cfg(test)]
 mod devmode_behaviour_tests;
 #[cfg(test)]
@@ -272,6 +264,8 @@ mod export_behaviour_tests;
 mod export_bench_tests;
 #[cfg(test)]
 mod export_depth_tests;
+#[cfg(test)]
+mod export_many_tests;
 #[cfg(test)]
 mod extended_chain_tests;
 #[cfg(test)]
@@ -304,6 +298,8 @@ mod gradient_shorthand_tests;
 mod hide_publishing_tests;
 #[cfg(test)]
 mod history_behaviour_tests;
+#[cfg(test)]
+mod history_tests;
 #[cfg(test)]
 mod html_codegen_tests;
 #[cfg(test)]
@@ -339,6 +335,8 @@ mod library_variables_tests;
 #[cfg(test)]
 mod line_endings_tests;
 #[cfg(test)]
+mod lint_icons_tests;
+#[cfg(test)]
 mod live_access_tests;
 #[cfg(test)]
 mod live_docs_tests;
@@ -361,13 +359,13 @@ mod nested_override_tests;
 #[cfg(test)]
 mod node_find_tests;
 #[cfg(test)]
+mod node_readback_tests;
+#[cfg(test)]
 mod node_set_refusals_tests;
 #[cfg(test)]
 mod online_tests;
 #[cfg(test)]
 mod open_issues_tests;
-#[cfg(test)]
-mod preload_tests;
 #[cfg(test)]
 mod outline_options_tests;
 #[cfg(test)]
@@ -402,6 +400,8 @@ mod plugin_directory_tests;
 mod plugin_panels_tests;
 #[cfg(test)]
 pub(crate) mod plugins_tests;
+#[cfg(test)]
+mod preload_tests;
 #[cfg(test)]
 mod progressive_blur_tests;
 #[cfg(test)]
@@ -466,6 +466,8 @@ mod shortcut_parity_tests;
 mod sketch_import_tests;
 #[cfg(test)]
 mod slot_tests;
+#[cfg(test)]
+mod staged_open_tests;
 #[cfg(test)]
 mod stroke_style_tests;
 #[cfg(test)]

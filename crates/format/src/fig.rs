@@ -17,8 +17,6 @@
 mod auto_layout_sizing_tests;
 #[cfg(test)]
 mod connector_label_tests;
-#[cfg(test)]
-mod scaled_instance_tests;
 mod export;
 #[cfg(test)]
 mod export_tests;
@@ -34,9 +32,13 @@ mod network;
 #[cfg(test)]
 mod prop_value_tests;
 #[cfg(test)]
+mod scaled_instance_tests;
+#[cfg(test)]
 mod slot_tests;
 #[cfg(test)]
 mod source_identity_tests;
+#[cfg(test)]
+mod staged_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -96,9 +98,44 @@ pub fn try_import(bytes: &[u8], name: &str) -> Option<Result<(Document, Vec<Stri
     is_fig(bytes).then(|| import(bytes, name))
 }
 
+/// When the import hands over the first page early (see [`import_staged`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PageFirst {
+    /// Fewest node changes in the file.
+    pub min_nodes: usize,
+    /// Most of the layers the first page may hold. The first page is built while the decoded
+    /// message is still held, which the plain import never does: the peak memory grows with the
+    /// first page's share (files-modern, first page 51% of 542k layers: 2.3 GB to 3.2 GB), so a
+    /// file whose first page is most of it is better opened whole.
+    pub max_first_share: f64,
+}
+
+impl PageFirst {
+    /// Never.
+    pub const OFF: Self = Self { min_nodes: usize::MAX, max_first_share: 0.0 };
+    /// Whenever the file has several pages.
+    pub const ALWAYS: Self = Self { min_nodes: 0, max_first_share: 1.0 };
+    /// What the app uses: large files whose first page is at most 40% of the layers.
+    pub const APP: Self = Self { min_nodes: 100_000, max_first_share: 0.4 };
+}
+
 /// Build a document from a `.fig` file. Returns it with the warnings about what was skipped or
 /// approximated. `name`: the document name when the file doesn't carry one.
 pub fn import(bytes: &[u8], name: &str) -> Result<(Document, Vec<String>), FormatError> {
+    import_staged(bytes, name, PageFirst::OFF, &mut |_| {})
+}
+
+/// [`import`] that, for a file `page_first` allows (several pages), first hands `first` a document
+/// with only the first page (instances of components on other pages are not linked in it, styles
+/// and variables are the ones met so far) as soon as that page is built, then goes on to the whole
+/// file. The returned document is the one [`import`] gives, whatever `first` did. `first` runs on
+/// the calling thread.
+pub fn import_staged(
+    bytes: &[u8],
+    name: &str,
+    page_first: PageFirst,
+    first: &mut dyn FnMut(Document),
+) -> Result<(Document, Vec<String>), FormatError> {
     let mut archive = Archive::open(bytes)?;
     // The budgets follow the compressed canvas, which the file itself bounds (its zip member may
     // inflate too).
@@ -111,12 +148,64 @@ pub fn import(bytes: &[u8], name: &str) -> Result<(Document, Vec<String>), Forma
     let max_nodes = layer_budget(packed);
     drop(message);
     let file_name = archive.file_name.as_deref().filter(|n| !n.trim().is_empty()).unwrap_or(name);
-    let (json, packed, mut warnings, networks) = map::to_rest_packed(&msg, file_name, max_nodes);
     // The message goes before the layers are built, so the images it carries are copied out first.
     let embedded: BTreeMap<String, Vec<u8>> = embedded_images(&msg).into_iter().map(|(hash, bytes)| (hash, bytes.to_vec())).collect();
-    drop(msg);
     let images = |r: &str| archive.image(r).or_else(|| embedded.get(r).cloned());
-    let (doc, more) = crate::rest::import_packed(&json, packed, &images, networks, max_nodes)?;
+    let nodes = msg.get("nodeChanges").map_or(0, |changes| changes.list().len());
+    let staging = (nodes >= page_first.min_nodes).then_some((page_first.max_first_share, first));
+    import_message(msg, file_name, max_nodes, &images, staging)
+}
+
+/// Pages built as they are mapped, with the first one offered early (see [`import_staged`]).
+pub(crate) type Staging<'f> = (f64, &'f mut dyn FnMut(Document));
+
+/// The part of the import after the message is decoded. With `staging` and several pages whose
+/// first holds at most the given share of the layers, the pages are built as the mapper makes them
+/// (the first one is handed over at once, as a copy that is finished on its own) instead of being
+/// kept packed until all are mapped; the document is the same.
+pub(crate) fn import_message(
+    msg: Kv,
+    file_name: &str,
+    max_nodes: usize,
+    images: crate::rest::ImageResolver,
+    staging: Option<Staging>,
+) -> Result<(Document, Vec<String>), FormatError> {
+    let mut built: Option<crate::rest::Incremental> = None;
+    let mut failed: Option<FormatError> = None;
+    let (json, packed, mut warnings, networks, staged) = match staging {
+        Some((max_share, first)) => {
+            let mut sink = |event: map::Staged| match event {
+                map::Staged::First { file, page, contexts, networks } => {
+                    let mut inc = crate::rest::Incremental::start(&file, contexts, images, networks, max_nodes);
+                    match inc.add_page(page).and_then(|()| inc.preview()) {
+                        Ok(doc) => {
+                            first(doc);
+                            built = Some(inc);
+                        }
+                        Err(e) => failed = Some(e),
+                    }
+                }
+                map::Staged::Page { page, networks } => {
+                    if let Some(inc) = built.as_mut() {
+                        inc.defer_page(page, networks);
+                    }
+                }
+            };
+            map::to_rest_packed_staged(&msg, file_name, max_nodes, max_share, &mut sink)
+        }
+        None => {
+            let (json, packed, warnings, networks) = map::to_rest_packed(&msg, file_name, max_nodes);
+            (json, packed, warnings, networks, false)
+        }
+    };
+    drop(msg);
+    if let Some(e) = failed {
+        return Err(e);
+    }
+    let (doc, more) = match built {
+        Some(inc) if staged => inc.finish(&json)?,
+        _ => crate::rest::import_packed(&json, packed, images, networks, max_nodes)?,
+    };
     drop_later(json);
     // Both stages stop at the same cap and say so in the same words: one note (#981).
     for w in more.into_iter().filter_map(map::adapt_warning) {

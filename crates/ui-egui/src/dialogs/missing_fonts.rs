@@ -34,7 +34,7 @@ impl Shown {
 pub fn check_later(app: &mut FigApp, command: &str, result: Option<&Value>) {
     if !cfg!(target_arch = "wasm32")
         && matches!(command, "file.open" | "file.openRecent" | "file.import")
-        && result.is_some_and(|r| r.get("summary").is_some())
+        && result.is_some_and(|r| r.get("summary").is_some() && r.get("loading").is_none())
         && let Ok(ds) = app.session.ds()
     {
         app.ui.font_checks.push(ds.uid);

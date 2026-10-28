@@ -48,21 +48,67 @@ const MAX_ASSET_PART: usize = 256;
 /// vector networks its layers name by `vectorNetworkRef` (for [`crate::rest::import_with_networks`]).
 #[cfg(test)]
 pub(super) fn to_rest(msg: &Kv, name: &str, max_nodes: usize) -> (Value, Vec<String>, Vec<Option<VectorNetwork>>) {
-    let (out, _, warnings, networks) = map_file(msg, name, max_nodes, false);
+    let (out, _, warnings, networks) = map_file(msg, name, max_nodes, false, None);
     (out, warnings, networks)
 }
 
 /// [`to_rest`] with the pages' layers and the library copies packed (see [`crate::rest::Packed`])
 /// instead of in the returned tree, which then holds no pages.
 pub(super) fn to_rest_packed(msg: &Kv, name: &str, max_nodes: usize) -> (Value, crate::rest::Packed, Vec<String>, Vec<Option<VectorNetwork>>) {
-    let (out, packed, warnings, networks) = map_file(msg, name, max_nodes, true);
+    let (out, packed, warnings, networks) = map_file(msg, name, max_nodes, true, None);
     (out, packed.unwrap_or_default(), warnings, networks)
 }
 
-fn map_file(msg: &Kv, name: &str, max_nodes: usize, pack: bool) -> (Value, Option<crate::rest::Packed>, Vec<String>, Vec<Option<VectorNetwork>>) {
+/// A page handed over as soon as it is mapped (see [`to_rest_packed_staged`]).
+pub(super) enum Staged {
+    /// The first page of several: the file JSON as it is with only that page (no pages in it), the
+    /// page, the packed library copies and the vector networks made so far.
+    First { file: Value, page: crate::rest::PackedPage, contexts: Vec<Vec<u8>>, networks: Vec<Option<VectorNetwork>> },
+    /// A later page and the networks made since the previous one.
+    Page { page: crate::rest::PackedPage, networks: Vec<Option<VectorNetwork>> },
+}
+
+/// Where staged pages go.
+pub(super) type Sink<'f> = &'f mut dyn FnMut(Staged);
+
+/// [`to_rest_packed`] that hands the pages to `sink` as they are mapped, instead of keeping them in
+/// the returned packed pages (which are then empty; so are the library copies, which go with the
+/// first page and are to be built after the last). Only for a file of several visible pages whose
+/// first page holds at most `max_first_share` (0 to 1) of the layers; the last value says whether
+/// that happened. The mapping is unchanged: pages are mapped in file order by the same mapper.
+pub(super) fn to_rest_packed_staged(
+    msg: &Kv,
+    name: &str,
+    max_nodes: usize,
+    max_first_share: f64,
+    sink: Sink,
+) -> (Value, crate::rest::Packed, Vec<String>, Vec<Option<VectorNetwork>>, bool) {
+    let (out, packed, warnings, networks, staged) = map_file_staged(msg, name, max_nodes, true, Some((max_first_share, sink)));
+    (out, packed.unwrap_or_default(), warnings, networks, staged)
+}
+
+fn map_file(
+    msg: &Kv,
+    name: &str,
+    max_nodes: usize,
+    pack: bool,
+    staged: Option<(f64, Sink)>,
+) -> (Value, Option<crate::rest::Packed>, Vec<String>, Vec<Option<VectorNetwork>>) {
+    let (out, packed, warnings, networks, _) = map_file_staged(msg, name, max_nodes, pack, staged);
+    (out, packed, warnings, networks)
+}
+
+fn map_file_staged(
+    msg: &Kv,
+    name: &str,
+    max_nodes: usize,
+    pack: bool,
+    staged: Option<(f64, Sink)>,
+) -> (Value, Option<crate::rest::Packed>, Vec<String>, Vec<Option<VectorNetwork>>, bool) {
     let mut m = Mapper::new(msg, max_nodes);
     m.packed = pack.then(crate::rest::Packed::default);
-    let doc = m.document();
+    let doc = m.document(name, staged);
+    let was_staged = m.staged;
     // Large values are moved in, never passed through `json!`, which serialises its arguments:
     // a deep copy of the whole tree, briefly holding it twice.
     let mut out = json!({"name": name});
@@ -94,7 +140,7 @@ fn map_file(msg: &Kv, name: &str, max_nodes: usize, pack: bool) -> (Value, Optio
     if !styles.is_empty() {
         out["styleDefinitions"] = Value::Array(styles);
     }
-    (out, m.packed.take(), m.warnings.finish(), m.networks)
+    (out, m.packed.take(), m.warnings.finish(), m.networks, was_staged)
 }
 
 #[cfg(test)]
@@ -260,6 +306,10 @@ struct Mapper<'a> {
     /// holding it) name it by `vectorNetworkRef`. Kept out of the JSON, where a large file's
     /// networks took gigabytes.
     networks: Vec<Option<VectorNetwork>>,
+    /// Networks already handed over when staging (they come first in the numbering).
+    networks_taken: usize,
+    /// Pages were handed over as they were mapped.
+    staged: bool,
     /// Index in `networks` by what a network is made from: its blob, its scale and its style table.
     network_ids: HashMap<(usize, u64, u64, usize), usize>,
     /// SVG path data by geometry blob (`None`: damaged), shared by every layer that shows the blob.
@@ -341,6 +391,8 @@ impl<'a> Mapper<'a> {
             max_nodes,
             reserved: 0,
             networks: Vec::new(),
+            networks_taken: 0,
+            staged: false,
             network_ids: HashMap::new(),
             svg_paths: HashMap::new(),
             packed: None,

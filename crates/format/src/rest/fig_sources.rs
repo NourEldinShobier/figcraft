@@ -24,6 +24,7 @@ struct Origin {
     component: Option<Rc<str>>,
 }
 
+#[derive(Clone)]
 pub(super) struct Sources {
     /// Most layers recorded.
     max_nodes: usize,
