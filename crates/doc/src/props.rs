@@ -863,7 +863,7 @@ impl Effect {
             return 0.0;
         }
         match &self.kind {
-            EffectKind::DropShadow(s) => s.radius.abs() * 1.5 + s.spread.max(0.0) + s.offset.0.abs().max(s.offset.1.abs()),
+            EffectKind::DropShadow(s) => s.radius.abs() + s.spread.max(0.0) + s.offset.0.abs().max(s.offset.1.abs()),
             EffectKind::LayerBlur(b) => b.max_radius() * 1.5,
             EffectKind::Texture(t) if !t.clip_to_shape => t.radius.abs(),
             _ => 0.0,

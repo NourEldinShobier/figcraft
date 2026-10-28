@@ -101,6 +101,36 @@ fn drop_shadows_move_by_the_offset_and_grow_by_the_spread() {
 }
 
 #[test]
+fn a_drop_shadow_ends_at_its_blur_radius() {
+    // Observed in the incumbent's exports: the Gaussian (sigma half the radius) is cut off at the
+    // radius and renormalised, so a radius 20 shadow is clear 20 pixels past the edge and has
+    // 0.4795 of its opacity at the edge (a full Gaussian would have half, and a tail to 30).
+    let (d, _) = square(vec![Paint::solid(Color::WHITE)], vec![fx(EffectKind::DropShadow(Shadow { radius: 20.0, ..sharp((0.0, 0.0), 0.0) }))]);
+    let pix = render(&d);
+    assert_eq!(px(&pix, 90 + 21, 70), WHITE, "past the radius");
+    let edge = px(&pix, 90, 70)[0];
+    assert!((130..=134).contains(&edge), "{edge} at the edge (255 less 0.4795 of it)");
+}
+
+#[test]
+fn a_clip_doesnt_thin_the_edge_a_child_shares_with_its_frame() {
+    // A bar filling the top-left of a track at half a pixel (y 50.5): its first row is half
+    // covered, once, not once by the bar and again by the clip.
+    let (mut d, p) = page();
+    let f = d.create(p, NodeKind::Frame, "Track", 50.0, 50.5, 40.0, 10.0).unwrap();
+    d.get_mut(f).unwrap().clip = true;
+    rect(&mut d, f, (0.0, 0.0, 20.0, 10.0), vec![Paint::solid(Color::BLACK)]);
+    let pix = render(&d);
+    let got = px(&pix, 60, 50)[0];
+    assert!((125..=130).contains(&got), "{got}");
+    // What a clip does cut off still goes.
+    d.create(f, NodeKind::Rectangle, "Over", 30.0, 0.0, 30.0, 10.0).unwrap();
+    let over = d.node(f).unwrap().children[1];
+    d.get_mut(over).unwrap().fills = vec![Paint::solid(hex("FF0000"))];
+    assert_eq!(px(&render(&d), 95, 55), WHITE);
+}
+
+#[test]
 fn blurs_spread_by_a_gaussian_of_half_the_radius() {
     // The blur value is the CSS blur radius (what code inspection shows for it), which CSS turns
     // into a Gaussian with a standard deviation of half the radius: across a straight edge the

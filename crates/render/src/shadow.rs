@@ -200,7 +200,7 @@ pub fn drop_shadow(c: &Caster, s: &Shadow) -> Option<Pixmap> {
             out
         }
     };
-    fx::blur(&mut sh, s.radius / 2.0 * c.scale);
+    fx::blur_shadow(&mut sh, s.radius / 2.0 * c.scale);
     fx::tint(&mut sh, color4(s.color));
     if !s.show_behind {
         fx::mask_by(&mut sh, c.cover.as_ref().unwrap_or(c.layer), true);
@@ -249,7 +249,7 @@ pub fn inner_shadow_of(cover: &Pixmap, scale: f64, s: &Shadow) -> Option<Pixmap>
 /// spread), `pad` pixels larger each way than the layer, whose pixels `cover` the shape.
 fn inner_from(mut big: Pixmap, pad: u32, cover: &Pixmap, scale: f64, s: &Shadow) -> Option<Pixmap> {
     fx::invert_alpha(&mut big);
-    fx::blur(&mut big, s.radius / 2.0 * scale);
+    fx::blur_shadow(&mut big, s.radius / 2.0 * scale);
     let mut out = Pixmap::new(cover.width(), cover.height())?;
     let pad = i32::try_from(pad).ok()?;
     out.draw_pixmap(

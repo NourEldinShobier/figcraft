@@ -148,6 +148,67 @@ pub fn blur(p: &mut Pixmap, sigma: f64) {
     transpose(&a, p.data_mut().as_chunks_mut::<4>().0, h, w);
 }
 
+/// Widest shadow blur (sigma, pixels) drawn with the exact truncated kernel of [`blur_shadow`];
+/// wider ones use [`blur`] (the kernel costs 4 sigma taps a pixel).
+const SHADOW_EXACT_SIGMA: f64 = 64.0;
+
+/// Run `f(row, row_slice)` over the `w`-wide rows of `dst`, across rayon for large buffers on desktop.
+fn each_row(dst: &mut [f32], w: usize, f: impl Fn(usize, &mut [f32]) + Sync + Send) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if parallel(dst.len()) {
+        use rayon::prelude::*;
+        dst.par_chunks_mut(w).enumerate().for_each(|(y, r)| f(y, r));
+        return;
+    }
+    dst.chunks_mut(w).enumerate().for_each(|(y, r)| f(y, r));
+}
+
+/// Blur of the alpha of `p` as a drop or inner shadow: the incumbent's Gaussian of `sigma` cut off
+/// at two sigma (the shadow's blur radius) and renormalised, so a shadow ends at its radius
+/// instead of trailing off to three sigma. The result is premultiplied white at that alpha.
+pub fn blur_shadow(p: &mut Pixmap, sigma: f64) {
+    if !(sigma.is_finite() && sigma > 0.3) {
+        return;
+    }
+    if sigma > SHADOW_EXACT_SIGMA {
+        return blur(p, sigma);
+    }
+    let (w, h) = (p.width() as usize, p.height() as usize);
+    if w == 0 || h == 0 {
+        return;
+    }
+    let r = (2.0 * sigma).round() as usize;
+    let mut k: Vec<f32> = (0..=2 * r).map(|i| (-((i as f64 - r as f64).powi(2)) / (2.0 * sigma * sigma)).exp() as f32).collect();
+    let sum: f32 = k.iter().sum();
+    k.iter_mut().for_each(|v| *v /= sum);
+    let alpha: Vec<f32> = p.data().as_chunks::<4>().0.iter().map(|c| f32::from(c[3])).collect();
+    let mut tmp = vec![0f32; alpha.len()];
+    each_row(&mut tmp, w, |y, out| {
+        let Some(row) = alpha.get(y * w..(y + 1) * w) else { return };
+        if row.iter().all(|v| *v == 0.0) {
+            return;
+        }
+        for (x, o) in out.iter_mut().enumerate() {
+            let (lo, hi) = (x.saturating_sub(r), (x + r + 1).min(w));
+            let ks = k.get(lo + r - x..hi + r - x).unwrap_or_default();
+            *o = row.get(lo..hi).unwrap_or_default().iter().zip(ks).map(|(a, b)| a * b).sum();
+        }
+    });
+    let mut res = vec![0f32; alpha.len()];
+    each_row(&mut res, w, |y, out| {
+        for (j, kj) in k.iter().enumerate() {
+            let Some(sy) = (y + j).checked_sub(r).filter(|sy| *sy < h) else { continue };
+            for (o, v) in out.iter_mut().zip(tmp.get(sy * w..(sy + 1) * w).unwrap_or_default()) {
+                *o += kj * v;
+            }
+        }
+    });
+    for (px, a) in p.data_mut().as_chunks_mut::<4>().0.iter_mut().zip(res) {
+        let a = a.round().clamp(0.0, 255.0) as u8;
+        px.copy_from_slice(&[a, a, a, a]);
+    }
+}
+
 /// For each `x`, the largest (`grow`) or smallest value of `src` over `x - r ..= x + r` (clipped
 /// to its ends) into `out`, in constant time per value whatever `r` (van Herk / Gil-Werman: the
 /// window spans at most two blocks of `2r + 1`, from the running extremes within each block).
