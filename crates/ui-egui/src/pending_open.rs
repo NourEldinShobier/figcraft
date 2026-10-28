@@ -32,6 +32,7 @@ pub struct PendingOpen {
 /// Decoding a file on a worker thread, so the window keeps painting and answering input while a
 /// large file imports; the UI thread then only builds the document from the result.
 #[derive(Default)]
+#[allow(clippy::large_enum_variant)] // one short-lived value per pending open
 pub enum Load {
     /// Not started (or nothing to decode off-thread: other commands, browser builds, a confined caller).
     #[default]
@@ -225,6 +226,7 @@ fn read_contents(app: &mut FigApp, ctx: &egui::Context) -> bool {
 
 /// Tabs opened with only their first page: when the rest of the file is built the whole document
 /// replaces it, and the import report and font check that wait for the whole file run then.
+#[allow(deprecated)] // egui renamed Id::new; migrate with the next egui bump
 fn poll_loading_tabs(app: &mut FigApp, ctx: &egui::Context) {
     if !app.session.is_loading() {
         return;

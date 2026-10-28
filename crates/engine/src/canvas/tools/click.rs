@@ -162,7 +162,7 @@ impl Session {
         let ds = self.ds_mut()?;
         let d = ds.doc_mut();
         let id = d.alloc_id();
-        let mut n = Node::new(id, NodeKind::Text(Box::new(TextData::default())), "Text", 1.0, 14.0);
+        let mut n = Node::new(id, NodeKind::Text(Box::default()), "Text", 1.0, 14.0);
         let pw = d.world_transform(parent);
         let at = Point::new(ev.x.round(), (ev.y - 7.0).round());
         n.transform = pw.inverse() * Affine::translate(at.to_vec2());
@@ -254,7 +254,7 @@ impl Session {
         let ds = self.ds_mut()?;
         let d = ds.doc_mut();
         let id = d.alloc_id();
-        let mut n = Node::new(id, NodeKind::Text(Box::new(TextData::default())), "Text", pn.width, pn.height);
+        let mut n = Node::new(id, NodeKind::Text(Box::default()), "Text", pn.width, pn.height);
         n.name = String::new();
         n.transform = pn.transform;
         n.constraints = pn.constraints;

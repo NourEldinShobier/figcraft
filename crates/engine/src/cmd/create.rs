@@ -144,7 +144,7 @@ pub fn kind_for(t: &str) -> Option<(NodeKind, &'static str)> {
         "line" => (NodeKind::Line, "Line"),
         "arrow" => (NodeKind::Line, "Arrow"),
         "vector" | "path" => (NodeKind::Vector { network: VectorNetwork::default() }, "Vector"),
-        "text" => (NodeKind::Text(Box::new(TextData::default())), "Text"),
+        "text" => (NodeKind::Text(Box::default()), "Text"),
         "frame" => (NodeKind::Frame, "Frame"),
         "section" => (NodeKind::Section { contents_hidden: false }, "Section"),
         "component" => (NodeKind::Component { description: String::new(), props: Default::default() }, "Component"),

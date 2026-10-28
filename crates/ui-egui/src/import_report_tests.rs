@@ -180,8 +180,13 @@ fn a_dropped_file_shows_its_report_once_it_opens() {
         read: None,
         load: Default::default(),
     });
-    for _ in 0..6 {
+    // The file decodes on a worker thread: give it time instead of a fixed number of frames.
+    for _ in 0..400 {
         u.frame(vec![]);
+        if u.app.ui.import_report.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
     std::fs::remove_file(&path).unwrap();
     let report = u.app.ui.import_report.as_ref().expect("the dropped file's report");

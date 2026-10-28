@@ -307,10 +307,10 @@ fn main() -> eframe::Result {
         )
     };
     let mut result = run(false);
-    if let Err(e) = &result {
-        if graphics::retry_on_fallback(&e.to_string(), cfg!(windows), eframe::wgpu::Backends::from_env()) {
-            result = run(true);
-        }
+    if let Err(e) = &result
+        && graphics::retry_on_fallback(&e.to_string(), cfg!(windows), eframe::wgpu::Backends::from_env())
+    {
+        result = run(true);
     }
     // Say why instead of quitting silently: release builds on Windows have no console.
     if let Err(e) = &result {

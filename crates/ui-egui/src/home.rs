@@ -192,6 +192,7 @@ fn dropped(app: &mut FigApp, ctx: &egui::Context) {
 
 /// Draw the Home sidebar: app icon and wordmark, file/template search (Escape clears it),
 /// section tabs (choosing one clears the file query) and preferences at the bottom.
+#[allow(deprecated)] // Ui::id was renamed in egui; migrate with the next egui bump
 fn sidebar(app: &mut FigApp, ui: &mut Ui, t: &Tokens, left: Rect) {
     let mut y = left.min.y + 20.0;
     crate::theme::paint_app_icon(ui, Rect::from_min_size(pos2(left.min.x + 12.0, y - 4.0), vec2(32.0, 32.0)));
