@@ -46,14 +46,45 @@ pub struct Ctx<'a, 'd> {
 /// levels its walk went down.
 /// It also keeps the layers it looked up: the walks for culling, splatting and drawing go down the
 /// same layers, and in a large document a lookup is a good part of a layer's cost.
+/// Answers worked out by earlier renders ([`crate::bounds_cache`]) are read from `seed`; new ones
+/// are kept here, for the cache to take after the render.
 #[derive(Default)]
 pub struct Bounds<'a> {
     paint: std::cell::RefCell<IdMap<BoundsKey, (Rect, usize)>>,
     pub(crate) splat: std::cell::RefCell<IdMap<NodeId, (bool, usize)>>,
     nodes: std::cell::RefCell<IdMap<NodeId, Option<&'a Node>>>,
+    seed: Seed,
+}
+
+/// The bounds and splat answers kept across renders, shared by the bands of a render.
+#[derive(Clone, Default)]
+pub(crate) struct Seed {
+    pub(crate) paint: Arc<IdMap<BoundsKey, (Rect, usize)>>,
+    pub(crate) splat: Arc<IdMap<NodeId, (bool, usize)>>,
+    /// The greek scale `paint` is for.
+    pub(crate) greek: Option<u64>,
+}
+
+/// What a render worked out that its seed didn't have.
+pub(crate) struct Learned {
+    pub(crate) paint: IdMap<BoundsKey, (Rect, usize)>,
+    pub(crate) splat: IdMap<NodeId, (bool, usize)>,
 }
 
 impl<'a> Bounds<'a> {
+    /// A memo that starts from `seed`.
+    pub(crate) fn seeded(seed: Seed) -> Self {
+        Self { seed, ..Self::default() }
+    }
+
+    pub(crate) fn into_learned(self) -> Learned {
+        Learned { paint: self.paint.into_inner(), splat: self.splat.into_inner() }
+    }
+
+    pub(crate) fn splat_of(&self, id: NodeId) -> Option<(bool, usize)> {
+        self.splat.borrow().get(&id).copied().or_else(|| self.seed.splat.get(&id).copied())
+    }
+
     /// Node `id` of `doc`, looked up once for the render.
     pub(crate) fn node(&self, doc: &'a Document, id: NodeId) -> Option<&'a Node> {
         if let Some(n) = self.nodes.borrow().get(&id) {
@@ -407,7 +438,7 @@ pub(crate) fn bounds_within<'a>(
     // A layer without children is quicker to work out again than to look up.
     let memo = memo.filter(|_| !n.children.is_empty());
     let key = (n.id, greek_scale.map(f64::to_bits));
-    if let Some((r, levels)) = memo.and_then(|m| m.paint.borrow().get(&key).copied())
+    if let Some((r, levels)) = memo.and_then(|m| m.paint.borrow().get(&key).copied().or_else(|| m.seed.paint.get(&key).copied()))
         && depth + levels <= MAX_BOUNDS_DEPTH
     {
         return (r, Some(levels));

@@ -72,7 +72,7 @@ pub(crate) fn splattable_within<'a>(doc: &'a Document, n: &Node, depth: usize, m
         return (false, None);
     }
     let memo = memo.filter(|_| !n.children.is_empty());
-    if let Some((ok, levels)) = memo.and_then(|m| m.splat.borrow().get(&n.id).copied())
+    if let Some((ok, levels)) = memo.and_then(|m| m.splat_of(n.id))
         && depth + levels <= MAX_DEPTH
     {
         return (ok, Some(levels));
