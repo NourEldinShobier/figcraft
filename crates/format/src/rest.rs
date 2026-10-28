@@ -873,7 +873,8 @@ impl<'a> Ctx<'a> {
         n.strokes = props::paints(self, j, "strokes").unwrap_or_default();
         props::stroke_props(j, &mut n.stroke);
         n.effects = props::effects(self, j);
-        if n.kind.has_corner_radius() {
+        // A boolean group rounds the corners of its result by its own radius.
+        if n.kind.has_corner_radius() || matches!(n.kind, NodeKind::BooleanOp { .. }) {
             props::corners(j, &mut n.corners.radii, &mut n.corners.smoothing);
         }
         if let Some(c) = props::constraints(j) {
