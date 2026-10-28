@@ -1919,6 +1919,10 @@ turned off 0°.
   panel's Arc fields (Start °, Sweep %, Ratio %) write the same keys; number variables bound to
   `arcSweep` and `arcInner` (`variable.bind`) hold percentages, as the fields show them, and ones
   bound to `arcStart` degrees.
+  A partial arc with `arcInner` 0 and no visible fill is an open arc: its stroke follows only the
+  curve (round or square caps apply, no radius lines), for spinners and progress rings. Any visible
+  fill or a non-zero `arcInner` draws the closed pie or ring segment as before. There is no extra
+  property; `inspect_document` shows the same `arcStart` / `arcSweep` / `arcInner` fields.
   `tool.overlay.arc` holds the readout while dragging (`{handle, label: "Sweep 75%", at}`), and
   `tool.overlay.arc_hover` holds the handle under the pointer.
 - **Corner radius and star ratio handles**: a selected rectangle or frame (at least 48 px on screen)

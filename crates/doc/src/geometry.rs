@@ -16,6 +16,7 @@ pub fn shape_path(n: &Node) -> Option<BezPath> {
         | NodeKind::Instance { .. }
         | NodeKind::Section { .. } => figcraft_geom::rounded_rect(w, h, c.radii, c.smoothing),
         NodeKind::Slice => figcraft_geom::rounded_rect(w, h, [0.0; 4], 0.0),
+        NodeKind::Ellipse { start, sweep, .. } if is_open_arc(n) => figcraft_geom::ellipse_arc_open(w, h, *start, *sweep),
         NodeKind::Ellipse { start, sweep, inner } => figcraft_geom::ellipse(w, h, *start, *sweep, *inner),
         NodeKind::Polygon { count } => figcraft_geom::smoothed_polygon(&figcraft_geom::polygon_points(w, h, *count), c.radii[0], c.smoothing),
         NodeKind::Star { count, inner_ratio } => {
@@ -36,6 +37,17 @@ pub fn shape_path(n: &Node) -> Option<BezPath> {
     })
 }
 
+/// A partial ellipse arc with no inner radius and no visible fill is an open arc: its stroke follows
+/// only the curve (spinner / progress ring), not the pie's radii lines.
+pub fn is_open_arc(n: &Node) -> bool {
+    match &n.kind {
+        NodeKind::Ellipse { sweep, inner, .. } => {
+            sweep.is_finite() && inner.is_finite() && sweep.abs() < std::f64::consts::TAU - 1e-9 && *sweep != 0.0 && *inner <= 0.0 && !n.fills.iter().any(|p| p.visible)
+        }
+        _ => false,
+    }
+}
+
 /// The open/closed path strokes follow (vector networks stroke every segment, filled or not).
 pub fn stroke_geometry(n: &Node) -> Option<BezPath> {
     match &n.kind {
@@ -48,6 +60,7 @@ pub fn stroke_geometry(n: &Node) -> Option<BezPath> {
 pub fn is_closed(n: &Node) -> bool {
     match &n.kind {
         NodeKind::Line => false,
+        NodeKind::Ellipse { .. } => !is_open_arc(n),
         NodeKind::Vector { network } => !network.regions.is_empty(),
         _ => true,
     }

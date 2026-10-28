@@ -408,3 +408,29 @@ fn vector_areas_paint_with_their_own_fills_and_segments_with_their_own_strokes()
     assert_eq!(px(&pix, 30, 20), [0, 255, 0, 255]);
     assert_eq!(px(&pix, 20, 20), [255, 0, 0, 255]);
 }
+
+#[test]
+fn unfilled_partial_arc_strokes_only_the_curve() {
+    use std::f64::consts::PI;
+    let mut d = figcraft_doc::Document::new("t");
+    let p = d.first_page().unwrap();
+    // Lower half of a circle: the pie's flat edge would run along y = 50.
+    let e = d.create(p, NodeKind::Ellipse { start: 0.0, sweep: PI, inner: 0.0 }, "E", 0.0, 0.0, 100.0, 100.0).unwrap();
+    let n = d.get_mut(e).unwrap();
+    n.fills.clear();
+    n.strokes = vec![Paint::solid(Color::BLACK)];
+    n.stroke.weight = 6.0;
+    let pix = render_view(&d, p, &view(100, 100), &Options::default()).unwrap();
+    assert_eq!(px(&pix, 50, 97)[0], 0, "the curve is stroked");
+    assert_eq!(px(&pix, 25, 50)[0], 0xF5, "no radius line across the middle");
+    // A visible fill brings the pie outline back.
+    d.get_mut(e).unwrap().fills = vec![Paint::solid(Color::new(1.0, 1.0, 1.0, 1.0))];
+    let pix = render_view(&d, p, &view(100, 100), &Options::default()).unwrap();
+    assert_eq!(px(&pix, 25, 50)[0], 0, "filled arc keeps the pie edge");
+    // An inner radius is a ring segment, closed as before.
+    let n = d.get_mut(e).unwrap();
+    n.fills.clear();
+    n.kind = NodeKind::Ellipse { start: 0.0, sweep: PI, inner: 0.5 };
+    let pix = render_view(&d, p, &view(100, 100), &Options::default()).unwrap();
+    assert_eq!(px(&pix, 12, 50)[0], 0, "ring segment end cap edge is stroked");
+}

@@ -354,6 +354,18 @@ pub fn ellipse(width: f64, height: f64, start: f64, sweep: f64, inner: f64) -> B
     path
 }
 
+/// Only the curve of a partial ellipse arc (an open path, no radii lines), for spinner-style strokes.
+pub fn ellipse_arc_open(width: f64, height: f64, start: f64, sweep: f64) -> BezPath {
+    let (rx, ry) = (finite(width).max(0.0) / 2.0, finite(height).max(0.0) / 2.0);
+    let c = Point::new(rx, ry);
+    let sweep = finite(sweep).clamp(-TAU, TAU);
+    let start = finite(start);
+    let mut path = BezPath::new();
+    path.move_to(c + Vec2::new(rx * start.cos(), ry * start.sin()));
+    kurbo::Arc::new(c, (rx, ry), start, sweep, 0.0).to_cubic_beziers(0.01, |p1, p2, p| path.curve_to(p1, p2, p));
+    path
+}
+
 /// Trait helper: reverse every subpath of a path.
 pub trait ReverseSubpaths {
     fn reverse_subpaths(&self) -> BezPath;
