@@ -120,7 +120,7 @@ fn bad_ids_still_fail_even_when_the_version_would_be_dropped() {
 
 #[test]
 fn compressed_snapshots_are_reused_and_older_readers_can_read_them() {
-    let versions = vec![version("a", false, 30), version("b", true, 31)];
+    let versions = vec![version("a", false, 30), version("b", false, 31)];
     let first = versions[0].packed().unwrap();
     // Clones (what the recovery thread and the save thread hold) share the cache.
     assert!(Arc::ptr_eq(&first, &versions.clone()[0].packed().unwrap()));

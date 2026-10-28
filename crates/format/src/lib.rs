@@ -9,8 +9,9 @@
 //! (`{"branches": [{id, name, time, client, state, baseImages, headImages}]}`) plus
 //! `branches/<id>/base.json` and `branches/<id>/head.json`; a branch's own version history is
 //! kept like the file's, under `branches/<id>/versions/`. A published file also holds its
-//! library (see [`library`]). Readers that don't know about versions, branches or libraries
-//! ignore those entries. Plain
+//! library (see [`library`]). Automatic versions may be stored as deltas under history/ (see
+//! docs/version-journal.md; the full ones stay under ersions/). Readers that don't know about
+//! versions, branches, the journal or libraries ignore those entries. Plain
 //! JSON (the `document.json` alone) also opens. Reading is lenient: structural problems are
 //! repaired (see [`Document::repair`]) and reported, damaged versions and libraries are skipped.
 //!
@@ -18,6 +19,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod fig;
+mod journal;
 pub mod library;
 pub mod rest;
 pub mod sketch;
@@ -116,6 +118,8 @@ pub struct Version {
     /// The snapshot as an already compressed archive member, made on first save and shared by
     /// clones: a snapshot never changes, so later saves copy it instead of encoding it again.
     packed: Arc<OnceLock<Arc<Packed>>>,
+    /// The snapshot as a delta against the version .0 (see [journal]), made on first save.
+    delta: Arc<OnceLock<(String, Arc<Packed>)>>,
 }
 
 /// A snapshot compressed once: a one-member zip (member `v`) and the member's unpacked size.
@@ -137,6 +141,8 @@ enum Snapshot {
     /// As read from a file: its `document.json`-style JSON, parsed on first use, and the images
     /// it uses.
     Stored { json: Arc<Vec<u8>>, images: BTreeMap<String, ImageData> },
+    /// As read from a file: a delta (see [journal]) on the version before it.
+    Delta { base: Box<Version>, bytes: Arc<Vec<u8>>, images: BTreeMap<String, ImageData> },
 }
 
 impl Version {
@@ -150,6 +156,7 @@ impl Version {
             auto: false,
             snapshot: Snapshot::Doc(doc),
             packed: Arc::default(),
+            delta: Arc::default(),
         }
     }
 
@@ -162,6 +169,7 @@ impl Version {
         match &self.snapshot {
             Snapshot::Doc(d) => put_json(&mut z, "v", d)?,
             Snapshot::Stored { json, .. } => put(&mut z, "v", json_options(), json)?,
+            Snapshot::Delta { .. } => put_json(&mut z, "v", &*self.document()?)?,
         }
         let zip = z.finish().map_err(io_err)?.into_inner();
         let size = zip::ZipArchive::new(std::io::Cursor::new(&zip[..])).map_err(io_err)?.by_index(0).map_err(io_err)?.size();
@@ -179,6 +187,11 @@ impl Version {
                 doc.images = images.clone();
                 Ok(Arc::new(doc))
             }
+            Snapshot::Delta { base, bytes, images } => {
+                let mut doc = journal::apply_delta(&*base.document()?, bytes)?;
+                doc.images = images.clone();
+                Ok(Arc::new(doc))
+            }
         }
     }
 
@@ -186,7 +199,7 @@ impl Version {
     pub fn images(&self) -> &BTreeMap<String, ImageData> {
         match &self.snapshot {
             Snapshot::Doc(d) => &d.images,
-            Snapshot::Stored { images, .. } => images,
+            Snapshot::Stored { images, .. } | Snapshot::Delta { images, .. } => images,
         }
     }
 }
@@ -630,7 +643,7 @@ pub fn save_bytes_reporting(
     versions: &[Version],
     branches: &[Branch],
 ) -> Result<(Vec<u8>, Vec<String>), FormatError> {
-    save_within(doc, thumbnail_png, versions, branches, VersionLimits::DEFAULT)
+    save_inner(doc, thumbnail_png, versions, branches, VersionLimits::DEFAULT, true)
 }
 
 /// Choose the versions of `versions` (oldest first) that fit `limits`, with their compressed
@@ -697,6 +710,8 @@ fn dropped_note(dropped: &[&Version], branch: Option<&str>) -> Option<String> {
     Some(format!("Saved without {}{place}: the file's version history is too large to reopen otherwise", what.join(" and ")))
 }
 
+/// [save_inner] with every version written as a full snapshot.
+#[cfg(test)]
 pub(crate) fn save_within(
     doc: &Document,
     thumbnail_png: Option<&[u8]>,
@@ -704,11 +719,27 @@ pub(crate) fn save_within(
     branches: &[Branch],
     limits: VersionLimits,
 ) -> Result<(Vec<u8>, Vec<String>), FormatError> {
+    save_inner(doc, thumbnail_png, versions, branches, limits, false)
+}
+
+/// Write the archive; journal: automatic versions as deltas (see [journal]).
+fn save_inner(
+    doc: &Document,
+    thumbnail_png: Option<&[u8]>,
+    versions: &[Version],
+    branches: &[Branch],
+    limits: VersionLimits,
+    journal: bool,
+) -> Result<(Vec<u8>, Vec<String>), FormatError> {
     let mut notes = Vec::new();
     // Chosen before anything is written; the images of versions left out are left out too.
     let mut total = limits.total;
     let mut dropped = Vec::new();
-    let kept = fit_versions(versions, limits, &mut total, &mut dropped)?;
+    let kept: Vec<(&Version, journal::Kind)> = if journal {
+        journal::fit_journal(versions, limits, &mut total, &mut dropped)?
+    } else {
+        fit_versions(versions, limits, &mut total, &mut dropped)?.into_iter().map(|(v, p)| (v, journal::Kind::Key(p))).collect()
+    };
     notes.extend(dropped_note(&dropped, None));
     let mut branch_total = limits.total;
     let mut kept_branches = Vec::with_capacity(branches.len());
@@ -742,7 +773,7 @@ pub(crate) fn save_within(
         if let Some(t) = thumbnail_png {
             put(&mut z, "thumbnail.png", stored, t)?;
         }
-        put_versions(&mut z, "versions", &kept)?;
+        journal::put_journal(&mut z, &kept)?;
         if !branches.is_empty() {
             let mut ids = BTreeSet::new();
             let mut index = Vec::with_capacity(branches.len());
@@ -852,7 +883,10 @@ pub(crate) fn load_within_limits(bytes: &[u8], budget: ImageBudget, limits: Vers
         Err(e) => issues.push(format!("the published library was skipped: {e}")),
     }
     let mut budget = limits.total;
-    let versions = read_versions(&mut z, "versions", &images, &mut issues, &mut budget, limits.member);
+    let versions = match journal::read_journal(&mut z, &images, &mut issues, &mut budget, limits.member) {
+        Some(v) => v,
+        None => read_versions(&mut z, "versions", &images, &mut issues, &mut budget, limits.member),
+    };
     let branches = read_branches(&mut z, &images, &mut issues, limits);
     // Images only the version history or branches use stay with them.
     let branch_images =
@@ -1014,6 +1048,7 @@ fn read_versions<R: Read + Seek>(
             auto: e.get("auto").and_then(Value::as_bool).unwrap_or(false),
             snapshot: Snapshot::Stored { json: Arc::new(json), images },
             packed: Arc::default(),
+            delta: Arc::default(),
         });
     }
     out
@@ -1142,6 +1177,8 @@ mod branch_tests;
 mod image_budget_tests;
 #[cfg(test)]
 mod image_tests;
+#[cfg(test)]
+mod journal_tests;
 #[cfg(test)]
 mod large_tests;
 #[cfg(test)]
