@@ -181,6 +181,25 @@ fn on_path(s: &mut Session, p: &Value) -> Result<Value> {
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         spec!(
+            "text.setRange",
+            "Style characters",
+            "{id? | ids?, start, end (character offsets, end exclusive), fill? (colour), weight? (100-900), fontSize?, fontFamily?, fontStyle?, lineHeight?, letterSpacing?, textDecoration?, textCase?, hyperlink?, ...}  styles those characters of a text layer; the same entries go in `node.set`'s `ranges`",
+            true,
+            |s, p| {
+                let ids = req_targets("text.setRange", s, p)?;
+                let mut entry = p.as_object().cloned().unwrap_or_default();
+                entry.remove("id");
+                entry.remove("ids");
+                let mut props = Map::new();
+                props.insert("ranges".into(), json!([entry]));
+                let doc = s.doc_mut()?;
+                for i in ids {
+                    super::props::apply("text.setRange", doc, i, &props)?;
+                }
+                ok()
+            }
+        ),
+        spec!(
             "text.onPath",
             "Text on path",
             "{text? (text layer), path? (vector or shape layer; default: the selected text and other layer), start? (0..1 along the path), flip?}  the text follows the path and takes its effects and its fills when one shows, and the path layer is removed → {id}",

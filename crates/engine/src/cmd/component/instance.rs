@@ -375,6 +375,13 @@ pub(crate) fn swap_instance(doc: &mut Document, i: NodeId, c: NodeId) -> std::re
         return Err("an instance can't show the component it is inside".into());
     }
     let defaults = doc.node(c).map(default_props).unwrap_or_default();
+    // An instance sized differently from its main keeps its size on the new main, as a resize would.
+    if let Some(NodeKind::Instance { component: old, .. }) = doc.node(i).map(|n| &n.kind)
+        && let (Some(main), Some(inst)) = (doc.node(*old), doc.node(i))
+        && ((main.width - inst.width).abs() > 1e-9 || (main.height - inst.height).abs() > 1e-9)
+    {
+        doc.get_mut(i).map_err(|e| e.to_string())?.overrides.insert("size".into());
+    }
     match doc.get_mut(i).map(|n| &mut n.kind) {
         Ok(NodeKind::Instance { component, props }) => {
             *component = c;

@@ -53,7 +53,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "node.create",
             "Create layer",
-            "{type: rectangle|ellipse|polygon|star|line|arrow|vector|text|frame|section|component|slice, x?, y? (relative to the parent frame; groups don't count), width?, height?, parent? (id; default: the page), index?, name?, text? (for text), path? (SVG path data for vector), props? {node.set keys}, select? (default true)}",
+            "{type: rectangle|ellipse|polygon|star|line|arrow|vector|text|frame|section|component|slice, x?, y? (relative to the parent frame; groups don't count), width?, height?, parent? (id; default: the page), index?, name?, absolute? (true: outside an auto-layout parent's flow, at x/y; a frame with `props.layout` made in an auto-layout parent without `height` hugs its content vertically), text? (for text), path? (SVG path data for vector), props? {node.set keys}, select? (default true)}",
             true,
             create
         ),
@@ -334,6 +334,24 @@ pub fn create(s: &mut Session, p: &Value) -> Result<Value> {
     doc.insert(node, parent, index)?;
     if let Some(Value::Object(props)) = get(p, "props") {
         super::props::apply(cmd, doc, nid, props)?;
+    }
+    // A frame with its own auto layout, made in an auto-layout parent without a height, hugs its
+    // content vertically instead of keeping the 100 px default.
+    if base == "Frame" && num(p, "height").is_none() {
+        let in_flow = doc.node(parent).is_some_and(|pn| pn.layout.is_some());
+        let own = doc.node(nid).is_some_and(|n| n.layout.is_some());
+        let asked = get(p, "props").is_some_and(|o| ["sizingV", "layoutSizingVertical", "height"].iter().any(|k| o.get(k).is_some()));
+        if in_flow && own && !asked {
+            let mut hug = serde_json::Map::new();
+            hug.insert("sizingV".into(), json!("hug"));
+            super::props::apply(cmd, doc, nid, &hug)?;
+        }
+    }
+    // A child of an auto-layout parent that sits outside the flow, at x/y.
+    if boolean(p, "absolute") == Some(true) {
+        let mut abs = serde_json::Map::new();
+        abs.insert("absolute".into(), json!(true));
+        super::props::apply(cmd, doc, nid, &abs)?;
     }
     if let Some(k) = string(p, "key") {
         super::keys::claim(cmd, doc, nid, Some(&k))?;

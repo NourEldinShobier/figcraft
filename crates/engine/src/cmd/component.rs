@@ -99,7 +99,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "instance.place",
             "Place instance",
-            "{component, x, y (page point: the instance is centred there, inside the frame under it; auto layout frames insert by position)}",
+            "{component, x, y (page point: the instance is centred there, inside the frame under it; auto layout frames insert by position), parent? (a frame to put it in instead of the one under the point)}",
             true,
             place
         ),
@@ -286,7 +286,15 @@ pub(crate) fn place(s: &mut Session, p: &Value) -> Result<Value> {
     let page = s.page()?;
     let doc = s.doc_mut()?;
     let c = main_of(doc, c).ok_or_else(|| bad(cmd, "`component` must be a component or component set"))?;
-    let mut slot = crate::drop::slot(doc, page, pt);
+    let mut slot = match opt_id(cmd, p, "parent")? {
+        Some(parent) => {
+            if !doc.node(parent).is_some_and(|n| n.kind.is_container()) {
+                return Err(bad(cmd, format!("{parent} can't contain layers")));
+            }
+            crate::drop::DropSlot { parent, index: None, line: None }
+        }
+        None => crate::drop::slot(doc, page, pt),
+    };
     // Never inside its own main component (or a copy of it).
     if doc.is_ancestor(c, slot.parent) || slot.parent == c {
         slot = crate::drop::DropSlot { parent: page, index: None, line: None };

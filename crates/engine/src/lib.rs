@@ -361,6 +361,8 @@ mod node_find_tests;
 #[cfg(test)]
 mod node_readback_tests;
 #[cfg(test)]
+mod feature_request_tests;
+#[cfg(test)]
 mod node_set_refusals_tests;
 #[cfg(test)]
 mod online_tests;

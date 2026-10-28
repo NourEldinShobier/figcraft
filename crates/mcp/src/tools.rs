@@ -153,6 +153,7 @@ pub fn tool_definitions() -> Vec<Value> {
                 json!({
                     "commands": {"type": "array", "minItems": 1, "description": "Steps to run", "items": obj(json!({"command": string("Command id"), "params": {"type": "object"}, "as": string("Name for this step, unique in the batch; later steps use its result with {\"$ref\": name}")}), &["command"])},
                     "label": string("Undo history label (default \"Batch\")"),
+                    "quiet": boolean("Terse result: {ok, count, failures?} with only the failed steps (use with onError continue); step results are left out"),
                     "onError": {"type": "string", "enum": ["abort", "continue"], "description": "abort (default) rolls back the whole batch on the first failure; continue rolls back only the failed step, runs the rest and returns one {step, command, ok, result|error} object per step"},
                 }),
                 &["commands"],
@@ -176,7 +177,8 @@ pub fn tool_definitions() -> Vec<Value> {
                     "key": string("Stable key unique in the document (e.g. \"icon/folder\"); survives save, open, undo and .fig export. Any command taking a layer id also takes {\"key\": \"icon/folder\"} there. A duplicate key is an error that suggests a free one."),
                     "text": string("Characters, for type text"),
                     "path": string("SVG path data, for type vector (e.g. \"M0 0 L100 0 L50 80 Z\")"),
-                    "props": {"type": "object", "description": "Any set_properties keys applied at creation, e.g. {\"fill\":\"#3366FF\",\"cornerRadius\":12,\"fontSize\":24,\"layout\":\"vertical\",\"gap\":8,\"padding\":16}"},
+                    "absolute": boolean("In an auto-layout parent: place the layer outside the flow at x/y (absolute positioning)"),
+                    "props": {"type": "object", "description": "Any set_properties keys applied at creation (they may also be given beside `type`, like fill or layout), e.g. {\"fill\":\"#3366FF\",\"cornerRadius\":12,\"fontSize\":24,\"layout\":\"vertical\",\"gap\":8,\"padding\":16}"},
                 }),
                 &["type"],
             ),
@@ -187,7 +189,7 @@ pub fn tool_definitions() -> Vec<Value> {
             "Set properties",
             "Set properties on one or more layers as one undo step (engine `node.set`). Keys: name, visible, locked, opacity (0-1), blend, x, y (relative to the parent frame; groups don't count), width, height, rotation (degrees), fill (colour) / fills (array of paints: \"#hex\" or {\"type\":\"solid\",\"color\":\"#hex\"} or {\"type\":\"linearGradient\",\"stops\":[\"#hex\",\"#hex\"]} or stops [{\"position\":0..1,\"color\":\"#hex\"}], optional from/to handles in the unit box; radialGradient too), stroke / strokes, strokeWeight, strokeAlign (inside|center|outside), cornerRadius (n or [tl,tr,br,bl]), effects (array, e.g. {\"type\":\"dropShadow\",\"color\":\"#00000040\",\"offset\":[0,4],\"radius\":8}), clip, layout (null|horizontal|vertical|grid), gap, padding (n or [t,r,b,l]), mainAlign (min|center|max|spaceBetween|spaceAround|spaceEvenly), crossAlign, wrap, contentAlign (auto|spaceBetween: wrapped lines), sizingH / sizingV (fixed|hug|fill), constraints {horizontal, vertical}, characters, fontFamily, fontStyle, fontSize, lineHeight, letterSpacing, textAlign, textAutoResize. Auto layout keys (gap, padding, mainAlign, crossAlign, wrap, …) apply to frames, components and instances only: other layers among the ids are skipped and named in `warnings`, and with none that can take them the call is an error. A fontStyle draws in the family's nearest face; `warnings` says when that face has another weight or slant than the name asks for. Run list_commands with filter \"node.set\" for the full list. Unknown keys are an error. Returns the updated layers.",
             obj(
-                json!({"ids": ids_schema("Layer ids (default: the selection)"), "props": {"type": "object", "description": "Property values to set"}}),
+                json!({"ids": ids_schema("Layer ids (default: the selection)"), "props": {"type": "object", "description": "Property values to set"}, "quiet": boolean("Return only {ok, ids, warnings?} instead of every updated layer (default true for more than one layer)")}),
                 &["props"],
             ),
             false,
@@ -641,7 +643,9 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
         "type_text" => type_text(b, &a),
         "inspect_ui" => b.call("ui.inspect", json!({})).map(|v| ToolResult::json(&v)),
         "get_metadata" => read_command(b, "inspect.metadata", &a).map(|v| match v.get("xml").and_then(Value::as_str) {
-            Some(xml) if v["truncated"] == true => ToolResult::text(format!("{xml}<!-- truncated: raise depth or maxNodes, or ask for a child's nodeId -->\n")),
+            Some(xml) if v["truncated"] == true => {
+                ToolResult::text(format!("{xml}<!-- truncated: raise depth or maxNodes, or ask for a child's nodeId -->\n"))
+            }
             Some(xml) => ToolResult::text(xml),
             None => ToolResult::json(&v),
         }),
@@ -739,7 +743,19 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Stri
     if let Some(mode) = a.get("onError") {
         params["onError"] = mode.clone();
     }
-    exec(b, "command.batch", params).map(|v| ToolResult::json(&v))
+    let quiet = a.get("quiet").and_then(Value::as_bool).unwrap_or(false);
+    exec(b, "command.batch", params).map(|v| ToolResult::json(&if quiet { quiet_batch(&v) } else { v }))
+}
+
+/// `{ok, count, failures?}` for a batch result: only the `ok: false` outcomes of `onError: continue` are kept.
+fn quiet_batch(results: &Value) -> Value {
+    let all = results.as_array().map(Vec::as_slice).unwrap_or_default();
+    let failures: Vec<&Value> = all.iter().filter(|r| r.get("ok") == Some(&Value::Bool(false))).collect();
+    let mut out = json!({"ok": failures.is_empty(), "count": all.len()});
+    if !failures.is_empty() {
+        out["failures"] = json!(failures);
+    }
+    out
 }
 
 fn create_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
@@ -754,13 +770,24 @@ fn create_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult
         return Err("`props` must be an object".into());
     }
     let mut params = Map::new();
-    for k in ["type", "x", "y", "width", "height", "parent", "index", "name", "key", "text", "path", "points", "closed", "props", "select"] {
+    const KNOWN: [&str; 16] =
+        ["type", "x", "y", "width", "height", "parent", "index", "name", "key", "text", "path", "points", "closed", "props", "select", "absolute"];
+    for k in KNOWN {
         if let Some(v) = a.get(k).filter(|v| !v.is_null()) {
             params.insert(k.into(), v.clone());
         }
     }
-    if let Some(Value::Object(p)) = params.get_mut("props") {
-        normalize_props(p);
+    // Style keys given beside `type` (fill, stroke, layout, ...) are `props`; `props` wins on a clash.
+    let mut props = Map::new();
+    for (k, v) in a.iter().filter(|(k, v)| !KNOWN.contains(&k.as_str()) && !v.is_null()) {
+        props.insert(k.clone(), v.clone());
+    }
+    if let Some(Value::Object(p)) = params.remove("props") {
+        props.extend(p);
+    }
+    if !props.is_empty() {
+        normalize_props(&mut props);
+        params.insert("props".into(), Value::Object(props));
     }
     let r = exec(b, "node.create", Value::Object(params))?;
     let id = r.get("id").cloned().ok_or("node.create returned no id")?;
@@ -793,8 +820,17 @@ fn set_properties(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolRes
             .map(|a| a.iter().filter_map(Value::as_u64).collect())
             .unwrap_or_default(),
     };
-    let nodes: Vec<Value> = ids.iter().take(20).filter_map(|i| b.call("node.get", json!({"id": i, "depth": 0})).ok()).collect();
-    let mut out = json!({"ok": true, "nodes": nodes});
+    let quiet = match a.get("quiet") {
+        None | Some(Value::Null) => ids.len() > 1,
+        Some(Value::Bool(q)) => *q,
+        Some(_) => return Err("`quiet` must be a boolean".into()),
+    };
+    let mut out = if quiet {
+        json!({"ok": true, "ids": ids})
+    } else {
+        let nodes: Vec<Value> = ids.iter().take(20).filter_map(|i| b.call("node.get", json!({"id": i, "depth": 0})).ok()).collect();
+        json!({"ok": true, "nodes": nodes})
+    };
     if let Some(w) = warnings {
         out["warnings"] = w;
     }
