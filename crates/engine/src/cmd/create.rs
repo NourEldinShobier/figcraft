@@ -317,8 +317,13 @@ pub fn create(s: &mut Session, p: &Value) -> Result<Value> {
     let doc = ds.doc_mut();
     let nid = doc.alloc_id();
     let mut node = if base == "Section" { Node::new_section(nid, name, w, h) } else { Node::new(nid, kind, name, w, h) };
+    // A frame made inside an auto-layout parent with no fill asked for has none (a row in a menu, not a white card).
+    let nested_frame = base == "Frame" && !asks_fill && doc.node(parent).is_some_and(|pn| pn.layout.is_some());
     if app_text && let Some(fills) = crate::tools::readable_text_fills(doc, parent) {
         node.fills = fills;
+    }
+    if nested_frame {
+        node.fills.clear();
     }
     node.transform = space.inverse() * figcraft_geom::Affine::translate((x + offset.0, y + offset.1));
     if base == "Arrow" {

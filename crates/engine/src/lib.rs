@@ -321,6 +321,8 @@ mod instance_modes_tests;
 #[cfg(test)]
 mod instance_resizing_tests;
 #[cfg(test)]
+mod instance_geometry_tests;
+#[cfg(test)]
 mod interaction_rollback_tests;
 #[cfg(test)]
 mod invite_links_tests;

@@ -1055,6 +1055,7 @@ pub fn override_group(k: &str) -> &'static str {
         "grids" | "layoutGrids" | "gridStyle" => "grids",
         "exports" | "exportSettings" => "exports",
         "interactions" => "interactions",
+        "constraints" => "constraints",
         k if k.starts_with("font") || k.starts_with("text") || k.starts_with("letter") || k.starts_with("line") || k.starts_with("paragraph") => {
             "textStyle"
         }
@@ -1347,7 +1348,13 @@ pub fn resize_node(doc: &mut Document, id: NodeId, w: f64, h: f64) -> Result<()>
         figcraft_layout::scale_group_children(doc, id, kx, ky);
     } else {
         // In an auto layout frame this moves only the children that ignore auto layout.
-        figcraft_layout::apply_constraints(doc, id, ow, oh);
+        match doc.node(id).map(|n| &n.kind) {
+            Some(NodeKind::Instance { component, .. }) => {
+                let main = *component;
+                crate::components::constrain_resized(doc, id, main, ow, oh);
+            }
+            _ => figcraft_layout::apply_constraints(doc, id, ow, oh),
+        }
     }
     Ok(())
 }

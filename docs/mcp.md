@@ -948,13 +948,27 @@ most when it can't be reached).
 - **What an instance overrides** (`node.set` / `text.set` on its layers; `get_node` lists
   `overrides`): fills, strokes, effects, opacity, visibility, layer names, corner radius, text
   content and text properties (font, size, spacing, resizing, lists…), auto layout padding, gap and
-  alignment, layout grids, export settings and prototype interactions; nested instances swap
+  alignment, layout grids, export settings, prototype interactions, a layer's position, rotation and size
+  (`x`, `y`, `width`, `height`) and its `constraints`; nested instances swap
   (`component`) and take property values (`props`). Each stays when the main changes that property
   and goes with `component.resetOverride {id, group}` or `component.resetInstance`.
-- **What it doesn't**: moving, rotating, resizing or re-constraining a layer inside an instance,
-  its resizing (hug / fill / min / max), the auto layout direction and other auto layout settings,
+- **What it doesn't**: a layer's resizing (hug / fill / min / max), the auto layout direction and other auto layout settings,
   and adding, removing or reordering layers (outside slots) are refused (nothing changes); resize
-  the instance itself (its layers follow the main's constraints) or edit the main.
+  the instance itself or edit the main.
+- **Resizing an instance** (`node.set` width/height, or dragging a handle): layers follow their
+  constraints from the main's size. When the main is icon-like (no text and no auto layout
+  anywhere inside), layers that keep the default left/top constraints scale with the instance
+  instead, so a resized icon draws smaller or larger as a whole (a non-square resize stretches it);
+  layers with constraints of their own keep them. Other instances behave as before.
+- **Resetting**: `component.resetInstance {ids?, size?}` and `instance.resetOverrides {ids?}` (the
+  same with `size: true`) clear every layer override (also geometry and constraints) and property
+  values; with `size` the instance also returns to its main's size.
+- **Swapping at a point**: `instance.swapAt` keeps the instance's size and, by default, only text
+  overrides; `keepOverrides: true` keeps every override of layers whose names match (e.g. stroke
+  colours of a vector inside an icon instance).
+- **Frames in auto layout**: `node.create {type: "frame", parent: <auto layout frame>}` without a
+  `fill` has no fill (top-level frames keep the white default).
+
 - **Variants**: `instance.setProperties {ids?, properties}` switching variants keeps an override
   where the layer's name path matches and both variants had the same value for that property;
   text layers keep all theirs. The default variant (`instance.create` with a set, the Assets

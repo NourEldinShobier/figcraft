@@ -50,7 +50,7 @@ pub fn sync_after_edit(doc: &mut Document, before: &Document, changed: &[NodeId]
         // An instance's own place, resizing, export settings, interactions and variable modes are
         // its own, not overrides.
         if top_root {
-            groups.retain(|g| !matches!(*g, "component" | "props" | "position" | "resizing" | "exports" | "interactions" | "modes"));
+            groups.retain(|g| !matches!(*g, "component" | "props" | "position" | "constraints" | "resizing" | "exports" | "interactions" | "modes"));
         }
         if groups.iter().any(|g| matches!(*g, "size" | "position")) {
             groups.retain(|g| !matches!(*g, "size" | "position") || !geometry_derived(doc, before, id, g));

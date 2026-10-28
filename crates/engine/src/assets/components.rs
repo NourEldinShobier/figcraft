@@ -55,7 +55,7 @@ pub(crate) use patch::{FULL_REBUILD, PATCHED};
 #[cfg(test)]
 use rebase::RebaseSources;
 pub use rebase::rebase_instance;
-pub use sync::keep_text_overrides;
+pub use sync::{constrain_resized, keep_text_overrides};
 pub use variants::{default_variant, exposed_copies, find_variant, mirror_issues, variant_conflicts, variant_name, variant_options, variant_props};
 
 /// Nesting limit for instances inside instances.
@@ -82,6 +82,7 @@ pub const OVERRIDE_GROUPS: &[&str] = &[
     "size",
     "resizing",
     "position",
+    "constraints",
     "modes",
     "component",
     "props",
