@@ -16,7 +16,8 @@ const MAX_VISIT: usize = 20_000;
 const MAX_TEXT_NAME: usize = 40;
 /// Icons are at most this many pixels on a side.
 const ICON_MAX: f64 = 64.0;
-const GENERIC: &[&str] = &["Vector", "Rectangle", "Ellipse", "Line", "Polygon", "Star", "Frame", "Group", "Union", "Subtract", "Intersect", "Exclude", "Boolean", "Text"];
+const GENERIC: &[&str] =
+    &["Vector", "Rectangle", "Ellipse", "Line", "Polygon", "Star", "Frame", "Group", "Union", "Subtract", "Intersect", "Exclude", "Boolean", "Text"];
 
 /// "Rectangle 12" is generic, "Rectangle 12 copy" and "Card" are not.
 fn is_generic(name: &str) -> bool {
@@ -70,7 +71,9 @@ impl Ctx<'_> {
 
     fn is_icon_frame(&self, parent: &Node) -> bool {
         let small = parent.width > 0.0 && parent.height > 0.0 && parent.width <= ICON_MAX && parent.height <= ICON_MAX;
-        let drawn = |k: &NodeKind| matches!(k, NodeKind::Vector { .. } | NodeKind::BooleanOp { .. } | NodeKind::Rectangle | NodeKind::Ellipse { .. } | NodeKind::Line);
+        let drawn = |k: &NodeKind| {
+            matches!(k, NodeKind::Vector { .. } | NodeKind::BooleanOp { .. } | NodeKind::Rectangle | NodeKind::Ellipse { .. } | NodeKind::Line)
+        };
         let only_shapes = parent.children.iter().filter_map(|c| self.doc.node(*c)).all(|c| drawn(&c.kind) || matches!(c.kind, NodeKind::Group));
         let named = self.name(parent).to_lowercase().starts_with("icon");
         matches!(parent.kind, NodeKind::Frame | NodeKind::Component { .. } | NodeKind::Group) && (named || small && only_shapes)

@@ -37,7 +37,11 @@ fn unknown(cmd: &str, doc: &Document, key: &str) -> crate::EngineError {
     if near.is_empty() {
         near = all.iter().map(|(k, _)| k.as_str()).take(5).collect();
     }
-    let hint = if near.is_empty() { "no layer has a key yet (set one with node.set {props: {key}})".to_string() } else { format!("did you mean one of: {}", near.join(", ")) };
+    let hint = if near.is_empty() {
+        "no layer has a key yet (set one with node.set {props: {key}})".to_string()
+    } else {
+        format!("did you mean one of: {}", near.join(", "))
+    };
     bad(cmd, format!("no layer has the key `{key}`; {hint}"))
 }
 
@@ -96,7 +100,10 @@ pub(crate) fn claim(cmd: &str, doc: &mut Document, id: NodeId, key: Option<&str>
             return Err(bad(cmd, why));
         }
         if let Some(other) = doc.node_by_key(k).filter(|o| *o != id) {
-            return Err(bad(cmd, format!("the key `{k}` is already used by layer {other}; keys are unique per document (try `{}`)", doc.free_key(k))));
+            return Err(bad(
+                cmd,
+                format!("the key `{k}` is already used by layer {other}; keys are unique per document (try `{}`)", doc.free_key(k)),
+            ));
         }
     }
     doc.get_mut(id)?.set_key(key);
@@ -124,11 +131,15 @@ pub(crate) fn enforce_unique(cmd: &str, doc: &mut Arc<Document>, before: &Docume
             *count.entry(k).or_default() += 1;
         }
     }
-    let clashing: Vec<NodeId> = changed.into_iter().filter(|id| doc.node(*id).and_then(|n| n.key()).is_some_and(|k| count.get(k).copied().unwrap_or(0) > 1)).collect();
+    let clashing: Vec<NodeId> =
+        changed.into_iter().filter(|id| doc.node(*id).and_then(|n| n.key()).is_some_and(|k| count.get(k).copied().unwrap_or(0) > 1)).collect();
     for id in clashing {
         if before.contains(id) {
             let k = doc.node(id).and_then(|n| n.key()).unwrap_or_default().to_string();
-            return Err(bad(cmd, format!("the key `{k}` is already used by another layer; keys are unique per document (try `{}`)", doc.free_key(&k))));
+            return Err(bad(
+                cmd,
+                format!("the key `{k}` is already used by another layer; keys are unique per document (try `{}`)", doc.free_key(&k)),
+            ));
         }
         if let Some(n) = Arc::make_mut(doc).node_mut(id) {
             n.set_key(None);
@@ -149,7 +160,11 @@ pub fn specs() -> Vec<CommandSpec> {
             if let Some(keys) = p.get("keys").and_then(Value::as_array) {
                 let ids = keys
                     .iter()
-                    .map(|k| k.as_str().and_then(|k| doc.node_by_key(k).ok_or_else(|| unknown(cmd, doc, k)).ok()).ok_or_else(|| bad(cmd, "`keys` must be known key strings")))
+                    .map(|k| {
+                        k.as_str()
+                            .and_then(|k| doc.node_by_key(k).ok_or_else(|| unknown(cmd, doc, k)).ok())
+                            .ok_or_else(|| bad(cmd, "`keys` must be known key strings"))
+                    })
                     .collect::<Result<Vec<_>>>()?;
                 return Ok(json!({"ids": ids}));
             }

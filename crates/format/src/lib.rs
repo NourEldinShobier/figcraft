@@ -762,9 +762,10 @@ fn save_inner(
         put_json(&mut z, "document.json", doc)?;
         // Every image once, whether the document, a version or a branch uses it.
         let mut written = BTreeSet::new();
-        let branch_images = branches.iter().zip(&kept_branches).flat_map(|(b, k)| {
-            [&b.base.images, &b.head.images].into_iter().chain(k.iter().map(|(v, _)| v.images()))
-        });
+        let branch_images = branches
+            .iter()
+            .zip(&kept_branches)
+            .flat_map(|(b, k)| [&b.base.images, &b.head.images].into_iter().chain(k.iter().map(|(v, _)| v.images())));
         for (hash, img) in std::iter::once(&doc.images).chain(kept.iter().map(|(v, _)| v.images())).chain(branch_images).flatten() {
             if written.insert(hash) {
                 put(&mut z, &format!("images/{hash}"), stored, &img.bytes)?;

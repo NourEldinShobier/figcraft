@@ -1,4 +1,4 @@
-﻿//! `Cold<T>`: a rarely non-default payload kept out of line. A node whose value equals the default
+//! `Cold<T>`: a rarely non-default payload kept out of line. A node whose value equals the default
 //! stores one null pointer instead of the whole struct; reads see the shared default, writes
 //! allocate. Compares, clones and (de)serialises exactly like `T`.
 
@@ -27,11 +27,7 @@ pub struct Cold<T: ColdDefault>(Option<Box<T>>);
 
 impl<T: ColdDefault> Cold<T> {
     pub fn new(v: T) -> Self {
-        if v == *T::shared_default() {
-            Cold(None)
-        } else {
-            Cold(Some(Box::new(v)))
-        }
+        if v == *T::shared_default() { Cold(None) } else { Cold(Some(Box::new(v))) }
     }
     /// Take the value out (the default when nothing was stored).
     pub fn into_inner(self) -> T {

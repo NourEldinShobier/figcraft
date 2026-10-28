@@ -13,7 +13,8 @@ fn icon(s: &mut Session, set: &Value, x: f64, name: &str) -> Value {
 }
 
 fn outline(s: &mut Session, icon: &Value, x: f64, w: f64, weight: f64, round: bool) -> Value {
-    let id = ex(s, "node.create", json!({"type": "rectangle", "parent": icon, "x": x, "y": 3, "width": w, "height": 18, "name": "body"}))["id"].clone();
+    let id =
+        ex(s, "node.create", json!({"type": "rectangle", "parent": icon, "x": x, "y": 3, "width": w, "height": 18, "name": "body"}))["id"].clone();
     let mut props = json!({"fill": "none", "stroke": "#111111", "strokeWeight": weight});
     if round {
         props["strokeCap"] = json!("round");
@@ -24,7 +25,8 @@ fn outline(s: &mut Session, icon: &Value, x: f64, w: f64, weight: f64, round: bo
 }
 
 fn rules(report: &Value, id: &Value) -> Vec<String> {
-    let mut v: Vec<String> = report["issues"].as_array().unwrap().iter().filter(|i| &i["id"] == id).map(|i| i["rule"].as_str().unwrap().to_string()).collect();
+    let mut v: Vec<String> =
+        report["issues"].as_array().unwrap().iter().filter(|i| &i["id"] == id).map(|i| i["rule"].as_str().unwrap().to_string()).collect();
     v.sort();
     v
 }
@@ -42,7 +44,10 @@ fn lint_finds_the_odd_icon_out_and_offers_fixes() {
 
     let r = ex(&mut s, "inspect.lintIcons", json!({"ids": [set]}));
     assert_eq!(r["icons"], 3);
-    assert_eq!(r["expected"], json!({"strokeWeight": 2.0, "strokeCap": "round", "strokeJoin": "round", "cornerRadius": null, "color": "#111111", "padding": 2.0}));
+    assert_eq!(
+        r["expected"],
+        json!({"strokeWeight": 2.0, "strokeCap": "round", "strokeJoin": "round", "cornerRadius": null, "color": "#111111", "padding": 2.0})
+    );
     assert_eq!(rules(&r, &a_body), Vec::<String>::new());
     assert_eq!(rules(&r, &a), Vec::<String>::new());
     assert_eq!(rules(&r, &c_body), Vec::<String>::new());

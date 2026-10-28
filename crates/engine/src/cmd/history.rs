@@ -62,7 +62,11 @@ fn timeline(s: &Session) -> Result<(usize, Vec<(String, &'static str)>)> {
     }
     let h = &s.ds()?.history;
     let kind = |l: &str, k: &'static str| if l == RESTORE_LABEL { "restore" } else { k };
-    let entries = h.undo.iter().map(|e| (e.label.clone(), kind(&e.label, e.kind))).chain(h.redo.iter().rev().map(|e| (e.label.clone(), kind(&e.label, e.kind))));
+    let entries = h
+        .undo
+        .iter()
+        .map(|e| (e.label.clone(), kind(&e.label, e.kind)))
+        .chain(h.redo.iter().rev().map(|e| (e.label.clone(), kind(&e.label, e.kind))));
     Ok((h.undo.len(), entries.collect()))
 }
 
@@ -103,11 +107,19 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
 fn revert_to(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "history.revertTo";
     let (applied, kinds) = timeline(s)?;
-    let target = get(p, "index")
-        .and_then(f64_of)
-        .filter(|n| *n >= 0.0 && *n <= kinds.len() as f64 && n.fract() == 0.0)
-        .map(|n| n as usize)
-        .ok_or_else(|| bad(CMD, format!("`index` must be a whole number from 0 to {} (the state just before that history entry; {} is the latest)", kinds.len(), kinds.len())))?;
+    let target =
+        get(p, "index").and_then(f64_of).filter(|n| *n >= 0.0 && *n <= kinds.len() as f64 && n.fract() == 0.0).map(|n| n as usize).ok_or_else(
+            || {
+                bad(
+                    CMD,
+                    format!(
+                        "`index` must be a whole number from 0 to {} (the state just before that history entry; {} is the latest)",
+                        kinds.len(),
+                        kinds.len()
+                    ),
+                )
+            },
+        )?;
     let (lo, hi) = (target.min(applied), target.max(applied));
     if kinds.get(lo..hi).is_some_and(|k| k.iter().any(|(_, kind)| *kind == "restore")) {
         return Err(bad(CMD, "the range crosses a version restore; use version.restore to go back further"));
@@ -143,8 +155,12 @@ pub fn specs() -> Vec<CommandSpec> {
             false,
             revert_to
         ),
-        spec!("history.hash", "Document hash", "{} → {hash}  a 64-bit content hash of the active document: equal documents have equal hashes", false, |s, _| {
-            Ok(json!({"hash": doc_hash(&s.ds()?.doc)}))
-        }),
+        spec!(
+            "history.hash",
+            "Document hash",
+            "{} → {hash}  a 64-bit content hash of the active document: equal documents have equal hashes",
+            false,
+            |s, _| { Ok(json!({"hash": doc_hash(&s.ds()?.doc)})) }
+        ),
     ]
 }

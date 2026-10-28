@@ -246,7 +246,10 @@ fn analyze(doc: &Document, roots: &[NodeId], aaa: bool) -> Result<Report> {
         }
         // Text fills are drawn bottom to top: the top visible one is the colour readers see.
         let Some(fill_index) = node.fills.iter().rposition(|f| f.visible) else { continue };
-        let bound_var = super::lists::paint_binding_key(node, true, fill_index).and_then(|k| node.bound.get(k)).and_then(|v| doc.variables.get(v)).map(|v| v.name.clone());
+        let bound_var = super::lists::paint_binding_key(node, true, fill_index)
+            .and_then(|k| node.bound.get(k))
+            .and_then(|v| doc.variables.get(v))
+            .map(|v| v.name.clone());
         let size = data.style.font_size;
         let bold = is_bold(&data.style);
         let large = ca::is_large_text(size, bold);
@@ -400,7 +403,10 @@ mod tests {
         let r = ex(&mut s, "a11y.checkContrast", json!({"level": "AAA"}));
         assert_eq!(r["checked"], json!(1));
         let f = &r["failures"][0];
-        assert_eq!((f["id"].clone(), f["ratio"].clone(), f["bg"].clone(), f["fg"].clone()), (json!(t.0), json!(4.54), json!("#FFFFFF"), json!("#767676")));
+        assert_eq!(
+            (f["id"].clone(), f["ratio"].clone(), f["bg"].clone(), f["fg"].clone()),
+            (json!(t.0), json!(4.54), json!("#FFFFFF"), json!("#767676"))
+        );
         assert_eq!(f["fixable"], json!(true));
         assert!(f["suggestion"]["ratio"].as_f64().unwrap() >= 7.0);
         let r = ex(&mut s, "a11y.checkContrast", json!({}));
@@ -412,13 +418,21 @@ mod tests {
         let mut s = Session::new();
         let (_, t) = make(&mut s);
         ex(&mut s, "variable.createCollection", json!({"name": "Theme", "modes": ["Light", "Dark"]}));
-        ex(&mut s, "variable.create", json!({"collection": "Theme", "name": "ink", "type": "color", "values": {"Light": "#222222", "Dark": "#333333"}}));
+        ex(
+            &mut s,
+            "variable.create",
+            json!({"collection": "Theme", "name": "ink", "type": "color", "values": {"Light": "#222222", "Dark": "#333333"}}),
+        );
         ex(&mut s, "variable.bind", json!({"ids": [t.0], "field": "fill", "variable": "ink"}));
         let r = ex(&mut s, "a11y.checkContrast", json!({}));
         let fails = r["failures"].as_array().unwrap();
         assert_eq!(fails.len(), 0, "{r}");
         // Dark text on a white frame passes in both modes; make the frame dark in the Dark mode.
-        ex(&mut s, "variable.create", json!({"collection": "Theme", "name": "surface", "type": "color", "values": {"Light": "#FFFFFF", "Dark": "#202020"}}));
+        ex(
+            &mut s,
+            "variable.create",
+            json!({"collection": "Theme", "name": "surface", "type": "color", "values": {"Light": "#FFFFFF", "Dark": "#202020"}}),
+        );
         let f = s.doc().unwrap().node(t).unwrap().parent.unwrap();
         ex(&mut s, "variable.bind", json!({"ids": [f.0], "field": "fill", "variable": "surface"}));
         let r = ex(&mut s, "a11y.checkContrast", json!({}));

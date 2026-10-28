@@ -192,24 +192,33 @@ pub fn import_source(text: &str) -> Result<Imported, FormatError> {
             }
             _ => {
                 if t == "imageIndex"
-                    && let (Some(hash), Some(w), Some(h)) = (v.get("hash").and_then(Value::as_str), v.get("width").and_then(Value::as_u64), v.get("height").and_then(Value::as_u64))
+                    && let (Some(hash), Some(w), Some(h)) =
+                        (v.get("hash").and_then(Value::as_str), v.get("width").and_then(Value::as_u64), v.get("height").and_then(Value::as_u64))
                 {
                     images.push(ImageRef { hash: hash.to_string(), width: u32::try_from(w).unwrap_or(0), height: u32::try_from(h).unwrap_or(0) });
                 }
                 match t.split_once('.') {
                     None => match l.remove("k") {
                         Some(Value::String(k)) => {
-                            let Value::Object(m) = root.entry(t.clone()).or_insert_with(|| json!({})) else { return Err(at("a section is both a list and a map")) };
+                            let Value::Object(m) = root.entry(t.clone()).or_insert_with(|| json!({})) else {
+                                return Err(at("a section is both a list and a map"));
+                            };
                             m.insert(k, v);
                         }
                         _ => {
-                            let Value::Array(a) = root.entry(t.clone()).or_insert_with(|| json!([])) else { return Err(at("a section is both a list and a map")) };
+                            let Value::Array(a) = root.entry(t.clone()).or_insert_with(|| json!([])) else {
+                                return Err(at("a section is both a list and a map"));
+                            };
                             a.push(v);
                         }
                     },
                     Some((top, sub)) => {
-                        let Value::Object(m) = root.entry(top.to_string()).or_insert_with(|| json!({})) else { return Err(at("a section is both a list and a map")) };
-                        let Value::Array(a) = m.entry(sub.to_string()).or_insert_with(|| json!([])) else { return Err(at("a section is both a list and a map")) };
+                        let Value::Object(m) = root.entry(top.to_string()).or_insert_with(|| json!({})) else {
+                            return Err(at("a section is both a list and a map"));
+                        };
+                        let Value::Array(a) = m.entry(sub.to_string()).or_insert_with(|| json!([])) else {
+                            return Err(at("a section is both a list and a map"));
+                        };
                         a.push(v);
                     }
                 }

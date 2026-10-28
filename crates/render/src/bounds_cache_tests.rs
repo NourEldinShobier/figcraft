@@ -10,7 +10,7 @@ use std::sync::Arc;
 fn tree() -> (Document, [figcraft_doc::NodeId; 5]) {
     let mut d = Document::new("kept");
     let p = d.first_page().unwrap();
-    let frame =|d: &mut Document, parent, name: &str, x, y, w, h| {
+    let frame = |d: &mut Document, parent, name: &str, x, y, w, h| {
         let f = d.create(parent, NodeKind::Frame, name, x, y, w, h).unwrap();
         d.node_mut(f).unwrap().clip = false;
         f

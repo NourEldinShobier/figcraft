@@ -134,7 +134,10 @@ fn one_shared_segment() -> VectorNetwork {
         vertices: vec![Vertex::new(0.0, 0.0), Vertex::new(100.0, 0.0)],
         segments: vec![Segment { a: 0, b: 1, ta: (0.0, -60.0), tb: (0.0, -60.0) }],
         strokes: Default::default(),
-        regions: vec![Region { loops: vec![vec![0]], winding: WindingRule::NonZero, fills: None }, Region { loops: vec![vec![0]], winding: WindingRule::NonZero, fills: None }],
+        regions: vec![
+            Region { loops: vec![vec![0]], winding: WindingRule::NonZero, fills: None },
+            Region { loops: vec![vec![0]], winding: WindingRule::NonZero, fills: None },
+        ],
     }
 }
 

@@ -129,7 +129,10 @@ fn variable_defs(doc: &Document, root: NodeId) -> BTreeMap<String, String> {
 fn depth_arg(cmd: &str, p: &Value, default: usize) -> crate::Result<usize> {
     match get(p, "depth") {
         None | Some(Value::Null) => Ok(default),
-        Some(v) => f64_of(v).filter(|d| (0.0..=MAX_DEPTH as f64).contains(d)).map(|d| d as usize).ok_or_else(|| bad(cmd, format!("`depth` must be 0 to {MAX_DEPTH}"))),
+        Some(v) => f64_of(v)
+            .filter(|d| (0.0..=MAX_DEPTH as f64).contains(d))
+            .map(|d| d as usize)
+            .ok_or_else(|| bad(cmd, format!("`depth` must be 0 to {MAX_DEPTH}"))),
     }
 }
 
@@ -158,7 +161,13 @@ fn fuzzy(hay: &str, q: &str) -> Option<f64> {
     }
     if let Some(pos) = h.find(q) {
         let word_start = h[..pos].chars().last().is_none_or(|c| !c.is_alphanumeric());
-        return Some(if pos == 0 { 90.0 } else if word_start { 80.0 } else { 70.0 });
+        return Some(if pos == 0 {
+            90.0
+        } else if word_start {
+            80.0
+        } else {
+            70.0
+        });
     }
     let want: Vec<char> = q.chars().collect();
     let (mut next, mut first, mut last) = (0usize, 0usize, 0usize);
@@ -207,7 +216,10 @@ pub fn specs() -> Vec<CommandSpec> {
                 let depth = depth_arg(cmd, p, 4)?;
                 let max = match get(p, "maxNodes") {
                     None | Some(Value::Null) => DEFAULT_NODES,
-                    Some(v) => f64_of(v).filter(|n| (1.0..=MAX_NODES as f64).contains(n)).map(|n| n as usize).ok_or_else(|| bad(cmd, "`maxNodes` must be 1 to 5000"))?,
+                    Some(v) => f64_of(v)
+                        .filter(|n| (1.0..=MAX_NODES as f64).contains(n))
+                        .map(|n| n as usize)
+                        .ok_or_else(|| bad(cmd, "`maxNodes` must be 1 to 5000"))?,
                 };
                 let (xml, nodes, truncated) = metadata_of(s.doc()?, id, depth, max);
                 Ok(json!({"xml": xml, "nodes": nodes, "truncated": truncated}))
@@ -268,7 +280,10 @@ pub fn specs() -> Vec<CommandSpec> {
                 let q = string(p, "query").unwrap_or_default().to_lowercase();
                 let limit = match get(p, "limit") {
                     None | Some(Value::Null) => 25,
-                    Some(v) => f64_of(v).filter(|n| (1.0..=MAX_HITS as f64).contains(n)).map(|n| n as usize).ok_or_else(|| bad(cmd, "`limit` must be 1 to 200"))?,
+                    Some(v) => f64_of(v)
+                        .filter(|n| (1.0..=MAX_HITS as f64).contains(n))
+                        .map(|n| n as usize)
+                        .ok_or_else(|| bad(cmd, "`limit` must be 1 to 200"))?,
                 };
                 let doc = s.doc()?;
                 let mut components = Vec::new();
@@ -279,7 +294,11 @@ pub fn specs() -> Vec<CommandSpec> {
                         if n.parent.and_then(|pp| doc.node(pp)).is_some_and(|pp| matches!(pp.kind, NodeKind::ComponentSet { .. })) {
                             continue;
                         }
-                        let variants: Vec<&Node> = if matches!(n.kind, NodeKind::ComponentSet { .. }) { n.children.iter().filter_map(|c| doc.node(*c)).collect() } else { Vec::new() };
+                        let variants: Vec<&Node> = if matches!(n.kind, NodeKind::ComponentSet { .. }) {
+                            n.children.iter().filter_map(|c| doc.node(*c)).collect()
+                        } else {
+                            Vec::new()
+                        };
                         let mut found = best([("name", n.name.as_str(), 1.0), ("description", description.as_str(), 0.5)], &q);
                         let mut variant = None;
                         for v in &variants {

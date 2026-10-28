@@ -29,7 +29,8 @@ impl ControlToken {
         if std::env::var_os("FIGCRAFT_CONTROL_TOKEN").is_some() {
             return Self::from_env();
         }
-        let path = token_path(port).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no per-user directory for the control token; set FIGCRAFT_CONTROL_TOKEN"))?;
+        let path = token_path(port)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no per-user directory for the control token; set FIGCRAFT_CONTROL_TOKEN"))?;
         let mut raw = [0u8; 32];
         getrandom::fill(&mut raw).map_err(|e| io::Error::other(format!("no secure random numbers: {e}")))?;
         let token = Self::new(&base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, raw))?;
@@ -43,9 +44,11 @@ impl ControlToken {
         if std::env::var_os("FIGCRAFT_CONTROL_TOKEN").is_some() {
             return Self::from_env();
         }
-        let path = token_path(port).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no per-user directory for the control token; set FIGCRAFT_CONTROL_TOKEN"))?;
-        let text = std::fs::read_to_string(&path)
-            .map_err(|e| io::Error::new(e.kind(), format!("no control token: FIGCRAFT_CONTROL_TOKEN is unset and {} is unreadable: {e}", path.display())))?;
+        let path = token_path(port)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no per-user directory for the control token; set FIGCRAFT_CONTROL_TOKEN"))?;
+        let text = std::fs::read_to_string(&path).map_err(|e| {
+            io::Error::new(e.kind(), format!("no control token: FIGCRAFT_CONTROL_TOKEN is unset and {} is unreadable: {e}", path.display()))
+        })?;
         Self::new(text.trim())
     }
 

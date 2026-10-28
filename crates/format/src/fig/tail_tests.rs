@@ -369,7 +369,12 @@ fn segment_settings_that_change_nothing_are_not_reported() {
 fn regions_keep_the_fill_paints_of_their_own() {
     let blob = network::encode(&Network {
         vertices: vec![vtx(0, 0.0, 0.0), vtx(0, 50.0, 0.0), vtx(0, 50.0, 50.0), vtx(0, 0.0, 50.0)],
-        segments: vec![seg(0, 1, (0.0, 0.0), (0.0, 0.0)), seg(1, 2, (0.0, 0.0), (0.0, 0.0)), seg(2, 3, (0.0, 0.0), (0.0, 0.0)), seg(3, 0, (0.0, 0.0), (0.0, 0.0))],
+        segments: vec![
+            seg(0, 1, (0.0, 0.0), (0.0, 0.0)),
+            seg(1, 2, (0.0, 0.0), (0.0, 0.0)),
+            seg(2, 3, (0.0, 0.0), (0.0, 0.0)),
+            seg(3, 0, (0.0, 0.0), (0.0, 0.0)),
+        ],
         regions: vec![Region { style: 9, non_zero: true, loops: vec![vec![0, 1, 2, 3]] }],
     });
     let mut message = tail_message();

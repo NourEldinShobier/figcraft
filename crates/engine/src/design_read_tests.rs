@@ -94,7 +94,10 @@ fn variable_defs_follow_the_layers_mode() {
 fn design_context_bundles_code_properties_variables_and_outline() {
     let (mut s, f, _) = card();
     let out = s.execute("inspect.designContext", &json!({"id": f, "language": "css"})).unwrap();
-    assert_eq!((out["id"].as_u64(), out["name"].as_str(), out["type"].as_str(), out["language"].as_str()), (Some(f.0), Some("Card <1>"), Some("FRAME"), Some("css")));
+    assert_eq!(
+        (out["id"].as_u64(), out["name"].as_str(), out["type"].as_str(), out["language"].as_str()),
+        (Some(f.0), Some("Card <1>"), Some("FRAME"), Some("css"))
+    );
     assert!(out["code"].as_str().unwrap().contains("width: 100px"), "{}", out["code"]);
     assert_eq!(out["codeTruncated"], false);
     assert_eq!(out["variables"], json!({"color/brand": "#3366FF", "radius/sm": "6"}));
@@ -113,10 +116,16 @@ fn search_finds_components_variables_and_styles_by_text() {
     s.execute("component.create", &json!({"ids": [f]})).unwrap();
     s.execute("style.create", &json!({"type": "paint", "name": "Brand/Blue", "from": f})).ok();
     let all = s.execute("inspect.searchDesignSystem", &json!({"query": "BRAND"})).unwrap();
-    assert_eq!(all["variables"], json!([{"id": all["variables"][0]["id"], "name": "color/brand", "collection": "Tokens", "type": "color", "value": "#3366FF", "score": 80.0, "matchedOn": "name"}]));
+    assert_eq!(
+        all["variables"],
+        json!([{"id": all["variables"][0]["id"], "name": "color/brand", "collection": "Tokens", "type": "color", "value": "#3366FF", "score": 80.0, "matchedOn": "name"}])
+    );
     assert_eq!(all["components"].as_array().unwrap().len(), 0);
     let comps = s.execute("inspect.searchDesignSystem", &json!({"query": "card", "types": ["component"]})).unwrap();
-    assert_eq!((comps["components"].as_array().unwrap().len(), comps["variables"].as_array().unwrap().len(), comps["total"].as_u64()), (1, 0, Some(1)));
+    assert_eq!(
+        (comps["components"].as_array().unwrap().len(), comps["variables"].as_array().unwrap().len(), comps["total"].as_u64()),
+        (1, 0, Some(1))
+    );
     assert_eq!(comps["components"][0]["name"], "Card <1>");
     assert_eq!(comps["components"][0]["type"], "COMPONENT");
     let limited = s.execute("inspect.searchDesignSystem", &json!({"query": "", "types": "variable", "limit": 1})).unwrap();

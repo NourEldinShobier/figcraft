@@ -21,8 +21,22 @@ const MAX_ISSUES: usize = 500;
 const MAX_ICONS: usize = 2000;
 const MAX_DEPTH: usize = 4;
 const SHAPES: [&str; 7] = ["RECTANGLE", "ELLIPSE", "POLYGON", "STAR", "LINE", "VECTOR", "BOOLEAN_OPERATION"];
-const DEFAULT_NAMES: [&str; 14] =
-    ["frame", "group", "vector", "rectangle", "ellipse", "line", "polygon", "star", "component", "instance", "union", "subtract", "intersect", "exclude"];
+const DEFAULT_NAMES: [&str; 14] = [
+    "frame",
+    "group",
+    "vector",
+    "rectangle",
+    "ellipse",
+    "line",
+    "polygon",
+    "star",
+    "component",
+    "instance",
+    "union",
+    "subtract",
+    "intersect",
+    "exclude",
+];
 
 fn label<T: Serialize>(v: &T) -> String {
     serde_json::to_value(v).ok().and_then(|x| x.as_str().map(str::to_string)).unwrap_or_default()
@@ -83,7 +97,13 @@ fn collect_leaves(doc: &Document, id: NodeId, origin: (f64, f64), out: &mut Vec<
             id,
             name: n.name.clone(),
             weight: stroked.then_some(n.stroke.weight),
-            cap: stroked.then(|| if n.stroke.cap_start == n.stroke.cap_end { label(&n.stroke.cap_start) } else { format!("{}/{}", label(&n.stroke.cap_start), label(&n.stroke.cap_end)) }),
+            cap: stroked.then(|| {
+                if n.stroke.cap_start == n.stroke.cap_end {
+                    label(&n.stroke.cap_start)
+                } else {
+                    format!("{}/{}", label(&n.stroke.cap_start), label(&n.stroke.cap_end))
+                }
+            }),
             join: stroked.then(|| label(&n.stroke.join)),
             radius: n.corners.uniform().filter(|r| *r > 0.0 && matches!(n.kind, NodeKind::Rectangle)),
             colors,
@@ -103,7 +123,10 @@ fn find_icons(doc: &Document, id: NodeId, grid: f64, depth: usize, out: &mut Vec
         return;
     }
     let shape = SHAPES.contains(&n.kind.type_name());
-    let small_box = !n.children.is_empty() && n.width <= grid * 2.0 + 1e-6 && n.height <= grid * 2.0 + 1e-6 && (n.kind.is_frame_like() || matches!(n.kind, NodeKind::Group));
+    let small_box = !n.children.is_empty()
+        && n.width <= grid * 2.0 + 1e-6
+        && n.height <= grid * 2.0 + 1e-6
+        && (n.kind.is_frame_like() || matches!(n.kind, NodeKind::Group));
     if shape || small_box {
         let origin = doc.world_bounds(id).map_or((0.0, 0.0), |b| (b.x0, b.y0));
         let mut leaves = Vec::new();
@@ -154,7 +177,17 @@ struct Report {
 
 impl Report {
     #[allow(clippy::too_many_arguments)]
-    fn add(&mut self, rule: &'static str, severity: &str, id: NodeId, name: &str, message: String, found: Value, expected: Value, fix: Option<Value>) {
+    fn add(
+        &mut self,
+        rule: &'static str,
+        severity: &str,
+        id: NodeId,
+        name: &str,
+        message: String,
+        found: Value,
+        expected: Value,
+        fix: Option<Value>,
+    ) {
         self.total += 1;
         *self.counts.entry(rule).or_default() += 1;
         if self.issues.len() < MAX_ISSUES {
@@ -180,14 +213,18 @@ fn lint(doc: &Document, ids: &[NodeId], p: &Value) -> crate::Result<Value> {
     let positive = |key: &str, default: f64| -> crate::Result<f64> {
         match get(p, key) {
             None | Some(Value::Null) => Ok(default),
-            Some(v) => f64_of(v).filter(|n| n.is_finite() && *n > 0.0 && *n <= 4096.0).ok_or_else(|| bad(cmd, format!("`{key}` must be a number above 0 (up to 4096)"))),
+            Some(v) => f64_of(v)
+                .filter(|n| n.is_finite() && *n > 0.0 && *n <= 4096.0)
+                .ok_or_else(|| bad(cmd, format!("`{key}` must be a number above 0 (up to 4096)"))),
         }
     };
     let grid = positive("grid", 24.0)?;
     let tol = positive("tolerance", 0.02)?;
     let pad = match get(p, "padding") {
         None | Some(Value::Null) => grid / 12.0,
-        Some(v) => f64_of(v).filter(|n| n.is_finite() && *n >= 0.0 && *n < grid / 2.0).ok_or_else(|| bad(cmd, "`padding` must be a number from 0 to half the grid"))?,
+        Some(v) => f64_of(v)
+            .filter(|n| n.is_finite() && *n >= 0.0 && *n < grid / 2.0)
+            .ok_or_else(|| bad(cmd, "`padding` must be a number from 0 to half the grid"))?,
     };
     let given_weight = match get(p, "strokeWeight") {
         None | Some(Value::Null) => None,
@@ -233,7 +270,16 @@ fn lint(doc: &Document, ids: &[NodeId], p: &Value) -> crate::Result<Value> {
             );
         }
         if is_default_name(&icon.name) {
-            r.add("naming", "warning", icon.id, &icon.name, "the icon has a default name".into(), json!(icon.name), json!("a descriptive name, e.g. \"arrow-left\""), None);
+            r.add(
+                "naming",
+                "warning",
+                icon.id,
+                &icon.name,
+                "the icon has a default name".into(),
+                json!(icon.name),
+                json!("a descriptive name, e.g. \"arrow-left\""),
+                None,
+            );
         } else if seen.get(&icon.name.to_lowercase()).is_some_and(|n| *n > 1) {
             r.add("naming", "error", icon.id, &icon.name, "another icon has this name".into(), json!(icon.name), json!("a unique name"), None);
         } else if let (Some(m), style) = (&name_mode, name_style(&icon.name))
@@ -247,7 +293,16 @@ fn lint(doc: &Document, ids: &[NodeId], p: &Value) -> crate::Result<Value> {
             if let (Some(w), Some(want)) = (l.weight, &weight)
                 && r3(w).to_string() != *want
             {
-                r.add("stroke-width", "error", l.id, &l.name, format!("stroke width {} where the set uses {want}", r3(w)), json!(r3(w)), json!(want.parse::<f64>().unwrap_or_default()), want.parse::<f64>().ok().map(|v| set_fix(l.id, json!({"strokeWeight": v}))));
+                r.add(
+                    "stroke-width",
+                    "error",
+                    l.id,
+                    &l.name,
+                    format!("stroke width {} where the set uses {want}", r3(w)),
+                    json!(r3(w)),
+                    json!(want.parse::<f64>().unwrap_or_default()),
+                    want.parse::<f64>().ok().map(|v| set_fix(l.id, json!({"strokeWeight": v}))),
+                );
             }
             if let (Some(c), Some(want)) = (&l.cap, &cap)
                 && c != want
@@ -258,17 +313,44 @@ fn lint(doc: &Document, ids: &[NodeId], p: &Value) -> crate::Result<Value> {
             if let (Some(j), Some(want)) = (&l.join, &join)
                 && j != want
             {
-                r.add("stroke-join", "error", l.id, &l.name, format!("{j} joins where the set uses {want}"), json!(j), json!(want), Some(set_fix(l.id, json!({"strokeJoin": want}))));
+                r.add(
+                    "stroke-join",
+                    "error",
+                    l.id,
+                    &l.name,
+                    format!("{j} joins where the set uses {want}"),
+                    json!(j),
+                    json!(want),
+                    Some(set_fix(l.id, json!({"strokeJoin": want}))),
+                );
             }
             if let (Some(rad), Some(want)) = (l.radius, &radius)
                 && r3(rad).to_string() != *want
             {
-                r.add("corner-radius", "warning", l.id, &l.name, format!("corner radius {} where the set uses {want}", r3(rad)), json!(r3(rad)), json!(want.parse::<f64>().unwrap_or_default()), want.parse::<f64>().ok().map(|v| set_fix(l.id, json!({"cornerRadius": v}))));
+                r.add(
+                    "corner-radius",
+                    "warning",
+                    l.id,
+                    &l.name,
+                    format!("corner radius {} where the set uses {want}", r3(rad)),
+                    json!(r3(rad)),
+                    json!(want.parse::<f64>().unwrap_or_default()),
+                    want.parse::<f64>().ok().map(|v| set_fix(l.id, json!({"cornerRadius": v}))),
+                );
             }
             if let Some(want) = &color {
                 for (kind, c) in &l.colors {
                     if c != want {
-                        r.add("color", "warning", l.id, &l.name, format!("{kind} colour {c} where the set uses {want}"), json!(c), json!(want), Some(set_fix(l.id, Value::Object(std::iter::once((kind.to_string(), json!(want))).collect()))));
+                        r.add(
+                            "color",
+                            "warning",
+                            l.id,
+                            &l.name,
+                            format!("{kind} colour {c} where the set uses {want}"),
+                            json!(c),
+                            json!(want),
+                            Some(set_fix(l.id, Value::Object(std::iter::once((kind.to_string(), json!(want))).collect()))),
+                        );
                     }
                 }
             }
@@ -292,7 +374,14 @@ fn lint(doc: &Document, ids: &[NodeId], p: &Value) -> crate::Result<Value> {
                     "warning",
                     l.id,
                     &l.name,
-                    format!("edges at x {}..{}, y {}..{} are off the {} pixel grid", r3(b.x0), r3(b.x1), r3(b.y0), r3(b.y1), if odd { "half" } else { "whole" }),
+                    format!(
+                        "edges at x {}..{}, y {}..{} are off the {} pixel grid",
+                        r3(b.x0),
+                        r3(b.x1),
+                        r3(b.y0),
+                        r3(b.y1),
+                        if odd { "half" } else { "whole" }
+                    ),
                     json!({"x0": r3(b.x0), "y0": r3(b.y0), "x1": r3(b.x1), "y1": r3(b.y1)}),
                     json!(if odd { "multiples of 0.5 + 0.5" } else { "whole numbers" }),
                     fix,
@@ -307,7 +396,11 @@ fn lint(doc: &Document, ids: &[NodeId], p: &Value) -> crate::Result<Value> {
                     "warning",
                     icon.id,
                     &icon.name,
-                    format!("the art (with strokes) comes within {} of an edge; the live area keeps {} free", r3(m.iter().copied().fold(f64::MAX, f64::min)), r3(pad)),
+                    format!(
+                        "the art (with strokes) comes within {} of an edge; the live area keeps {} free",
+                        r3(m.iter().copied().fold(f64::MAX, f64::min)),
+                        r3(pad)
+                    ),
                     json!({"left": r3(m[0]), "top": r3(m[1]), "right": r3(m[2]), "bottom": r3(m[3])}),
                     json!(format!("at least {} on every side", r3(pad))),
                     None,

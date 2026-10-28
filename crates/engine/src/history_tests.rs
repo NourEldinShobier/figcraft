@@ -10,8 +10,9 @@ fn id(v: &Value) -> figcraft_doc::NodeId {
 }
 
 fn six_icons(s: &mut Session) -> Value {
-    let steps: Vec<Value> =
-        (0..6).map(|i| json!({"command": "shape.rectangle", "params": {"x": i * 30, "y": 0, "width": 24, "height": 24, "name": format!("icon{i}")}})).collect();
+    let steps: Vec<Value> = (0..6)
+        .map(|i| json!({"command": "shape.rectangle", "params": {"x": i * 30, "y": 0, "width": 24, "height": 24, "name": format!("icon{i}")}}))
+        .collect();
     s.execute("command.batch", &json!({"label": "Add 6 icons", "commands": steps})).unwrap()
 }
 
@@ -144,7 +145,10 @@ fn search_finds_a_component_set_by_a_variant_name_and_by_loose_letters() {
 
     let by_variant = s.execute("inspect.searchDesignSystem", &json!({"query": "state=def", "types": ["component"]})).unwrap();
     let hit = &by_variant["components"][0];
-    assert_eq!((hit["name"].as_str(), hit["matchedOn"].as_str(), hit["matchedVariant"]["name"].as_str()), (Some("Row"), Some("variant"), Some("State=Default")));
+    assert_eq!(
+        (hit["name"].as_str(), hit["matchedOn"].as_str(), hit["matchedVariant"]["name"].as_str()),
+        (Some("Row"), Some("variant"), Some("State=Default"))
+    );
     assert_eq!(hit["score"], 81.0);
     assert_eq!(by_variant["semantic"], false);
 

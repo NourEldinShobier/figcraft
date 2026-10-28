@@ -357,7 +357,9 @@ impl<'s> Decoder<'s, '_> {
                     }
                     // Field ids usually run 1, 2, 3, …: try the slot before the scan of ~200 fields.
                     let guess = (id as usize).checked_sub(1).and_then(|i| d.fields.get(i)).filter(|f| f.value == id);
-                    let f = guess.or_else(|| d.fields.iter().find(|f| f.value == id)).ok_or_else(|| KiwiError(format!("message: {} has no field {id}", d.name)))?;
+                    let f = guess
+                        .or_else(|| d.fields.iter().find(|f| f.value == id))
+                        .ok_or_else(|| KiwiError(format!("message: {} has no field {id}", d.name)))?;
                     let value = self.field(f, depth)?;
                     // Read to move past it, but not kept (see [`UNUSED_FIELDS`]).
                     if !UNUSED_FIELDS.contains(&f.name.as_str()) {

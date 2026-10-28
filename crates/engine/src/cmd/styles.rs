@@ -86,7 +86,10 @@ pub fn specs() -> Vec<CommandSpec> {
                         || n.kind.text().is_some_and(|t| t.links_text_style(&sid)))
                 {
                     let n = doc.get_mut(nid)?;
-                    for r in { let st = &mut *n.styles; [&mut st.fill, &mut st.stroke, &mut st.effect, &mut st.grid, &mut st.text] } {
+                    for r in {
+                        let st = &mut *n.styles;
+                        [&mut st.fill, &mut st.stroke, &mut st.effect, &mut st.grid, &mut st.text]
+                    } {
                         if r.as_deref() == Some(sid.as_str()) {
                             *r = None;
                         }

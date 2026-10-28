@@ -295,7 +295,8 @@ fn baseline_alignment_horizontal() {
     let mut d = Document::new("t");
     let p = d.first_page().unwrap();
     let f = d.create(p, NodeKind::Frame, "F", 0.0, 0.0, 10.0, 10.0).unwrap();
-    d.get_mut(f).unwrap().layout = Some(Box::new(AutoLayout { padding: [5.0; 4], gap: 0.0, cross_align: CrossAlign::Baseline, ..Default::default() }));
+    d.get_mut(f).unwrap().layout =
+        Some(Box::new(AutoLayout { padding: [5.0; 4], gap: 0.0, cross_align: CrossAlign::Baseline, ..Default::default() }));
     d.get_mut(f).unwrap().child_layout.sizing_v = Sizing::Hug;
     let small = text(&mut d, f, "small");
     let big = text(&mut d, f, "big");
@@ -310,7 +311,8 @@ fn baseline_alignment_horizontal() {
     assert_eq!(d.node(f).unwrap().height, 50.0);
     // Nested auto layout frames align on their first child's baseline.
     let outer = d.create(p, NodeKind::Frame, "O", 0.0, 0.0, 400.0, 100.0).unwrap();
-    d.get_mut(outer).unwrap().layout = Some(Box::new(AutoLayout { padding: [0.0; 4], gap: 0.0, cross_align: CrossAlign::Baseline, ..Default::default() }));
+    d.get_mut(outer).unwrap().layout =
+        Some(Box::new(AutoLayout { padding: [0.0; 4], gap: 0.0, cross_align: CrossAlign::Baseline, ..Default::default() }));
     d.reparent(f, outer, None).unwrap();
     let t2 = text(&mut d, outer, "t2");
     let m = FakeMeasure([(small, (30.0, 14.0, 10.0)), (big, (60.0, 40.0, 30.0)), (t2, (20.0, 60.0, 50.0))].into_iter().collect());

@@ -1290,7 +1290,6 @@ mod handoff_tests;
 mod ids_tests;
 #[cfg(test)]
 mod print_tests;
-mod size_tests;
 #[cfg(test)]
 mod proto_expr_mode_tests;
 #[cfg(test)]
@@ -1299,6 +1298,7 @@ mod proto_expr_parse_tests;
 mod proto_expr_tests;
 #[cfg(test)]
 mod proto_overlay_anchor_tests;
+mod size_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

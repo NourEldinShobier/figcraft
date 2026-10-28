@@ -92,8 +92,6 @@ mod home_recents_tests;
 #[cfg(test)]
 mod home_tests;
 #[cfg(test)]
-mod pending_open_tests;
-#[cfg(test)]
 mod idle_tests;
 #[cfg(test)]
 mod ime_tests;
@@ -154,6 +152,8 @@ mod panels;
 mod paste_image_tests;
 #[cfg(test)]
 mod pen_mode_tests;
+#[cfg(test)]
+mod pending_open_tests;
 #[cfg(test)]
 mod perf_tests;
 #[cfg(test)]

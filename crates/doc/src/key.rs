@@ -53,10 +53,7 @@ impl Document {
 
     /// A free key near `key`: `key-2`, `key-3`, …
     pub fn free_key(&self, key: &str) -> String {
-        (2..)
-            .map(|i| format!("{key}-{i}"))
-            .find(|k| self.node_by_key(k).is_none())
-            .unwrap_or_else(|| key.to_string())
+        (2..).map(|i| format!("{key}-{i}")).find(|k| self.node_by_key(k).is_none()).unwrap_or_else(|| key.to_string())
     }
 }
 

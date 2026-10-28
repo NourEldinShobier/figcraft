@@ -108,7 +108,8 @@ pub(crate) fn make_table(doc: &mut Document, parent: NodeId, at: (f64, f64), tex
         n.corners.radii = [4.0; 4];
         n.clip = true;
         // The outline draws over the rows' edges rather than taking room from them.
-        n.layout = Some(Box::new(AutoLayout { mode: LayoutMode::Vertical, gap: 0.0, padding: [0.0; 4], strokes_included: false, ..AutoLayout::default() }));
+        n.layout =
+            Some(Box::new(AutoLayout { mode: LayoutMode::Vertical, gap: 0.0, padding: [0.0; 4], strokes_included: false, ..AutoLayout::default() }));
         n.child_layout.sizing_v = Sizing::Hug;
         n.board = Some(BoardItem::Table);
     })?;

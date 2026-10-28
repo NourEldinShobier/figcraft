@@ -760,7 +760,8 @@ fn the_fig_import_sets_its_own_layer_cap() {
 #[test]
 fn packed_layers_read_back_exactly() {
     // Floats at the edge of f64 precision, negative zero, large integers and 250 levels of nesting.
-    let mut layer = json!({"id": "1:1", "type": "RECTANGLE", "name": "Ünï\u{1F600}", "a": 0.1 + 0.2, "b": -0.0, "c": 1e-300, "d": u64::MAX, "e": i64::MIN});
+    let mut layer =
+        json!({"id": "1:1", "type": "RECTANGLE", "name": "Ünï\u{1F600}", "a": 0.1 + 0.2, "b": -0.0, "c": 1e-300, "d": u64::MAX, "e": i64::MIN});
     for i in 0..250 {
         layer = json!({"id": format!("n:{i}"), "type": "FRAME", "children": [layer]});
     }

@@ -7,8 +7,8 @@ use figcraft_format::source::{Imported, attach_image, export_source, import_sour
 use serde_json::{Value, json};
 
 use super::load::{import_summary, read_capped, write};
-use crate::params::*;
 use crate::cmd::CommandSpec;
+use crate::params::*;
 use crate::{DocState, EngineError, Result, Session, bad, file_access, spec};
 
 /// Longest source text read.

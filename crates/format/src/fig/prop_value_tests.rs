@@ -196,7 +196,13 @@ fn swap_message(icon_fields: Vec<(&'static str, Kv<'static>)>, row: Vec<(&'stati
     let mut row_fields = vec![("guidPath", o(vec![("guids", Kv::Array(vec![g(13)]))]))];
     row_fields.extend(row);
     message(vec![
-        node(10, "SYMBOL", "Button", Some(2), vec![("componentPropDefs", Kv::Array(vec![definition(72, "Icon", "INSTANCE_SWAP", o(vec![("guidValue", g(40))]))]))]),
+        node(
+            10,
+            "SYMBOL",
+            "Button",
+            Some(2),
+            vec![("componentPropDefs", Kv::Array(vec![definition(72, "Icon", "INSTANCE_SWAP", o(vec![("guidValue", g(40))]))]))],
+        ),
         node(13, "INSTANCE", "Icon", Some(10), icon),
         node(40, "SYMBOL", "Mail", Some(2), vec![]),
         node(41, "SYMBOL", "Card", Some(2), vec![]),
@@ -207,7 +213,10 @@ fn swap_message(icon_fields: Vec<(&'static str, Kv<'static>)>, row: Vec<(&'stati
             Some(2),
             vec![
                 ("symbolData", o(vec![("symbolID", g(10)), ("symbolOverrides", Kv::Array(vec![o(row_fields)]))])),
-                ("componentPropAssignments", Kv::Array(vec![variable_assignment(72, "SYMBOL_ID", o(vec![("symbolIdValue", o(vec![("guid", g(41))]))]))])),
+                (
+                    "componentPropAssignments",
+                    Kv::Array(vec![variable_assignment(72, "SYMBOL_ID", o(vec![("symbolIdValue", o(vec![("guid", g(41))]))]))]),
+                ),
             ],
         ),
     ])
@@ -238,7 +247,13 @@ fn a_text_style_linked_by_asset_key_beats_the_layers_own_copy() {
     let text = |id: u32, name: &str, version: &str| {
         node(id, "TEXT", name, Some(2), vec![("textData", o(vec![("characters", s("Hi"))])), ("fontSize", Kv::Float(12.0)), link(version)])
     };
-    let style = node(30, "TEXT", "Heading", Some(2), vec![("styleType", Kv::Enum("TEXT")), ("key", s("abc")), ("version", s("7")), ("fontSize", Kv::Float(30.0))]);
+    let style = node(
+        30,
+        "TEXT",
+        "Heading",
+        Some(2),
+        vec![("styleType", Kv::Enum("TEXT")), ("key", s("abc")), ("version", s("7")), ("fontSize", Kv::Float(30.0))],
+    );
     let msg = message(vec![style, text(31, "By asset", "7"), text(32, "Other version", "9")]);
     let (rest, _, _) = to_rest(&msg, "Synthetic", crate::rest::MAX_NODES);
     assert_eq!(by_id(&rest["document"], "9:31")["style"]["fontSize"], 30.0);

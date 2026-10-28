@@ -291,7 +291,10 @@ fn autosave_versions_take_far_less_room_than_full_snapshots() {
             (delta_packed, delta_raw, n) = (delta_packed + f.compressed_size(), delta_raw + f.size(), n + 1);
         }
     }
-    eprintln!("[journal-size] {n} deltas: {delta_packed} B packed, {delta_raw} B raw; meta.json {} B packed", z.by_name(journal::META).unwrap().compressed_size());
+    eprintln!(
+        "[journal-size] {n} deltas: {delta_packed} B packed, {delta_raw} B raw; meta.json {} B packed",
+        z.by_name(journal::META).unwrap().compressed_size()
+    );
     assert!(journal.len() * 4 < full.len(), "journal {} vs full {}", journal.len(), full.len());
     let l = load_bytes_with_versions(&journal).unwrap();
     assert!(l.issues.is_empty(), "{:?}", l.issues);

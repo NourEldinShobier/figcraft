@@ -271,6 +271,8 @@ mod extended_chain_tests;
 #[cfg(test)]
 mod facilitate_tests;
 #[cfg(test)]
+mod feature_request_tests;
+#[cfg(test)]
 mod fig_export_assets_tests;
 #[cfg(test)]
 mod fig_export_tests;
@@ -317,11 +319,11 @@ mod inspect_behaviour_tests;
 #[cfg(test)]
 mod inspect_fields_tests;
 #[cfg(test)]
+mod instance_geometry_tests;
+#[cfg(test)]
 mod instance_modes_tests;
 #[cfg(test)]
 mod instance_resizing_tests;
-#[cfg(test)]
-mod instance_geometry_tests;
 #[cfg(test)]
 mod interaction_rollback_tests;
 #[cfg(test)]
@@ -362,8 +364,6 @@ mod nested_override_tests;
 mod node_find_tests;
 #[cfg(test)]
 mod node_readback_tests;
-#[cfg(test)]
-mod feature_request_tests;
 #[cfg(test)]
 mod node_set_refusals_tests;
 #[cfg(test)]

@@ -451,7 +451,8 @@ impl Gen {
         // the nested button.
         let card = self.node(page, NodeKind::Component { description: String::new(), props: BTreeMap::new() }, "Card");
         // A grid whose second cell holds the nested button.
-        self.doc.node_mut(card).unwrap().layout = Some(Box::new(AutoLayout { mode: LayoutMode::Grid, grid_columns: 2, grid_rows: 1, ..AutoLayout::default() }));
+        self.doc.node_mut(card).unwrap().layout =
+            Some(Box::new(AutoLayout { mode: LayoutMode::Grid, grid_columns: 2, grid_rows: 1, ..AutoLayout::default() }));
         let nested = self.instance(comp, card, BTreeMap::new());
         self.doc.node_mut(nested).unwrap().child_layout.grid_column = Some(1);
         let outer = self.instance(card, page, BTreeMap::new());

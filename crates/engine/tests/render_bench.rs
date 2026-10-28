@@ -64,13 +64,22 @@ fn render_timings() {
             pix.data().hash(&mut hs);
             hashes.push(hs.finish());
             if hashes.len() == 1 {
-                let _ = pix.save_png(format!("{}/bench-{}.png", std::env::var("FIGCRAFT_BENCH_OUT").unwrap_or_else(|_| ".".into()), name.replace('%', "pct").replace(' ', "-")));
+                let _ = pix.save_png(format!(
+                    "{}/bench-{}.png",
+                    std::env::var("FIGCRAFT_BENCH_OUT").unwrap_or_else(|_| ".".into()),
+                    name.replace('%', "pct").replace(' ', "-")
+                ));
             }
         }
         let same = hashes.iter().all(|h| *h == hashes[0]);
         let first = ts[0];
         ts.remove(0);
         ts.sort_by(f64::total_cmp);
-        println!("{name}: first {first:.0} ms, later min {:.0} median {:.0} ms, hash {:x}, repeat-identical {same}", ts[0], ts[ts.len() / 2], hashes[0]);
+        println!(
+            "{name}: first {first:.0} ms, later min {:.0} median {:.0} ms, hash {:x}, repeat-identical {same}",
+            ts[0],
+            ts[ts.len() / 2],
+            hashes[0]
+        );
     }
 }

@@ -46,7 +46,9 @@ fn ok_reply(text: &str) -> Vec<u8> {
 #[test]
 fn an_oversized_reply_is_refused_and_the_next_call_reconnects() {
     let (port, done, fake) = fake_app(vec![vec![b'x'; 200], ok_reply("fine")]);
-    let mut app = Attached::connect_with_token(&format!("127.0.0.1:{port}"), figcraft_collab_net::control_auth::ControlToken::new(&"a".repeat(43)).unwrap()).unwrap();
+    let mut app =
+        Attached::connect_with_token(&format!("127.0.0.1:{port}"), figcraft_collab_net::control_auth::ControlToken::new(&"a".repeat(43)).unwrap())
+            .unwrap();
     app.max_reply = 64;
     let err = app.call("engine.commands", json!({})).unwrap_err();
     assert!(err.contains("reply larger than"), "{err}");
@@ -60,7 +62,9 @@ fn an_oversized_reply_is_refused_and_the_next_call_reconnects() {
 fn a_reply_at_the_limit_is_read() {
     let reply = ok_reply("at the limit");
     let (port, done, fake) = fake_app(vec![reply.clone()]);
-    let mut app = Attached::connect_with_token(&format!("127.0.0.1:{port}"), figcraft_collab_net::control_auth::ControlToken::new(&"a".repeat(43)).unwrap()).unwrap();
+    let mut app =
+        Attached::connect_with_token(&format!("127.0.0.1:{port}"), figcraft_collab_net::control_auth::ControlToken::new(&"a".repeat(43)).unwrap())
+            .unwrap();
     app.max_reply = reply.len() - 1; // the newline doesn't count
     assert_eq!(app.call("engine.commands", json!({})).unwrap(), json!("at the limit"));
     finish(done, fake, 1);
@@ -69,7 +73,9 @@ fn a_reply_at_the_limit_is_read() {
 #[test]
 fn a_reply_that_is_not_utf8_is_an_error() {
     let (port, done, fake) = fake_app(vec![b"{\"ok\": true, \"result\": \"\xff\"}\n".to_vec()]);
-    let mut app = Attached::connect_with_token(&format!("127.0.0.1:{port}"), figcraft_collab_net::control_auth::ControlToken::new(&"a".repeat(43)).unwrap()).unwrap();
+    let mut app =
+        Attached::connect_with_token(&format!("127.0.0.1:{port}"), figcraft_collab_net::control_auth::ControlToken::new(&"a".repeat(43)).unwrap())
+            .unwrap();
     let err = app.call("engine.commands", json!({})).unwrap_err();
     assert!(err.contains("failed"), "{err}");
     assert!(app.conn.is_none());

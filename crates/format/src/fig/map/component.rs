@@ -449,9 +449,12 @@ fn prop_ref_list(v: &View) -> Vec<(String, String)> {
             let def = e.get("variableData")?.get("value")?.get("propRefValue")?.get("defId").and_then(guid)?;
             Some((e.get("variableField").and_then(Kv::str)?, def))
         });
-        let legacy = layer.get("componentPropRefs").map(Kv::list).unwrap_or_default().iter().filter_map(|r| {
-            Some((r.get("componentPropNodeField").and_then(Kv::str)?, r.get("defID").and_then(guid)?))
-        });
+        let legacy = layer
+            .get("componentPropRefs")
+            .map(Kv::list)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|r| Some((r.get("componentPropNodeField").and_then(Kv::str)?, r.get("defID").and_then(guid)?)));
         for (field, def) in entries.chain(legacy) {
             if !out.iter().any(|(f, _)| f == field) {
                 out.push((field.to_string(), def));

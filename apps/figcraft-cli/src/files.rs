@@ -246,9 +246,8 @@ pub fn export(file: &str, out: &str, t: &Target) -> CliResult<ExitCode> {
     let page = page_named(&doc, t.page.as_deref())?;
     let (scale, node, print) = (t.scale, t.node.as_deref(), &t.print);
     let fmt = match t.format.as_deref() {
-        Some(f) => {
-            image_format(&f.to_ascii_lowercase()).ok_or_else(|| CliError::Usage(format!("unknown --format `{f}` (png|jpg|svg|webp|pdf|xml|fig|source)")))?
-        }
+        Some(f) => image_format(&f.to_ascii_lowercase())
+            .ok_or_else(|| CliError::Usage(format!("unknown --format `{f}` (png|jpg|svg|webp|pdf|xml|fig|source)")))?,
         None => image_format(&ext(out)).unwrap_or(ExportFormat::Png),
     };
     let target = node.map(|q| find_node(&doc, page, q)).transpose()?;

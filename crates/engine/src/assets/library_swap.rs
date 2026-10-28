@@ -199,7 +199,10 @@ pub fn swap_library(doc: &mut Document, from: &str, to: &PublishedLibrary) -> Re
     let ids: Vec<NodeId> = doc.nodes().filter(|n| outside(doc, n.id)).map(|n| n.id).collect();
     for id in ids {
         let Ok(n) = doc.get_mut(id) else { continue };
-        for r in { let st = &mut *n.styles; [&mut st.fill, &mut st.stroke, &mut st.effect, &mut st.grid, &mut st.text] } {
+        for r in {
+            let st = &mut *n.styles;
+            [&mut st.fill, &mut st.stroke, &mut st.effect, &mut st.grid, &mut st.text]
+        } {
             if let Some(b) = r.as_ref().and_then(|s| styles.get(s)) {
                 *r = Some(b.clone());
             }

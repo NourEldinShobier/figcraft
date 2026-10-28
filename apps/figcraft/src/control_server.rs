@@ -92,7 +92,6 @@ fn spawn_connection(
     workers: &mut Vec<std::thread::JoinHandle<()>>,
     timeout: Duration,
 ) {
-
     workers.retain(|worker| !worker.is_finished());
     if workers.len() >= MAX_CONNECTIONS {
         return;

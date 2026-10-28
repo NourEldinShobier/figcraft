@@ -254,10 +254,8 @@ pub(crate) fn fit_journal<'a>(
 /// Write the chosen versions: keyframes where older readers look for them (`versions/`), and,
 /// when there are deltas, those under `history/` with the metadata that ties them together.
 pub(crate) fn put_journal<W: Write + Seek>(z: &mut zip::ZipWriter<W>, entries: &[(&Version, Kind)]) -> Result<(), FormatError> {
-    let keys: Vec<(&Version, Arc<Packed>)> = entries
-        .iter()
-        .filter_map(|(v, k)| if let Kind::Key(p) = k { Some((*v, p.clone())) } else { None })
-        .collect();
+    let keys: Vec<(&Version, Arc<Packed>)> =
+        entries.iter().filter_map(|(v, k)| if let Kind::Key(p) = k { Some((*v, p.clone())) } else { None }).collect();
     put_versions(z, "versions", &keys)?;
     if keys.len() == entries.len() {
         return Ok(());
@@ -300,7 +298,8 @@ pub(crate) fn read_journal<R: Read + Seek>(
     member: u64,
 ) -> Option<Vec<Version>> {
     z.index_for_name(META)?;
-    let meta = match read_member(z, META, MAX_VERSION_INDEX).and_then(|b| serde_json::from_slice::<Value>(&b).map_err(|e| FormatError::Corrupt(e.to_string())))
+    let meta = match read_member(z, META, MAX_VERSION_INDEX)
+        .and_then(|b| serde_json::from_slice::<Value>(&b).map_err(|e| FormatError::Corrupt(e.to_string())))
     {
         Ok(v) => v,
         Err(e) => {

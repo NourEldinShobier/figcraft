@@ -172,14 +172,26 @@ pub fn specs() -> Vec<CommandSpec> {
             hide_when_publishing
         ),
         spec!("component.detach", "Detach instance", "{ids?}", true, detach),
-        spec!("component.resetInstance", "Reset all changes", "{ids?, size? (true: the instance also goes back to its main's size)}", true, reset_instance),
-        spec!("instance.resetOverrides", "Reset overrides and size", "{ids?}  as component.resetInstance with size: true: layer overrides, property values and the instance's own size reset to the main's", true, |s, p| {
-            let mut q = p.clone();
-            if let Some(o) = q.as_object_mut() {
-                o.insert("size".into(), json!(true));
+        spec!(
+            "component.resetInstance",
+            "Reset all changes",
+            "{ids?, size? (true: the instance also goes back to its main's size)}",
+            true,
+            reset_instance
+        ),
+        spec!(
+            "instance.resetOverrides",
+            "Reset overrides and size",
+            "{ids?}  as component.resetInstance with size: true: layer overrides, property values and the instance's own size reset to the main's",
+            true,
+            |s, p| {
+                let mut q = p.clone();
+                if let Some(o) = q.as_object_mut() {
+                    o.insert("size".into(), json!(true));
+                }
+                reset_instance(s, &q)
             }
-            reset_instance(s, &q)
-        }),
+        ),
         spec!(
             "component.resetOverride",
             "Reset override",

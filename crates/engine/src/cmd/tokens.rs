@@ -204,7 +204,8 @@ fn export_tokens(s: &mut Session, p: &Value) -> Result<Value> {
     };
     match format.as_str() {
         "dtcg" => {
-            let cx = Ctx { doc, roles: Roles::new(doc), paths: doc.variables.collections.iter().map(|c| (c.id.clone(), paths_for(doc, c))).collect() };
+            let cx =
+                Ctx { doc, roles: Roles::new(doc), paths: doc.variables.collections.iter().map(|c| (c.id.clone(), paths_for(doc, c))).collect() };
             let mut files = Vec::new();
             for c in &colls {
                 for m in c.modes.iter().filter(|m| mode_wanted(&only, m)) {
@@ -245,9 +246,13 @@ fn export_tokens(s: &mut Session, p: &Value) -> Result<Value> {
             for c in &colls {
                 for v in doc.variables.variables.iter().filter(|v| v.collection == c.id) {
                     let name = theme.name(v);
-                    for (prefix, section) in
-                        [("--color-", "colors"), ("--radius-", "borderRadius"), ("--text-", "fontSize"), ("--spacing-", "spacing"), ("--font-", "fontFamily")]
-                    {
+                    for (prefix, section) in [
+                        ("--color-", "colors"),
+                        ("--radius-", "borderRadius"),
+                        ("--text-", "fontSize"),
+                        ("--spacing-", "spacing"),
+                        ("--font-", "fontFamily"),
+                    ] {
                         if let Some(key) = name.strip_prefix(prefix) {
                             ext.entry(section).or_default().insert(key.to_string(), json!(format!("var({name})")));
                             break;
@@ -353,7 +358,9 @@ fn parse_dimension(v: &Value) -> Option<f64> {
         }
         Value::String(s) => {
             let t = s.trim();
-            t.strip_suffix("px").map(|n| n.trim().parse().ok()).unwrap_or_else(|| t.strip_suffix("rem").and_then(|n| n.trim().parse::<f64>().ok()).map(|x| x * 16.0))
+            t.strip_suffix("px")
+                .map(|n| n.trim().parse().ok())
+                .unwrap_or_else(|| t.strip_suffix("rem").and_then(|n| n.trim().parse::<f64>().ok()).map(|x| x * 16.0))
         }
         _ => None,
     }
@@ -509,7 +516,8 @@ fn import_tokens(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
     }
-    let ids: BTreeMap<&str, String> = order.iter().filter(|p| kinds.contains_key(*p)).enumerate().map(|(i, p)| (p.as_str(), format!("t{i}"))).collect();
+    let ids: BTreeMap<&str, String> =
+        order.iter().filter(|p| kinds.contains_key(*p)).enumerate().map(|(i, p)| (p.as_str(), format!("t{i}"))).collect();
     let mode_ids: Vec<String> = (0..modes.len()).map(|i| format!("m{i}")).collect();
     let mut values: BTreeMap<&str, Map<String, Value>> = BTreeMap::new();
     for (mi, list) in parsed.iter().enumerate() {

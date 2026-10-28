@@ -1240,7 +1240,12 @@ fn fields_the_import_never_reads_are_not_kept_in_the_tree() {
         defs: vec![Def {
             name: "Message".into(),
             kind: Kind::Message,
-            fields: vec![field("name", Type::Str, 1), field("derivedTextData", Type::Uint, 2), field("editInfo", Type::Str, 3), field("size", Type::Uint, 4)],
+            fields: vec![
+                field("name", Type::Str, 1),
+                field("derivedTextData", Type::Uint, 2),
+                field("editInfo", Type::Str, 3),
+                field("size", Type::Uint, 4),
+            ],
         }],
     };
     let msg = Kv::Object(vec![

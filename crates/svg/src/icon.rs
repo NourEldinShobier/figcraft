@@ -183,7 +183,8 @@ fn bake(e: &mut El) -> bool {
     let moved: Vec<(char, Vec<f64>)> = d
         .into_iter()
         .map(|(c, v)| {
-            let v = v.chunks(2).flat_map(|p| p.first().zip(p.get(1)).map(|(x, y)| apply(&m, *x, *y)).map(|(x, y)| [x, y]).unwrap_or_default()).collect();
+            let v =
+                v.chunks(2).flat_map(|p| p.first().zip(p.get(1)).map(|(x, y)| apply(&m, *x, *y)).map(|(x, y)| [x, y]).unwrap_or_default()).collect();
             (c, v)
         })
         .collect();
@@ -216,7 +217,8 @@ fn clip_is_view(e: &El, w: f64, h: f64) -> bool {
         return false;
     }
     let Some(cmds) = p.attr("d").and_then(parse_path) else { return false };
-    let pts: Vec<(f64, f64)> = cmds.iter().filter(|(c, _)| matches!(c, 'M' | 'L')).filter_map(|(_, v)| v.first().zip(v.get(1)).map(|(x, y)| (*x, *y))).collect();
+    let pts: Vec<(f64, f64)> =
+        cmds.iter().filter(|(c, _)| matches!(c, 'M' | 'L')).filter_map(|(_, v)| v.first().zip(v.get(1)).map(|(x, y)| (*x, *y))).collect();
     cmds.iter().all(|(c, _)| matches!(c, 'M' | 'L' | 'Z'))
         && pts.len() == 4
         && pts.iter().all(|(x, y)| [0.0, w].iter().any(|v| (x - v).abs() < 0.01) && [0.0, h].iter().any(|v| (y - v).abs() < 0.01))
@@ -300,7 +302,9 @@ fn prune_defs(kids: &mut Vec<Node>, used: &str) {
         if let Node::El(e) = k
             && e.name == "defs"
         {
-            e.kids.retain(|d| !matches!(d, Node::El(c) if c.name == "clipPath" && c.attr("id").is_some_and(|id| !used.contains(&format!("url(#{id})")))));
+            e.kids.retain(
+                |d| !matches!(d, Node::El(c) if c.name == "clipPath" && c.attr("id").is_some_and(|id| !used.contains(&format!("url(#{id})")))),
+            );
         }
     }
     kids.retain(|k| !matches!(k, Node::El(e) if e.name == "defs" && e.kids.is_empty()));

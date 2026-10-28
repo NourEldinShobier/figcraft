@@ -12,7 +12,8 @@ fn ex(s: &mut Session, cmd: &str, p: Value) -> Value {
 fn stroke_cap_join_and_width_alias_read_back() {
     let mut s = Session::new();
     let id = ex(&mut s, "node.create", json!({"type": "rectangle", "width": 10, "height": 10}))["id"].clone();
-    let n = ex(&mut s, "node.set", json!({"ids": [id], "props": {"stroke": "#000000", "strokeWidth": 2.5, "strokeCap": "round", "strokeJoin": "round"}}));
+    let n =
+        ex(&mut s, "node.set", json!({"ids": [id], "props": {"stroke": "#000000", "strokeWidth": 2.5, "strokeCap": "round", "strokeJoin": "round"}}));
     drop(n);
     let n = ex(&mut s, "node.get", json!({"id": id}));
     assert_eq!(n["strokeWeight"], 2.5);

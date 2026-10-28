@@ -119,7 +119,8 @@ fn inside_as_far_as_it_exists(path: &Path, roots: &[PathBuf]) -> bool {
 fn is_network_or_device(path: &Path) -> bool {
     let s = path.to_string_lossy();
     // `\\?\C:\...` is a local drive in verbatim form, not a network path.
-    let verbatim_drive = s.strip_prefix("\\\\?\\").map(str::as_bytes).is_some_and(|r| r.first().is_some_and(u8::is_ascii_alphabetic) && r.get(1) == Some(&b':'));
+    let verbatim_drive =
+        s.strip_prefix("\\\\?\\").map(str::as_bytes).is_some_and(|r| r.first().is_some_and(u8::is_ascii_alphabetic) && r.get(1) == Some(&b':'));
     !verbatim_drive && ["\\\\", "//", "\\/", "/\\"].iter().any(|p| s.starts_with(p))
 }
 

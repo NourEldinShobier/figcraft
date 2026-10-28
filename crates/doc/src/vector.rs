@@ -790,7 +790,10 @@ impl VectorNetwork {
             }
         }
         self.segments = out;
-        self.strokes = std::mem::take(&mut self.strokes).into_iter().filter_map(|(i, s)| Some((remap.get(i).copied().filter(|m| *m != usize::MAX)?, s))).collect();
+        self.strokes = std::mem::take(&mut self.strokes)
+            .into_iter()
+            .filter_map(|(i, s)| Some((remap.get(i).copied().filter(|m| *m != usize::MAX)?, s)))
+            .collect();
         for r in &mut self.regions {
             r.loops.retain(|l| l.iter().all(|i| remap.get(*i).is_some_and(|m| *m != usize::MAX)));
             for l in &mut r.loops {

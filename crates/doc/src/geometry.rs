@@ -42,7 +42,12 @@ pub fn shape_path(n: &Node) -> Option<BezPath> {
 pub fn is_open_arc(n: &Node) -> bool {
     match &n.kind {
         NodeKind::Ellipse { sweep, inner, .. } => {
-            sweep.is_finite() && inner.is_finite() && sweep.abs() < std::f64::consts::TAU - 1e-9 && *sweep != 0.0 && *inner <= 0.0 && !n.fills.iter().any(|p| p.visible)
+            sweep.is_finite()
+                && inner.is_finite()
+                && sweep.abs() < std::f64::consts::TAU - 1e-9
+                && *sweep != 0.0
+                && *inner <= 0.0
+                && !n.fills.iter().any(|p| p.visible)
         }
         _ => false,
     }

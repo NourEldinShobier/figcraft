@@ -227,7 +227,15 @@ fn export_writes_one_actual_node_value_and_complete_run_values_without_skip_only
         bound: Default::default(),
     });
     let id = linked_doc
-        .create(linked_doc.first_page().unwrap(), NodeKind::Text(Box::new(TextData { style: local, ..TextData::new("x") })), "Label", 0.0, 0.0, 100.0, 30.0)
+        .create(
+            linked_doc.first_page().unwrap(),
+            NodeKind::Text(Box::new(TextData { style: local, ..TextData::new("x") })),
+            "Label",
+            0.0,
+            0.0,
+            100.0,
+            30.0,
+        )
         .unwrap();
     linked_doc.node_mut(id).unwrap().styles.text = Some("body".into());
     let (bytes, warnings) = export(&linked_doc, None).unwrap();

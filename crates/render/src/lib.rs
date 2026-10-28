@@ -491,9 +491,9 @@ mod band_tests;
 #[cfg(test)]
 mod boolean_cache_tests;
 #[cfg(test)]
-mod bounds_memo_tests;
-#[cfg(test)]
 mod bounds_cache_tests;
+#[cfg(test)]
+mod bounds_memo_tests;
 #[cfg(test)]
 mod dots_tests;
 #[cfg(test)]

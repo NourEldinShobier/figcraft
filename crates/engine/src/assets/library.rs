@@ -818,7 +818,10 @@ fn localize(n: &mut Node, src: &Document, map: &BTreeMap<NodeId, NodeId>, styles
         _ => {}
     }
     if let Some(styles) = styles {
-        for r in { let st = &mut *n.styles; [&mut st.fill, &mut st.stroke, &mut st.effect, &mut st.grid, &mut st.text] } {
+        for r in {
+            let st = &mut *n.styles;
+            [&mut st.fill, &mut st.stroke, &mut st.effect, &mut st.grid, &mut st.text]
+        } {
             *r = r.take().and_then(|s| styles.get(&s).cloned());
         }
         if let NodeKind::Text(t) = &mut n.kind {
