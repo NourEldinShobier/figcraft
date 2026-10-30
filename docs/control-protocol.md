@@ -71,6 +71,13 @@ window, with its tabs, panels and canvas: `engine.execute` acts on the file it s
 last in front (the one the user clicked last, or the last `window.new` / `window.focus`). An
 unknown id is an error.
 
+**Documents.** `engine.execute`, `document.inspect`, `node.get` and `ui.render` take an optional
+`document`: an open file's `id` (from `doc.list`, or `document.inspect`'s `id`) or its path. The
+request acts on that file without bringing its tab to the front; the tab in front comes back
+afterwards unless the command opened or switched to another file itself. A file that isn't open is
+an error, and so is a `document` naming a file behind the tab in front on any other method
+(`ui.screenshot`, `ui.input`, `ui.key`… act on what the window shows).
+
 ## Confining file access
 
 ```sh
@@ -105,7 +112,13 @@ Run any command (the same ids as the menus, shortcuts, Actions palette, CLI and 
 calls never open dialogs: dialog requests are dropped. Returns the command's result (creation
 commands return `{"id": N}`). Paints (`fills`, `strokes`, `paint`) take a colour, the full paint
 JSON or the gradient shorthand `{"type":"linearGradient","stops":["#hex","#hex"],"from"?,"to"?}`
-(as in `docs/mcp.md`).
+(as in `docs/mcp.md`). A parameter the command's doc (`engine.commands`) doesn't list is an error
+naming it and the ones it takes, never ignored; `ids` and `id` are always taken.
+
+`agent` (a string, next to `command`) runs the command for an AI agent of that name, as the MCP
+server does with its client's name: comments it makes are signed "<agent> (agent)" ("AI agent" for
+an empty name), marked `"agent": true`, and keep their own read state. Without it the command acts
+as the user (the name from Preferences).
 
 ```json
 {"token":"<FIGCRAFT_CONTROL_TOKEN>", "id":1,"method":"engine.execute","params":{"command":"shape.rectangle","params":{"x":10,"y":10,"width":100,"height":50}}}
@@ -134,6 +147,26 @@ it and duplicate it:
 ### `engine.commands {}`
 
 Every command: `[{id, label, params, menu, shortcut, undoable}]`.
+
+### `events.poll {after?, timeoutMs?, topics?, limit?}`
+
+Wait for live changes: the app's in-memory event log records `comment.added`, `comment.replied`,
+`comment.edited`, `comment.reacted`, `comment.resolved`, `comment.moved` and `comment.deleted`
+(`topics`: `comments` (default), `document`, `all`). Only comment events are emitted today;
+`document` and `all` are accepted for forward compatibility. Returns pending events after `after`
+at once, otherwise waits up to `timeoutMs` (default 20 000, max 25 000; 0 = no wait):
+
+```json
+{"id":1,"method":"events.poll","params":{"after":41,"timeoutMs":20000}}
+{"id":1,"ok":true,"result":{"events":[{"seq":42,"kind":"comment.added","document":"Checkout","path":"…","data":{"commentId":12}}],"cursor":42,"reset":false,"dropped":0}}
+```
+
+`cursor` is the sequence to pass next; `reset: true` means `after` is ahead of the log (the app
+restarted) and the caller should re-read the comments; `dropped` counts events lost because `after`
+is older than the retained window (1024 events). The method is answered by the control worker
+against the shared log, not by the UI thread, so it does not freeze the app, use a request slot, or
+need a drawn frame: it works while the window is minimised. Other requests on the same connection
+wait until the poll finishes (at most 25 s); use a separate connection to keep editing meanwhile.
 
 ### `document.inspect {depth?, allPages?, fields?, outline?}`
 

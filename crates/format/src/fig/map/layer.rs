@@ -1,7 +1,7 @@
 use super::component::{Entry, Inst, OverrideRow, prop_ref, uniform_scale};
-use super::connector::{connector_has_saved_label, generated_record};
+use super::connector::connector_has_saved_label;
 use super::layout::{layout_grid, tracks};
-use super::paint::{effect, export_setting, paint, paint_bound, stroke};
+use super::paint::{effect, export_setting, has_bound_variables, paint, paint_bound, stroke};
 use super::*;
 use std::fmt::Write as _;
 
@@ -60,6 +60,22 @@ impl Fit {
         let at = if centred { nb.center() } else { figcraft_doc::geom::Point::new(nb.x0, nb.y0) };
         (size, Affine::translate((x0 - at.x, y0 - at.y)) * lin)
     }
+}
+
+struct LayerChildren<'s, 'a> {
+    id: &'s str,
+    inst: Option<&'s Inst<'a>>,
+    base: &'s Kv<'a>,
+    child_space: Affine,
+    view: &'s View<'a>,
+    object: &'s mut Obj,
+    ty: &'s str,
+    rest_id: &'s str,
+    connector_snapshot: bool,
+    connector_terminal: bool,
+    depth: usize,
+    included: Option<&'s BTreeSet<String>>,
+    slot_content: Option<String>,
 }
 
 impl<'a> Mapper<'a> {
@@ -140,16 +156,7 @@ impl<'a> Mapper<'a> {
             connector_snapshot && (!connector_has_saved_label(&view) || depth >= MAX_DEPTH || self.count.saturating_add(1) >= self.budget());
         // A supported connector snapshot has its own note below instead of the generic stand-in one.
         let stand = stand_in(own).filter(|_| !connector_snapshot);
-        let ty = match own {
-            "ROUNDED_RECTANGLE" => "RECTANGLE",
-            "SYMBOL" => "COMPONENT",
-            "FRAME" if view.flag("isStateGroup") == Some(true) => "COMPONENT_SET",
-            "FRAME" if view.flag("resizeToFit") == Some(true) => "GROUP",
-            "VARIABLE" | "VARIABLE_SET" => return None,
-            "CONNECTOR" if connector_snapshot && connector_terminal => "VECTOR",
-            "CONNECTOR" if connector_snapshot => "FRAME",
-            t => stand.map_or(t, |s| s.0),
-        };
+        let ty = Self::mapped_type(own, &view, connector_snapshot, connector_terminal, stand)?;
         if let Some((_, what)) = stand.filter(|_| own != "TEXT_PATH") {
             self.warn(format!("{} layers import as {what}", own.to_ascii_lowercase().replace('_', " ")));
         }
@@ -237,55 +244,21 @@ impl<'a> Mapper<'a> {
             source.insert("slotOverride".into(), json!(true));
         }
         let child_space = if matches!(ty, "GROUP" | "BOOLEAN_OPERATION") { space * view.transform().unwrap_or_default() } else { Affine::IDENTITY };
-        let mut kids = if connector_snapshot && !connector_terminal { self.connector_snapshot_children(&view, &rest_id) } else { Vec::new() };
-        if connector_terminal {
-            // The saved vector is flattened into the connector node when no child slot remains.
-        } else if ty == "INSTANCE" {
-            if let Some((sub, sym)) = self.instance(&mut o, &view, id, inst, &rest_id) {
-                let main = self.nodes.get(&sym).map(|m| View::of(m));
-                let (from, to) = (main.as_ref().and_then(View::size), view.size());
-                let uniform = uniform_scale(&view);
-                // A uniformly scaled instance (or one in such an instance) scales its layers whole.
-                let fit = match uniform {
-                    Some(k) => Some(Fit::Scale(k, k)),
-                    None if inst.is_some_and(|i| i.scale != 1.0) => Fit::scale(from, to),
-                    None => Fit::frame(from, to),
-                };
-                // An instance that records no auto layout of its own has its main's.
-                let view = match main {
-                    Some(m) if view.get("stackMode").is_none() && m.get("stackMode").is_some() => {
-                        let layered = View { fitted: view.fitted, ..m.with(view.layers.iter().copied()) };
-                        self.auto_layout(&mut o, &layered);
-                        layered
-                    }
-                    _ => view.clone(),
-                };
-                for c in self.children(&sym) {
-                    // The main's branch can live outside the cached context being mapped.
-                    kids.extend(self.layer_filtered(&c, Some(&sub), child_space, Some(&view), fit, depth + 1, None));
-                }
-            }
-        } else if let Some(content) = slot_content {
-            let mut content_inst = inst.cloned();
-            if let Some(content_inst) = &mut content_inst {
-                content_inst.slot_content = true;
-            }
-            for c in self.children(&content) {
-                kids.extend(self.layer_filtered(&c, content_inst.as_ref(), child_space, Some(&view), None, depth + 1, included));
-            }
-        } else {
-            // Inside an instance a layer's children are its main's: they follow it from the main's
-            // size to its own.
-            let fit = match (inst, ty) {
-                (None, _) => None,
-                (Some(_), "GROUP" | "BOOLEAN_OPERATION") => Fit::scale(View::of(base).size(), view.size()),
-                (Some(i), _) if i.scale != 1.0 => Fit::scale(View::of(base).size(), view.size()),
-                (Some(_), _) => Fit::frame(View::of(base).size(), view.size()),
-            };
-            for c in self.children(id) {
-                kids.extend(self.layer_filtered(&c, inst, child_space, Some(&view), fit, depth + 1, included));
-            }
-        }
+        let mut kids = self.map_layer_children(LayerChildren {
+            id,
+            inst,
+            base,
+            child_space,
+            view: &view,
+            object: &mut o,
+            ty,
+            rest_id: &rest_id,
+            connector_snapshot,
+            connector_terminal,
+            depth,
+            included,
+            slot_content,
+        });
         if stand.is_some_and(|s| s.0 == "FRAME") {
             if let Some(snapshot) = self.board_snapshot(&mut o, &view, own, &rest_id, depth) {
                 kids.splice(0..0, snapshot);
@@ -303,10 +276,97 @@ impl<'a> Mapper<'a> {
         Some(Value::Object(o))
     }
 
+    fn map_layer_children(&mut self, context: LayerChildren<'_, 'a>) -> Vec<Value> {
+        let LayerChildren {
+            id,
+            inst,
+            base,
+            child_space,
+            view,
+            object: o,
+            ty,
+            rest_id,
+            connector_snapshot,
+            connector_terminal,
+            depth,
+            included,
+            slot_content,
+        } = context;
+        let mut kids = if connector_snapshot && !connector_terminal { self.connector_snapshot_children(view, rest_id) } else { Vec::new() };
+        if connector_terminal {
+            // The saved vector is flattened into the connector node when no child slot remains.
+        } else if ty == "INSTANCE" {
+            if let Some((sub, sym)) = self.instance(o, view, id, inst, rest_id) {
+                let main = self.nodes.get(&sym).map(|m| View::of(m));
+                let (from, to) = (main.as_ref().and_then(View::size), view.size());
+                let uniform = uniform_scale(&view);
+                // A uniformly scaled instance (or one in such an instance) scales its layers whole.
+                let fit = match uniform {
+                    Some(k) => Some(Fit::Scale(k, k)),
+                    None if inst.is_some_and(|i| i.scale != 1.0) => Fit::scale(from, to),
+                    None => Fit::frame(from, to),
+                };
+                // An instance that records no auto layout of its own has its main's.
+                let view = match main {
+                    Some(m) if view.get("stackMode").is_none() && m.get("stackMode").is_some() => {
+                        let layered = View { fitted: view.fitted, ..m.with(view.layers.iter().copied()) };
+                        self.auto_layout(o, &layered);
+                        layered
+                    }
+                    _ => view.clone(),
+                };
+                for c in self.children(&sym) {
+                    // The main's branch can live outside the cached context being mapped.
+                    kids.extend(self.layer_filtered(&c, Some(&sub), child_space, Some(&view), fit, depth + 1, None));
+                }
+            }
+        } else if let Some(content) = slot_content {
+            let mut content_inst = inst.cloned();
+            if let Some(content_inst) = &mut content_inst {
+                content_inst.slot_content = true;
+            }
+            for c in self.children(&content) {
+                kids.extend(self.layer_filtered(&c, content_inst.as_ref(), child_space, Some(view), None, depth + 1, included));
+            }
+        } else {
+            // Inside an instance a layer's children are its main's: they follow it from the main's
+            // size to its own.
+            let fit = match (inst, ty) {
+                (None, _) => None,
+                (Some(_), "GROUP" | "BOOLEAN_OPERATION") => Fit::scale(View::of(base).size(), view.size()),
+                (Some(i), _) if i.scale != 1.0 => Fit::scale(View::of(base).size(), view.size()),
+                (Some(_), _) => Fit::frame(View::of(base).size(), view.size()),
+            };
+            for c in self.children(id) {
+                kids.extend(self.layer_filtered(&c, inst, child_space, Some(view), fit, depth + 1, included));
+            }
+        }
+        kids
+    }
+
+    fn mapped_type<'s>(
+        own: &'s str,
+        view: &View<'a>,
+        connector_snapshot: bool,
+        connector_terminal: bool,
+        stand: Option<(&'static str, &'static str)>,
+    ) -> Option<&'s str> {
+        match own {
+            "ROUNDED_RECTANGLE" => Some("RECTANGLE"),
+            "SYMBOL" => Some("COMPONENT"),
+            "FRAME" if view.flag("isStateGroup") == Some(true) => Some("COMPONENT_SET"),
+            "FRAME" if view.flag("resizeToFit") == Some(true) => Some("GROUP"),
+            "VARIABLE" | "VARIABLE_SET" => None,
+            "CONNECTOR" if connector_snapshot && connector_terminal => Some("VECTOR"),
+            "CONNECTOR" if connector_snapshot => Some("FRAME"),
+            t => Some(stand.map_or(t, |s| s.0)),
+        }
+    }
+
     /// FigJam notes and shapes keep their paints and text on generated template children,
     /// not on the outer node. Keep the saved layout as ordinary editable layers (including a
     /// note's author), without applying the background's opacity or transform to the wrapper.
-    /// When no generated text survives, retain usable outer text alongside successful children.
+    /// When no generated body survives, retain usable outer text alongside successful children.
     fn board_snapshot(&mut self, o: &mut Obj, v: &View<'a>, own: &str, rest_id: &str, depth: usize) -> Option<Vec<Value>> {
         if !matches!(own, "STICKY" | "SHAPE_WITH_TEXT") || v.get("nodeGenerationData").is_none() {
             return None;
@@ -316,6 +376,7 @@ impl<'a> Mapper<'a> {
             return None;
         }
         let mut children = Vec::new();
+        let mut has_body = false;
         for local_id in 0..if own == "STICKY" { 3 } else { 2 } {
             let style = generated_record(v, "nodeGenerationData", local_id);
             let bounds = generated_record(v, "derivedImmutableFrameData", local_id);
@@ -351,7 +412,11 @@ impl<'a> Mapper<'a> {
                     layer.insert("type".into(), json!("VECTOR"));
                 }
                 self.geometry(&mut layer, &child);
-                if layer.contains_key("fillGeometry") || layer.contains_key("strokeGeometry") || layer.contains_key("vectorNetworkRef") {
+                let outlined = |layer: &Obj| ["fillGeometry", "strokeGeometry", "vectorNetworkRef"].iter().any(|key| layer.contains_key(*key));
+                if own == "SHAPE_WITH_TEXT" && !outlined(&layer) {
+                    self.geometry(&mut layer, v);
+                }
+                if outlined(&layer) {
                     layer.insert("type".into(), json!("VECTOR"));
                 } else {
                     layer.insert("type".into(), json!("RECTANGLE"));
@@ -368,9 +433,10 @@ impl<'a> Mapper<'a> {
                 }
             }
             self.count += 1;
+            has_body |= local_id == 1;
             children.push(Value::Object(layer));
         }
-        if depth < MAX_DEPTH && !children.iter().any(|child| child.get("type").and_then(Value::as_str) == Some("TEXT")) {
+        if depth < MAX_DEPTH && !has_body {
             children.extend(self.inner_text(o, v, rest_id, own == "STICKY"));
         }
         Some(children)
@@ -621,6 +687,85 @@ impl<'a> Mapper<'a> {
             size.zip(norm).filter(|(s, n)| s.is_finite() && *n > 1e-9).map_or(1.0, |(s, n)| s / n)
         };
         let (sx, sy) = (scale("x"), scale("y"));
+        let vertices: Vec<Value> = net
+            .vertices
+            .iter()
+            .map(|p| {
+                let mut out = json!({"x": p.x * sx, "y": p.y * sy});
+                let st = style(p.style);
+                if let Some(r) = st.and_then(|s| num(s, "cornerRadius")).filter(|r| *r > 0.0) {
+                    out["radius"] = json!(r);
+                }
+                match st.and_then(|s| s.get("handleMirroring")).and_then(Kv::str) {
+                    Some("ANGLE") => out["mirror"] = json!("angle"),
+                    Some("ANGLE_AND_LENGTH") => out["mirror"] = json!("angleAndLength"),
+                    Some("NONE") => out["mirror"] = json!("none"),
+                    _ => {}
+                }
+                if let Some(join @ ("MITER" | "BEVEL" | "ROUND")) = st.and_then(|s| s.get("strokeJoin")).and_then(Kv::str) {
+                    out["join"] = json!(join.to_ascii_lowercase());
+                }
+                out
+            })
+            .collect();
+        let segments: Vec<Value> =
+            net.segments.iter().map(|s| json!({"a": s.a, "b": s.b, "ta": [s.ta.0 * sx, s.ta.1 * sy], "tb": [s.tb.0 * sx, s.tb.1 * sy]})).collect();
+        let regions: Vec<Value> = net
+            .regions
+            .iter()
+            .map(|r| {
+                let mut region = json!({"loops": r.loops, "winding": if r.non_zero { "nonZero" } else { "evenOdd" }});
+                if r.style != 0 {
+                    match style(r.style) {
+                        Some(s) => {
+                            let fills = s.get("fillPaints").and_then(|own_fills| {
+                                if own_fills.list().iter().any(paint_bound) {
+                                    return Some(own_fills);
+                                }
+                                let linked_style = self
+                                    .style_link(&View::of(s), "styleIdForFill", "inheritFillStyleID")
+                                    .and_then(|id| self.nodes.get(&id).copied())
+                                    .filter(|style| style.get("styleType").and_then(Kv::str) == Some("FILL"));
+                                match linked_style {
+                                    Some(style) => style.get("fillPaints"),
+                                    None => Some(own_fills),
+                                }
+                            });
+                            if let Some(fills) = fills {
+                                if let Kv::Array(source_paints) = fills {
+                                    let paint_cost = source_paints.iter().fold(source_paints.len(), |cost, paint| {
+                                        cost.saturating_add(paint.get("stops").map(Kv::list).unwrap_or_default().len())
+                                    });
+                                    let oversized_stops =
+                                        source_paints.iter().any(|paint| paint.get("stops").map(Kv::list).unwrap_or_default().len() > 256);
+                                    if source_paints.len() > 256 || oversized_stops || self.region_paint_elements.saturating_add(paint_cost) > 200_000
+                                    {
+                                        self.warn("vector region paint data exceeded import limits and was skipped");
+                                        return region;
+                                    }
+                                    self.region_paint_elements += paint_cost;
+                                    let paints: Vec<Value> = source_paints.iter().filter_map(|p| paint(p, &mut |w| self.warn(w))).collect();
+                                    if paints.len() != source_paints.len() {
+                                        self.warn("invalid vector region paints were skipped");
+                                    }
+                                    if paints.iter().any(has_bound_variables) {
+                                        self.warn("variable-bound vector region paints keep resolved appearance; live bindings were left out");
+                                    }
+                                    if s.get("styleIdForFill").is_some() {
+                                        self.warn("linked vector region fill styles keep resolved appearance; live style links were left out");
+                                    }
+                                    region["_figRegionFills"] = Value::Array(paints);
+                                } else {
+                                    self.warn("invalid vector region fill paint list; layer fill used");
+                                }
+                            }
+                        }
+                        None => self.warn("vector region references a missing fill style; layer fill used"),
+                    }
+                }
+                region
+            })
+            .collect();
         // An absent layer join is the source default.
         let layer_join = v.str("strokeJoin").unwrap_or("MITER");
         let point_join = |p: &network::Vertex| style(p.style).and_then(|s| s.get("strokeJoin"));
@@ -628,19 +773,6 @@ impl<'a> Mapper<'a> {
         let unresolved_style = net.vertices.iter().any(|p| p.style != 0 && style(p.style).is_none());
         let unknown_join = net.vertices.iter().any(|p| point_join(p).is_some_and(|j| !j.str().is_some_and(known)));
         let unsupported_join = net.vertices.iter().any(|p| point_join(p).and_then(Kv::str).is_some_and(|j| known(j) && j != layer_join));
-        // Areas with fill paints of their own (`vectorRegionPaints`, our extension: one list or
-        // null per region).
-        let region_paints: Vec<Value> = net
-            .regions
-            .iter()
-            .map(|r| match style(r.style).and_then(|s| s.get("fillPaints")) {
-                Some(p) => Value::Array(p.list().iter().filter_map(|p| paint(p, &mut |w| self.warn(w))).collect()),
-                None => Value::Null,
-            })
-            .collect();
-        if region_paints.iter().any(|p| !p.is_null()) {
-            o.insert("vectorRegionPaints".into(), Value::Array(region_paints));
-        }
         if unresolved_style {
             self.warn("some vector points refer to point settings missing from the file; they use the layer's joins and plain corners");
         }
@@ -669,42 +801,18 @@ impl<'a> Mapper<'a> {
             o.insert("strokeCapEnd".into(), json!(cap_name(last.unwrap_or(node))));
         }
         // Every instance of a main shows the same network: it is written once and shared.
+        let mut entry = json!({});
+        entry["vertices"] = Value::Array(vertices);
+        entry["segments"] = Value::Array(segments);
+        entry["regions"] = Value::Array(regions.clone());
+        if regions.iter().any(|r| r.get("_figRegionFills").is_some()) {
+            o.insert("vectorNetwork".into(), entry);
+            return true;
+        }
         let key = (blob_id, sx.to_bits(), sy.to_bits(), std::ptr::from_ref(vd) as usize);
         let id = match self.network_ids.get(&key) {
             Some(id) => *id,
             None => {
-                let vertices: Vec<Value> = net
-                    .vertices
-                    .iter()
-                    .map(|p| {
-                        let mut out = json!({"x": p.x * sx, "y": p.y * sy});
-                        let st = style(p.style);
-                        if let Some(r) = st.and_then(|s| num(s, "cornerRadius")).filter(|r| *r > 0.0) {
-                            out["radius"] = json!(r);
-                        }
-                        match st.and_then(|s| s.get("handleMirroring")).and_then(Kv::str) {
-                            Some("ANGLE") => out["mirror"] = json!("angle"),
-                            Some("ANGLE_AND_LENGTH") => out["mirror"] = json!("angleAndLength"),
-                            Some("NONE") => out["mirror"] = json!("none"),
-                            _ => {}
-                        }
-                        if let Some(join @ ("MITER" | "BEVEL" | "ROUND")) = st.and_then(|s| s.get("strokeJoin")).and_then(Kv::str) {
-                            out["join"] = json!(join.to_ascii_lowercase());
-                        }
-                        out
-                    })
-                    .collect();
-                let segments: Vec<Value> = net
-                    .segments
-                    .iter()
-                    .map(|s| json!({"a": s.a, "b": s.b, "ta": [s.ta.0 * sx, s.ta.1 * sy], "tb": [s.tb.0 * sx, s.tb.1 * sy]}))
-                    .collect();
-                let regions: Vec<Value> =
-                    net.regions.iter().map(|r| json!({"loops": r.loops, "winding": if r.non_zero { "nonZero" } else { "evenOdd" }})).collect();
-                let mut entry = json!({});
-                entry["vertices"] = Value::Array(vertices);
-                entry["segments"] = Value::Array(segments);
-                entry["regions"] = Value::Array(regions);
                 self.networks.push(crate::rest::network(&entry));
                 let index = self.networks_taken + self.networks.len() - 1;
                 self.network_ids.insert(key, index);

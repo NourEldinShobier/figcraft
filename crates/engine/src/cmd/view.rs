@@ -1,10 +1,10 @@
 //! View menu, preferences and tools. View state is per document and drivable like everything else.
 
-use figcraft_doc::*;
+use figcraft_doc::NodeId;
 use serde_json::{Value, json};
 
 use super::{CommandSpec, ok};
-use crate::params::*;
+use crate::params::{boolean, get, num, num_or, req_index, req_num, req_string, string};
 use crate::tools::ToolId;
 use crate::{EngineError, Result, Session, ViewState, bad, spec};
 
@@ -373,7 +373,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "pref.uiScale",
             "Interface size",
-            "{scale?: a size from 0.75 to 3 relative to the system's display scale, 1 being the system's own size, so 1.25 is 125 %, not 125 (outside the range it stops at the nearest end; \"auto\" is 1; omit: just read it)} → {scale}: how large the whole interface is drawn; the canvas zoom is separate",
+            "{scale? (a size from 0.75 to 3 relative to the system's display scale: 1 is the system's own size, so 1.25 is 125 %, not 125; outside the range it stops at the nearest end; \"auto\" is 1; omit: just read it)} → {scale}: how large the whole interface is drawn; the canvas zoom is separate",
             false,
             |s, p| {
                 match get(p, "scale") {
@@ -394,12 +394,19 @@ pub fn specs() -> Vec<CommandSpec> {
             s.prefs.nudge_big = num(p, "big").unwrap_or(s.prefs.nudge_big).clamp(0.01, 10000.0);
             Ok(json!({"small": s.prefs.nudge_small, "big": s.prefs.nudge_big}))
         }),
-        spec!("pref.userName", "Your name in comments", "{name (blank: the default, \"You\")}", false, |s, p| {
-            let name = req_string("pref.userName", p, "name")?;
-            let name: String = name.trim().chars().filter(|c| !c.is_control()).take(64).collect();
-            s.prefs.user_name = if name.is_empty() { super::comment::DEFAULT_AUTHOR.into() } else { name };
-            Ok(json!({"name": s.prefs.user_name}))
-        }),
+        spec!(
+            "pref.userName",
+            "Your name",
+            "{name (blank: the default: \"You\" on comments, \"Guest N\" in live sessions)} → {name}: what your comments are signed with and others see you as in live sessions; the live sessions you're in show the new name at once (blank keeps the name they gave you until you join again)",
+            false,
+            |s, p| {
+                let name = req_string("pref.userName", p, "name")?;
+                let name: String = name.trim().chars().filter(|c| !c.is_control()).take(crate::live::MAX_NAME).collect();
+                s.prefs.user_name = if name.is_empty() { super::comment::DEFAULT_AUTHOR.into() } else { name };
+                s.live_rename();
+                Ok(json!({"name": s.prefs.user_name}))
+            }
+        ),
         spec!(
             "pref.publishServer",
             "Server for online sharing",

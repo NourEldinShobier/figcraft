@@ -1,5 +1,5 @@
 use super::layer::{cap_name, own_text, svg_path, valid_size};
-use super::*;
+use super::{Affine, Kv, Mapper, NO_STYLE, Obj, Point, Value, View, generated_record, guid, json, matrix, network, num, rows};
 
 impl<'a> Mapper<'a> {
     /// A connector's end caps, and when it has no saved outline or network a straight line
@@ -250,15 +250,6 @@ impl<'a> Mapper<'a> {
         children.push(Value::Object(text));
         self.count += 1;
     }
-}
-
-/// A generated child is identified by one exact template GUID, not its array position.
-pub(super) fn generated_record<'a>(v: &View<'a>, field: &str, local_id: u32) -> Option<&'a Kv<'a>> {
-    v.get(field)?.get("overrides")?.list().iter().find(|row| {
-        row.get("guidPath").and_then(|path| path.get("guids")).map(Kv::list).is_some_and(|guids| {
-            guids.len() == 1 && num(&guids[0], "sessionID") == Some(40_000_000.0) && num(&guids[0], "localID") == Some(f64::from(local_id))
-        })
-    })
 }
 
 pub(super) fn connector_has_saved_label(v: &View<'_>) -> bool {

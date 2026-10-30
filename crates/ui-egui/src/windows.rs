@@ -124,7 +124,8 @@ pub fn with_app<R>(f: impl FnOnce(&mut FigApp) -> R) -> Option<R> {
 }
 
 /// Last-resort guard around a frame: a panic becomes a message and recovery copies of unsaved
-/// files, not a lost document.
+/// files, not a lost document. (In the browser a panic can't be caught: the page's panic hook
+/// keeps the copies instead, `apps/figcraft-web/src/recovery.rs`.)
 pub fn guard(app: &mut FigApp, ctx: &Context, f: impl FnOnce(&mut FigApp)) {
     // Started with automation roots, everything the window and the control channel do is confined.
     let roots = app.automation_roots.clone();
@@ -396,7 +397,12 @@ pub(crate) fn request_close(app: &mut FigApp, ctx: &Context) {
 }
 
 fn close_current(app: &mut FigApp, ctx: &Context) {
-    app.windows.closing.push(app.windows.current);
+    // Once only: a second close of the same window before [`begin`] runs (two quits while the
+    // main window is hidden, when only the app's logic runs) would act on the window that took its
+    // place, without asking about that window's files.
+    if !app.windows.closing.contains(&app.windows.current) {
+        app.windows.closing.push(app.windows.current);
+    }
     ctx.request_repaint_of(ViewportId::ROOT);
 }
 

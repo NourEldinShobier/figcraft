@@ -1,5 +1,9 @@
 use super::common::{style_fields, unsupported_decoration_look};
-use super::*;
+use super::{
+    Affine, BezPath, Bound, Exporter, Fields, Kv, ListStyle, MAX_CANVAS, MAX_CHARS, MAX_NETWORK, Node, NodeKind, Paint, StrokeAlign, StrokeCap,
+    StrokeJoin, TextAlignH, TextAlignV, TextAutoResize, TextData, TextStyle, VectorNetwork, WindingRule, arr, b, cap_name, e, finite, fl, int,
+    join_name, network, o, path_blob, s, u, xy,
+};
 
 impl<'d> Exporter<'d> {
     /// Text: its style, box settings, and characters with their styled runs. `fills`: the layer's
@@ -153,6 +157,9 @@ impl<'d> Exporter<'d> {
     /// The editable network (with per-point corner radii, handle mirroring and end caps) and,
     /// when it has filled areas, their outline.
     pub(super) fn vector(&mut self, n: &Node, net: &VectorNetwork, f: &mut Fields) {
+        if net.regions.iter().any(|region| region.fills.is_some() || region.paint_space.is_some()) {
+            self.warn("vector region paints were left out of the .fig export");
+        }
         let entries: usize = net.regions.iter().flat_map(|r| &r.loops).map(Vec::len).sum();
         if net.vertices.len() + net.segments.len() + entries > MAX_NETWORK {
             self.warn("vector networks too large for the format were written as outlines");

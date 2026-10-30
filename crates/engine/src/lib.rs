@@ -17,6 +17,7 @@ pub mod catalog;
 pub mod cmd;
 mod content;
 mod dev;
+pub mod events;
 mod extensions;
 pub mod fonts;
 pub mod guard;
@@ -38,6 +39,7 @@ pub use automation::file_access;
 pub use automation::inspect;
 pub use automation::params;
 pub use boards::board;
+pub use boards::board_grid;
 pub use boards::board_table;
 pub use boards::board_templates;
 pub use canvas::al_keys;
@@ -76,6 +78,7 @@ pub use selection::rename;
 pub use selection::selection_colors;
 pub use selection::selection_reorder;
 pub use selection::selection_spacing;
+pub use sharing::agent;
 pub use sharing::background;
 pub use sharing::branches;
 pub use sharing::collab;
@@ -108,6 +111,7 @@ pub use derived::{changed_nodes, normalize};
 pub use doc_state::{DocState, History, HistoryEntry, Interaction, PREVIEW_READ_ONLY, Preedit, TextEdit, VersionPreview};
 pub use error::{EngineError, Result, bad};
 pub use prefs::{Clipboard, MAX_RECENT_ACTIONS, Prefs, UI_SCALE_MAX, UI_SCALE_MIN, UiRequest, clamp_ui_scale};
+pub use session::Forward;
 pub use view_state::ViewState;
 
 /// The editing session: open documents, the current tool, clipboard and prefs.
@@ -146,6 +150,15 @@ pub struct Session {
     pub background: background::Background,
     /// A file decoded off-thread for the next `file.open` ([`cmd::file::preload`]).
     pub preloaded: Option<cmd::file::Preloaded>,
+    /// Live agent events (comment changes), shared with the control channel's `events.poll`.
+    pub events: Arc<events::EventLog>,
+    /// Events recorded inside a group: (kind, document, path, data).
+    pending_events: Vec<(String, String, Option<String>, Value)>,
+    /// The AI agent the running command is for ([`Session::execute_as`]), as comments are signed
+    /// (`"Claude (agent)"`); `None` for the user.
+    pub agent: Option<String>,
+    /// Where an attached AI agent last worked ([`Session::agent_presence_at`]): display only.
+    pub agent_presence: Option<agent::AgentPresence>,
 }
 
 impl Default for Session {
@@ -156,6 +169,8 @@ impl Default for Session {
 
 #[cfg(test)]
 mod a11y_keys_tests;
+#[cfg(test)]
+mod agent_presence_tests;
 #[cfg(test)]
 mod al_behaviour_tests;
 #[cfg(test)]
@@ -177,6 +192,8 @@ mod arc_handles_tests;
 #[cfg(test)]
 mod autosave_tests;
 #[cfg(test)]
+mod batch_continue_events_tests;
+#[cfg(test)]
 mod batch_rollback_tests;
 #[cfg(test)]
 mod batch_step_ref_tests;
@@ -185,11 +202,15 @@ mod binding_lists_tests;
 #[cfg(test)]
 mod board_connector_tests;
 #[cfg(test)]
+mod board_grid_tests;
+#[cfg(test)]
 mod board_tables_tests;
 #[cfg(test)]
 mod board_tests;
 #[cfg(test)]
 mod board_tools_tests;
+#[cfg(test)]
+mod boolean_cap_tests;
 #[cfg(test)]
 mod booleans_tests;
 #[cfg(test)]
@@ -215,9 +236,15 @@ mod collab_tests;
 #[cfg(test)]
 mod collab_undo_tests;
 #[cfg(test)]
+mod comment_agent_tests;
+#[cfg(test)]
+mod comment_mentions_tests;
+#[cfg(test)]
 mod comments_polish_tests;
 #[cfg(test)]
 mod component_codegen_tests;
+#[cfg(test)]
+mod component_cycle_tests;
 #[cfg(test)]
 mod components_behaviour_tests;
 #[cfg(test)]
@@ -255,9 +282,13 @@ mod double_click_tests;
 #[cfg(test)]
 mod draw_tools_tests;
 #[cfg(test)]
+mod duplicate_map_tests;
+#[cfg(test)]
 mod duplicate_spacing_tests;
 #[cfg(test)]
 mod effects_tests;
+#[cfg(test)]
+mod events_tests;
 #[cfg(test)]
 mod export_behaviour_tests;
 #[cfg(test)]
@@ -297,6 +328,8 @@ mod gesture_preview_tests;
 #[cfg(test)]
 mod gradient_shorthand_tests;
 #[cfg(test)]
+mod guide_snap_tests;
+#[cfg(test)]
 mod hide_publishing_tests;
 #[cfg(test)]
 mod history_behaviour_tests;
@@ -308,6 +341,8 @@ mod html_codegen_tests;
 mod huge_stroke_tests;
 #[cfg(test)]
 mod id_params_behaviour_tests;
+#[cfg(test)]
+mod image_crop_tests;
 #[cfg(test)]
 mod images_left_in_file_tests;
 #[cfg(test)]
@@ -367,6 +402,8 @@ mod node_readback_tests;
 #[cfg(test)]
 mod node_set_refusals_tests;
 #[cfg(test)]
+mod normalize_guard_tests;
+#[cfg(test)]
 mod online_tests;
 #[cfg(test)]
 mod open_issues_tests;
@@ -393,7 +430,11 @@ mod pen_end_tests;
 #[cfg(test)]
 mod pen_overlay_tests;
 #[cfg(test)]
+mod penpot_export_tests;
+#[cfg(test)]
 mod pixel_preview_tests;
+#[cfg(test)]
+mod placed_image_size_tests;
 #[cfg(test)]
 mod playground_tests;
 #[cfg(test)]
@@ -408,6 +449,8 @@ pub(crate) mod plugins_tests;
 mod preload_tests;
 #[cfg(test)]
 mod progressive_blur_tests;
+#[cfg(test)]
+mod prop_order_tests;
 #[cfg(test)]
 mod property_copy_tests;
 #[cfg(test)]
@@ -446,6 +489,8 @@ mod save_disk_changes_tests;
 mod save_format_tests;
 #[cfg(test)]
 mod scale_tool_tests;
+#[cfg(test)]
+mod scaled_instance_tests;
 #[cfg(test)]
 mod section_contents_tests;
 #[cfg(test)]
@@ -508,6 +553,8 @@ mod theme_pages_tests;
 mod tiff_tests;
 #[cfg(test)]
 mod transform_behaviour_tests;
+#[cfg(test)]
+mod unknown_params_tests;
 #[cfg(test)]
 mod variable_props_tests;
 #[cfg(test)]

@@ -3,11 +3,14 @@
 use std::collections::BTreeMap;
 
 use figcraft_color::{Color, Paint, PaintKind};
-use figcraft_doc::*;
+use figcraft_doc::{
+    Collection, CollectionId, Document, Effect, EffectKind, Mode, ModeId, Node, NodeId, NodeKind, Style, StyleId, StyleKind, TextData, TextStyle,
+    Variable, VariableId, VariableType, VariableValue, Variables, trim_num,
+};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, ok};
-use crate::params::*;
+use crate::params::{color_of, f64_of, get, id, num, paints_of, req_string, req_targets, string, targets};
 use crate::{EngineError, Result, Session, bad, spec};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -164,7 +167,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "variable.create",
             "Create variable",
-            "{collection, name, type: color|number|string|boolean, value (default mode) | values {modeName: value}}",
+            "{collection, name, type: color|number|string|boolean, value (default mode) | values {modeName: value}, description?}",
             true,
             var_create
         ),
@@ -785,7 +788,7 @@ pub fn bind(s: &mut Session, p: &Value) -> Result<Value> {
 pub(crate) fn bind_variable(cmd: &str, doc: &mut Document, ids: &[NodeId], field: &str, vid: Option<&str>) -> Result<()> {
     // An instance's component property takes a variable of its type; other fields the types their
     // scopes belong to.
-    if let Some(v) = vid.and_then(|v| doc.variables.get(v)) {
+    if let Some(v) = vid.and_then(|v| doc.variables.get_by_id(v)) {
         for i in ids {
             match field.strip_prefix(crate::components::PROP_BINDING) {
                 Some(name) => super::component::check_prop_binding(doc, *i, name, v.kind).map_err(|e| bad(cmd, e))?,
@@ -1254,7 +1257,14 @@ pub(crate) fn set_paint_color(list: &mut Vec<Paint>, i: usize, stop: Option<usiz
             }
         }
         (Some(p), None) => p.kind = PaintKind::Solid { color: c },
-        (None, None) if i == 0 => list.push(Paint::solid(c)),
+        (None, None) if i == 0 => {
+            // A bound colour owns its alpha, so the new paint keeps it out of the opacity.
+            let mut p = Paint::solid(c);
+            p.kind = PaintKind::Solid { color: c };
+            p.opacity = 1.0;
+            p.color_alpha = 1.0;
+            list.push(p);
+        }
         (None, _) => {}
     }
 }

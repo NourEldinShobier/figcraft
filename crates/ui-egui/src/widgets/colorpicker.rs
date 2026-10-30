@@ -1,9 +1,10 @@
 //! The colour picker popover: paint type, saturation/brightness square, hue and alpha sliders,
 //! hex and RGB fields, gradient stops, image and pattern fills and document colours.
 
-use egui::{Align2, Color32, CornerRadius, Id, Mesh, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::{Align2, Color32, CornerRadius, Id, Mesh, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use figcraft_color::{
-    Color, ColorStop, Gradient, GradientKind, Hsb, ImageFilters, ImageScaleMode, Paint, PaintKind, PatternAlign, PatternPaint, PatternTile,
+    BlendMode, Color, ColorStop, Gradient, GradientKind, Hsb, ImageFilters, ImagePaint, ImageScaleMode, Paint, PaintKind, PatternAlign, PatternPaint,
+    PatternTile,
 };
 use figcraft_doc::{NodeId, NodeKind};
 use serde_json::json;
@@ -12,7 +13,8 @@ use crate::FigApp;
 use crate::a11y::Tip;
 use crate::i18n::{tr, tr_noop, trf};
 use crate::icons::{self, Icon};
-use crate::theme::{Tokens, doc_c32, regular, semibold};
+use crate::popover::{Hold, Open, Popover};
+use crate::theme::{Tokens, doc_c32, regular};
 use crate::widgets;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -117,6 +119,40 @@ fn current_paint(app: &FigApp, target: &PickerTarget) -> Option<Paint> {
     }
 }
 
+/// The command and its params that write `paint` to `target`, when the target can take it.
+fn paint_command(app: &FigApp, target: &PickerTarget, paint: &Paint) -> Option<(&'static str, serde_json::Value)> {
+    Some(match target {
+        PickerTarget::PluginField { .. } => return None,
+        PickerTarget::SelectionColor { targets, .. } => ("selection.setPaint", json!({"targets": targets, "paint": paint})),
+        PickerTarget::PageBackground => {
+            let c = paint.solid_color().unwrap_or(Color::DEFAULT_PAGE);
+            ("page.setBackground", json!({"color": c.to_css_hex()}))
+        }
+        PickerTarget::Paint { fills, index, ids } => {
+            (if *fills { "fill.set" } else { "stroke.set" }, json!({"ids": ids, "index": index, "paint": paint}))
+        }
+        PickerTarget::Effect { ids, index, secondary } => {
+            let mut e = ids.first().and_then(|i| app.session.doc().ok()?.node(*i)?.effects.get(*index).cloned())?;
+            if let Some(c) = e.color_mut(*secondary) {
+                *c = paint.solid_color().unwrap_or(Color::BLACK);
+            }
+            ("effect.set", json!({"ids": ids, "index": index, "effect": e}))
+        }
+        PickerTarget::TextRange { id, start, end } => ("text.style", json!({"id": id, "start": start, "end": end, "textFills": [paint]})),
+        PickerTarget::Variable { id, mode } => {
+            let c = paint.solid_color().unwrap_or(Color::BLACK);
+            ("variable.set", json!({"variable": id, "mode": mode, "value": c.to_css_hex()}))
+        }
+        PickerTarget::Style { id, index } => {
+            let mut paints = app.session.doc().ok().and_then(|d| style_paints(d, id))?;
+            if let Some(slot) = paints.get_mut(*index) {
+                *slot = paint.clone();
+            }
+            ("style.update", json!({"style": id, "value": paints}))
+        }
+    })
+}
+
 /// Write `paint` to the target. `live` edits are part of an ongoing drag.
 fn write(app: &mut FigApp, target: &PickerTarget, paint: &Paint, live: bool) {
     if let PickerTarget::PluginField { plugin, control, .. } = target {
@@ -131,45 +167,23 @@ fn write(app: &mut FigApp, target: &PickerTarget, paint: &Paint, live: bool) {
     if live {
         let _ = app.session.begin_interaction("Color");
     }
-    let r = match target {
-        PickerTarget::SelectionColor { targets, .. } => app.session.execute("selection.setPaint", &json!({"targets": targets, "paint": paint})),
-        PickerTarget::PageBackground => {
-            let c = paint.solid_color().unwrap_or(Color::DEFAULT_PAGE);
-            app.session.execute("page.setBackground", &json!({"color": c.to_css_hex()}))
-        }
-        PickerTarget::Paint { fills, index, ids } => {
-            app.session.execute(if *fills { "fill.set" } else { "stroke.set" }, &json!({"ids": ids, "index": index, "paint": paint}))
-        }
-        PickerTarget::Effect { ids, index, secondary } => {
-            let Some(mut e) = ids.first().and_then(|i| app.session.doc().ok()?.node(*i)?.effects.get(*index).cloned()) else { return };
-            if let Some(c) = e.color_mut(*secondary) {
-                *c = paint.solid_color().unwrap_or(Color::BLACK);
-            }
-            app.session.execute("effect.set", &json!({"ids": ids, "index": index, "effect": e}))
-        }
-        PickerTarget::TextRange { id, start, end } => {
-            app.session.execute("text.style", &json!({"id": id, "start": start, "end": end, "textFills": [paint]}))
-        }
-        PickerTarget::Variable { id, mode } => {
-            let c = paint.solid_color().unwrap_or(Color::BLACK);
-            app.session.execute("variable.set", &json!({"variable": id, "mode": mode, "value": c.to_css_hex()}))
-        }
-        PickerTarget::PluginField { .. } => return,
-        PickerTarget::Style { id, index } => {
-            let Some(mut paints) = app.session.doc().ok().and_then(|d| style_paints(d, id)) else { return };
-            if let Some(slot) = paints.get_mut(*index) {
-                *slot = paint.clone();
-            }
-            app.session.execute("style.update", &json!({"style": id, "value": paints}))
-        }
-    };
-    if let Err(e) = r {
+    let Some((cmd, params)) = paint_command(app, target, paint) else { return };
+    if let Err(e) = app.session.execute(cmd, &params) {
         app.toast(e.to_string());
     }
     // Drag previews (`live`) are not choices: a drag records only the colour it ends on. Not "an
     // interaction is open": editing text holds one, and its colour clicks are choices.
     if !live && let Some(c) = paint.solid_color() {
         remember_recent(app, c);
+    }
+}
+
+/// Show the target's paint with `blend` on the canvas while its blend mode row is hovered.
+pub(crate) fn preview_blend(app: &mut FigApp, ctx: &egui::Context, target: &PickerTarget, paint: &Paint, blend: BlendMode) {
+    let mut p = paint.clone();
+    p.blend = blend;
+    if let Some((cmd, params)) = paint_command(app, target, &p) {
+        app.preview_text(ctx, cmd, params);
     }
 }
 
@@ -537,6 +551,278 @@ fn alpha_slider(ui: &mut Ui, rect: Rect, color: Color) -> Option<(f32, bool)> {
     slider_knob(ui, rect, color.a, Id::unique("cp_alpha"))
 }
 
+/// The row of paint kinds (solid, gradients, image, pattern) with `paint`'s kind selected.
+fn paint_type_row(ui: &mut Ui, app: &mut FigApp, target: &PickerTarget, paint: &mut Paint) {
+    let kinds = [
+        (Icon::Fill, tr("Solid")),
+        (Icon::GradientLinear, tr("Linear")),
+        (Icon::GradientRadial, tr("Radial")),
+        (Icon::GradientAngular, tr("Angular")),
+        (Icon::GradientDiamond, tr("Diamond")),
+        (Icon::Image, tr("Image")),
+        (Icon::ViewGrid, tr("Pattern")),
+    ];
+    let active = match &paint.kind {
+        PaintKind::Solid { .. } => 0,
+        PaintKind::Gradient(g) => match g.kind {
+            GradientKind::Linear => 1,
+            GradientKind::Radial => 2,
+            GradientKind::Angular => 3,
+            GradientKind::Diamond => 4,
+        },
+        PaintKind::Image(_) => 5,
+        PaintKind::Pattern(_) => 6,
+    };
+    ui.horizontal(|ui| {
+        ui.add_space(12.0);
+        if let Some(i) = widgets::segmented(ui, &kinds, Some(active), 30.0) {
+            let base = paint.preview_color();
+            let mut image_pending = false;
+            paint.kind = match i {
+                0 => PaintKind::Solid { color: base.with_alpha(1.0) },
+                5 => {
+                    image_pending = true;
+                    let target = target.clone();
+                    app.pick_open(tr("Choose image"), &["png", "jpg", "jpeg", "webp", "gif", "tif", "tiff"], move |app, p| {
+                        let Ok(bytes) = figcraft_engine::file_access::read(&p) else { return };
+                        let Some(hash) = app.session.doc_mut().ok().and_then(|d| figcraft_format_add(d, bytes)) else { return };
+                        if let Some(mut paint) = current_paint(app, &target) {
+                            paint.kind = Paint::image(hash, ImageScaleMode::Fill).kind;
+                            write(app, &target, &paint, false);
+                        }
+                    });
+                    paint.kind.clone()
+                }
+                6 => match pattern_sources(app, target).first() {
+                    Some((id, _)) => Paint::pattern(id.0).kind,
+                    None => {
+                        app.toast(tr("Add a layer or component to tile first").to_string());
+                        paint.kind.clone()
+                    }
+                },
+                k => {
+                    let kind = [GradientKind::Linear, GradientKind::Radial, GradientKind::Angular, GradientKind::Diamond][k - 1];
+                    match &paint.kind {
+                        PaintKind::Gradient(g) => {
+                            PaintKind::Gradient(Gradient { kind, ..Gradient::default_for(kind, base).with_stops(g.stops.clone()) })
+                        }
+                        _ => PaintKind::Gradient(Gradient::default_for(kind, base)),
+                    }
+                }
+            };
+            if !image_pending {
+                write(app, target, paint, false);
+            }
+        }
+    });
+}
+
+/// The paint's own blend mode dropdown.
+fn blend_row(ui: &mut Ui, app: &mut FigApp, target: &PickerTarget, paint: &mut Paint) {
+    ui.horizontal(|ui| {
+        ui.add_space(16.0);
+        let resp = widgets::dropdown(ui, tr(paint.blend.label()), 208.0, Some(Icon::Blend)).on_hover_text(tr("Blend mode"));
+        crate::right::menu_popup(&resp).width(200.0).show(|ui| {
+            let ctx = ui.ctx().clone();
+            if let Some(b) = crate::right::blend_menu(ui, false, |b| preview_blend(app, &ctx, target, paint, b)) {
+                paint.blend = b;
+                write(app, target, paint, false);
+            }
+        });
+    });
+}
+
+/// The image paint's scale mode, rotation, colour profile, presets and filter sliders.
+fn image_controls(app: &mut FigApp, ui: &mut Ui, target: &PickerTarget, paint: &mut Paint, mut img: ImagePaint, t: &Tokens) {
+    ui.horizontal(|ui| {
+        ui.add_space(16.0);
+        let resp = widgets::dropdown(ui, tr(&format!("{:?}", img.scale_mode)), 100.0, None);
+        crate::right::menu_popup(&resp).show(|ui| {
+            for (l, m) in [
+                (tr("Fill"), ImageScaleMode::Fill),
+                (tr("Fit"), ImageScaleMode::Fit),
+                (tr("Crop"), ImageScaleMode::Crop),
+                (tr("Tile"), ImageScaleMode::Tile),
+            ] {
+                if crate::right::menu_item(ui, l, "") {
+                    img.scale_mode = m;
+                    paint.kind = PaintKind::Image(img.clone());
+                    write(app, target, paint, false);
+                    ui.close();
+                }
+            }
+        });
+        if icons::button(ui, Icon::Rotate, 24.0, false, tr("Rotate 90°")).clicked() {
+            img.rotation = (img.rotation + 1) % 4;
+            paint.kind = PaintKind::Image(img.clone());
+            write(app, target, paint, false);
+        }
+    });
+    // The image's own colour profile (decoding converts it into the file's).
+    let source = app.session.doc().ok().and_then(|d| figcraft_render::images::profile_name(&img.image, d.images.get(&img.image)));
+    let source = match source.as_deref() {
+        None => tr("Unknown — treated as sRGB"),
+        Some("") => tr("Embedded profile"),
+        Some(name) => name,
+    };
+    ui.horizontal(|ui| {
+        ui.add_space(16.0);
+        let text = trf("Color profile: {name}", &[("name", &source)]);
+        ui.add(egui::Label::new(egui::RichText::new(text).font(regular(11.0)).color(t.text_secondary)).truncate());
+    });
+    image_presets(app, ui, target, paint, img.filters);
+    for (label, val) in [
+        (tr_noop("Exposure"), img.filters.exposure),
+        (tr_noop("Contrast"), img.filters.contrast),
+        (tr_noop("Saturation"), img.filters.saturation),
+        (tr_noop("Temperature"), img.filters.temperature),
+        (tr_noop("Tint"), img.filters.tint),
+        (tr_noop("Highlights"), img.filters.highlights),
+        (tr_noop("Shadows"), img.filters.shadows),
+    ] {
+        ui.horizontal(|ui| {
+            ui.add_space(16.0);
+            // Labels share a column so the sliders line up.
+            let (lr, _) = ui.allocate_exact_size(vec2(72.0, 18.0), Sense::hover());
+            ui.painter().text(lr.left_center(), Align2::LEFT_CENTER, tr(label), regular(11.0), t.text);
+            let mut v = val;
+            let r = ui.add(egui::Slider::new(&mut v, -1.0..=1.0).show_value(false));
+            if r.changed() {
+                let f = &mut img.filters;
+                match label {
+                    "Exposure" => f.exposure = v,
+                    "Contrast" => f.contrast = v,
+                    "Saturation" => f.saturation = v,
+                    "Temperature" => f.temperature = v,
+                    "Tint" => f.tint = v,
+                    "Highlights" => f.highlights = v,
+                    _ => f.shadows = v,
+                }
+                paint.kind = PaintKind::Image(img.clone());
+                write(app, target, paint, !r.drag_stopped());
+            }
+            if r.drag_stopped() {
+                finish(app);
+            }
+        });
+    }
+}
+
+/// The gradient bar with its stops, the stop actions and the selected stop's colour variable.
+/// The selected stop's colour (what the colour fields then edit).
+fn gradient_controls(
+    app: &mut FigApp,
+    ui: &mut Ui,
+    target: &PickerTarget,
+    paint: &mut Paint,
+    mut g: Gradient,
+    t: &Tokens,
+    sel_stop_id: Id,
+) -> Option<Color> {
+    let mut sel: usize = ui.data(|d| d.get_temp(sel_stop_id)).unwrap_or(0).min(g.stops.len().saturating_sub(1));
+    let (bar, _) = ui.allocate_exact_size(vec2(240.0, 28.0), Sense::hover());
+    let bar = bar.shrink2(vec2(16.0, 6.0));
+    widgets::checker(&ui.painter().with_clip_rect(bar), bar, 4.0);
+    let n = 24;
+    for i in 0..n {
+        let a = i as f32 / n as f32;
+        let b = (i + 1) as f32 / n as f32;
+        let r = Rect::from_min_max(pos2(bar.min.x + a * bar.width(), bar.min.y), pos2(bar.min.x + b * bar.width(), bar.max.y));
+        ui.painter().rect_filled(r, CornerRadius::ZERO, doc_c32(ui.ctx(), g.sample((a + b) / 2.0)));
+    }
+    let mut changed = false;
+    let mut done = false;
+    // The bar first, so the stops on it take their own clicks.
+    let bresp = ui.interact(bar, Id::unique("cp_bar"), Sense::click());
+    for (i, s) in g.stops.clone().iter().enumerate() {
+        let x = bar.min.x + s.position * bar.width();
+        let r = Rect::from_center_size(pos2(x, bar.center().y), vec2(12.0, 18.0));
+        let resp = ui.interact(r, Id::unique(("cp_stopk", i)), Sense::click_and_drag());
+        ui.painter().rect_filled(r, CornerRadius::same(3), doc_c32(ui.ctx(), s.color.with_alpha(1.0)));
+        ui.painter().rect_stroke(
+            r,
+            CornerRadius::same(3),
+            Stroke::new(if i == sel { 2.0 } else { 1.0 }, if i == sel { crate::theme::ACCENT } else { Color32::WHITE }),
+            StrokeKind::Outside,
+        );
+        if resp.clicked() || resp.drag_started() {
+            sel = i;
+        }
+        if resp.dragged()
+            && let Some(p) = resp.interact_pointer_pos()
+            && let Some(st) = g.stops.get_mut(i)
+        {
+            st.position = ((p.x - bar.min.x) / bar.width()).clamp(0.0, 1.0);
+            changed = true;
+        }
+        if resp.drag_stopped() {
+            done = true;
+        }
+    }
+    // Click on the bar adds a stop.
+    if bresp.clicked()
+        && let Some(p) = bresp.interact_pointer_pos()
+    {
+        let pos = ((p.x - bar.min.x) / bar.width()).clamp(0.0, 1.0);
+        g.stops.push(ColorStop { position: pos, color: g.sample(pos) });
+        sel = g.stops.len() - 1;
+        changed = true;
+        done = true;
+    }
+    ui.data_mut(|d| d.insert_temp(sel_stop_id, sel));
+    if changed {
+        paint.kind = PaintKind::Gradient(g.clone());
+        write(app, target, paint, !done);
+    }
+    if done {
+        finish(app);
+    }
+    let edit_color = g.stops.get(sel).map(|s| s.color);
+    ui.horizontal(|ui| {
+        ui.add_space(16.0);
+        if ui.small_button(tr("Remove stop")).clicked() && g.stops.len() > 2 {
+            g.stops.remove(sel);
+            ui.data_mut(|d| d.insert_temp(sel_stop_id, 0usize));
+            paint.kind = PaintKind::Gradient(g.clone());
+            write(app, target, paint, false);
+        }
+        if ui.small_button(tr("Flip")).clicked() {
+            for s in &mut g.stops {
+                s.position = 1.0 - s.position;
+            }
+            paint.kind = PaintKind::Gradient(g.clone());
+            write(app, target, paint, false);
+        }
+        if ui.small_button(tr("Rotate 90°")).clicked() {
+            let (fx, fy) = g.from;
+            let rot = |(x, y): (f64, f64)| (fx - (y - fy), fy + (x - fx));
+            g.to = rot(g.to);
+            g.width = rot(g.width);
+            paint.kind = PaintKind::Gradient(g.clone());
+            write(app, target, paint, false);
+        }
+    });
+    // The selected stop's colour can come from a colour variable.
+    if let PickerTarget::Paint { fills, index, ids } = target {
+        let field = format!("{}/{index}/stops/{sel}/color", if *fills { "fills" } else { "strokes" });
+        let stop = g.stops.get(sel).map(|s| s.color);
+        ui.horizontal(|ui| {
+            ui.add_space(16.0);
+            crate::variable_ui::bindable(app, ui, ids, &field, figcraft_doc::VariableType::Color, 208.0, |_, ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(208.0, widgets::FIELD_H), Sense::hover());
+                ui.painter().rect_filled(r, CornerRadius::same(5), t.field);
+                let sw = Rect::from_center_size(pos2(r.min.x + 13.0, r.center().y), vec2(14.0, 14.0));
+                if let Some(c) = stop {
+                    widgets::paint_swatch(ui.painter(), sw, &Paint::solid(c));
+                    let text = trf("Stop {n}  {hex}", &[("n", &(sel + 1)), ("hex", &c.to_hex())]);
+                    ui.painter().text(pos2(sw.max.x + 8.0, r.center().y), Align2::LEFT_CENTER, text, regular(11.0), t.text);
+                }
+            });
+        });
+    }
+    edit_color
+}
+
 /// The colour picker window's area id. A fixed id (not `Window::new`'s, which egui keys by
 /// `Id::unique(Some(title))`) so the style picker can tell a click inside the picker from one outside.
 pub fn window_id() -> Id {
@@ -568,6 +854,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
             finish(app);
         }
         app.ui.picker = None;
+        app.ui.picker_popover = None;
         return;
     };
     let t = Tokens::get(ctx);
@@ -577,414 +864,187 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
         PickerTarget::PluginField { plugin, .. } => crate::plugins_ui::field_window(app, ctx, plugin).map(|r| pos2(r.min.x - 248.0, r.min.y)),
         _ => None,
     };
-    let pos = beside.unwrap_or(pos2(screen.max.x - app.ui.right_width - 260.0, 140.0));
-    let mut open = true;
-    let mut close_now = false;
-    egui::Window::new("color_picker")
-        // A fixed area id so the style picker can tell a click in here from a click outside
-        // (`Window::new` alone would key the area by `Id::unique(Some(title))`).
-        .id(window_id())
-        .title_bar(false)
-        .fixed_pos(pos)
-        .fixed_size(vec2(240.0, 0.0))
-        .frame(egui::Frame::window(&ctx.global_style()).fill(t.panel).inner_margin(egui::Margin::same(0)))
-        .open(&mut open)
-        .show(ctx, |ui| {
-            ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
-            // The eyedropper's colour goes to this picker's paint (a stroke, an effect, a gradient stop...).
-            if let Some(c) = app.session.tool.picked.take() {
-                set_color(app, &target, &mut paint, c, stop_id(), ui);
+    let open = beside.map(Open::At).unwrap_or_else(|| {
+        let top = app.ui.picker_button.map_or(140.0, |r| r.min.y);
+        let edge = app.ui.right_panel_rect.map_or(screen.max.x - app.ui.right_width, |r| r.min.x);
+        Open::Anchor(pos2(edge - 8.0, top))
+    });
+    // The colour picker's own header — title 16 in, the X 8 in from the right — is the shared
+    // popover's chrome now; the picker keeps its body. Its area id is [`window_id`], the one the
+    // style picker looks up to tell a press in here from one outside.
+    let mut pop = app.ui.picker_popover.take().unwrap_or_else(|| Popover::with_id(window_id(), tr("Custom")).pad(0.0));
+    // Sampling a colour from the canvas — the eyedropper this picker's own button started, or the
+    // colour it just sampled — is the press, not a press outside: neither may close the picker.
+    let picking = app.session.tool.pick_only || app.session.tool.picked.is_some();
+    pop = pop.close_on_outside(!picking);
+    // Only the opening control is held out: any other sidebar or canvas press dismisses it.
+    let mut held: Vec<Rect> = app.ui.picker_button.into_iter().collect();
+    held.extend(crate::variable_ui::picker_rect(ctx));
+    let closed = pop.show(ctx, open, Hold { rects: &held, escape: false }, |ui| {
+        ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+        // The eyedropper's colour goes to this picker's paint (a stroke, an effect, a gradient stop...).
+        if let Some(c) = app.session.tool.picked.take() {
+            set_color(app, &target, &mut paint, c, stop_id(), ui);
+        }
+        // Paint type.
+        if !matches!(
+            target,
+            PickerTarget::Effect { .. } | PickerTarget::PageBackground | PickerTarget::Variable { .. } | PickerTarget::PluginField { .. }
+        ) {
+            paint_type_row(ui, app, &target, &mut paint);
+        }
+        // The paint's own blend mode, with the paints and layers under it.
+        if !matches!(
+            target,
+            PickerTarget::Effect { .. } | PickerTarget::PageBackground | PickerTarget::Variable { .. } | PickerTarget::PluginField { .. }
+        ) {
+            blend_row(ui, app, &target, &mut paint);
+        }
+        // Gradient stops.
+        let mut edit_color: Option<Color> = match &paint.kind {
+            PaintKind::Solid { color } => Some(color.with_alpha(color.a * paint.opacity)),
+            _ => None,
+        };
+        let sel_stop_id = stop_id();
+        if let PaintKind::Gradient(g) = paint.kind.clone() {
+            edit_color = gradient_controls(app, ui, &target, &mut paint, g, &t, sel_stop_id);
+        }
+        if let PaintKind::Image(img) = paint.kind.clone() {
+            image_controls(app, ui, &target, &mut paint, img, &t);
+        }
+        if let PaintKind::Pattern(pt) = paint.kind.clone() {
+            pattern_controls(app, ui, &target, &mut paint, pt);
+        }
+        if let Some(color) = edit_color {
+            let mut hsb = ui
+                .data(|d| d.get_temp::<(f32, f32, f32, [u8; 4])>(Id::unique("cp_hsb")))
+                .filter(|(_, _, _, rgba)| *rgba == color.to_rgba8())
+                .map(|(h, s, b, _)| Hsb { h, s, b })
+                .unwrap_or_else(|| Hsb::from_color(color));
+            let (sq, _) = ui.allocate_exact_size(vec2(240.0, 240.0), Sense::hover());
+            let (c1, d1) = sv_square(ui, sq, &mut hsb);
+            let (hr, _) = ui.allocate_exact_size(vec2(240.0, 28.0), Sense::hover());
+            let hr = Rect::from_min_max(pos2(hr.min.x + 48.0, hr.min.y + 8.0), pos2(hr.max.x - 16.0, hr.max.y - 8.0));
+            if icons::button(
+                &mut ui
+                    .new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(pos2(hr.min.x - 36.0, hr.center().y - 12.0), vec2(24.0, 24.0)))),
+                Icon::Eyedropper,
+                24.0,
+                false,
+                tr("Pick color (I)"),
+            )
+            .clicked()
+            {
+                app.run("edit.pickColor", json!({"apply": false}));
+                return;
             }
-            // Header.
-            let (hr, _) = ui.allocate_exact_size(vec2(240.0, 40.0), Sense::hover());
-            ui.painter().text(pos2(hr.min.x + 16.0, hr.center().y), Align2::LEFT_CENTER, tr("Custom"), semibold(11.0), t.text);
-            let cr = Rect::from_center_size(pos2(hr.max.x - 20.0, hr.center().y), vec2(24.0, 24.0));
-            let cresp = ui.interact(cr, Id::unique("cp_close"), Sense::click());
-            icons::paint(ui.painter(), cr.shrink(6.0), Icon::Close, t.icon);
-            if cresp.clicked() {
-                close_now = true;
+            let (c2, d2) = hue_slider(ui, hr, &mut hsb);
+            let (ar, _) = ui.allocate_exact_size(vec2(240.0, 20.0), Sense::hover());
+            let ar = Rect::from_min_max(pos2(ar.min.x + 48.0, ar.min.y + 2.0), pos2(ar.max.x - 16.0, ar.max.y - 6.0));
+            let mut new_alpha = None;
+            if let Some((a, d)) = alpha_slider(ui, ar, color) {
+                new_alpha = Some((a, d));
             }
-            // Paint type.
-            if !matches!(
-                target,
-                PickerTarget::Effect { .. } | PickerTarget::PageBackground | PickerTarget::Variable { .. } | PickerTarget::PluginField { .. }
-            ) {
-                let kinds = [
-                    (Icon::Fill, tr("Solid")),
-                    (Icon::GradientLinear, tr("Linear")),
-                    (Icon::GradientRadial, tr("Radial")),
-                    (Icon::GradientAngular, tr("Angular")),
-                    (Icon::GradientDiamond, tr("Diamond")),
-                    (Icon::Image, tr("Image")),
-                    (Icon::ViewGrid, tr("Pattern")),
-                ];
-                let active = match &paint.kind {
-                    PaintKind::Solid { .. } => 0,
-                    PaintKind::Gradient(g) => match g.kind {
-                        GradientKind::Linear => 1,
-                        GradientKind::Radial => 2,
-                        GradientKind::Angular => 3,
-                        GradientKind::Diamond => 4,
-                    },
-                    PaintKind::Image(_) => 5,
-                    PaintKind::Pattern(_) => 6,
-                };
-                ui.horizontal(|ui| {
-                    ui.add_space(12.0);
-                    if let Some(i) = widgets::segmented(ui, &kinds, Some(active), 30.0) {
-                        let base = paint.preview_color();
-                        let mut image_pending = false;
-                        paint.kind = match i {
-                            0 => PaintKind::Solid { color: base.with_alpha(1.0) },
-                            5 => {
-                                image_pending = true;
-                                let target = target.clone();
-                                app.pick_open(tr("Choose image"), &["png", "jpg", "jpeg", "webp", "gif", "tif", "tiff"], move |app, p| {
-                                    let Ok(bytes) = figcraft_engine::file_access::read(&p) else { return };
-                                    let Some(hash) = app.session.doc_mut().ok().and_then(|d| figcraft_format_add(d, bytes)) else { return };
-                                    if let Some(mut paint) = current_paint(app, &target) {
-                                        paint.kind = Paint::image(hash, ImageScaleMode::Fill).kind;
-                                        write(app, &target, &paint, false);
-                                    }
-                                });
-                                paint.kind.clone()
-                            }
-                            6 => match pattern_sources(app, &target).first() {
-                                Some((id, _)) => Paint::pattern(id.0).kind,
-                                None => {
-                                    app.toast(tr("Add a layer or component to tile first").to_string());
-                                    paint.kind.clone()
-                                }
-                            },
-                            k => {
-                                let kind = [GradientKind::Linear, GradientKind::Radial, GradientKind::Angular, GradientKind::Diamond][k - 1];
-                                match &paint.kind {
-                                    PaintKind::Gradient(g) => {
-                                        PaintKind::Gradient(Gradient { kind, ..Gradient::default_for(kind, base).with_stops(g.stops.clone()) })
-                                    }
-                                    _ => PaintKind::Gradient(Gradient::default_for(kind, base)),
-                                }
-                            }
-                        };
-                        if !image_pending {
-                            write(app, &target, &paint, false);
+            let mut nc = hsb.to_color().with_alpha(color.a);
+            let mut done = d1 || d2;
+            let mut changed = c1 || c2;
+            if let Some((a, d)) = new_alpha {
+                nc = nc.with_alpha(a);
+                changed = true;
+                done |= d;
+            }
+            // Colour model fields (Hex, RGB, HSL, HSB, LCH, OKLCH or CSS) + alpha.
+            if let Some((c, d)) = model_fields(ui, nc) {
+                nc = c;
+                hsb = Hsb::from_color(nc);
+                changed = true;
+                done |= d;
+            }
+            ui.data_mut(|d| d.insert_temp(Id::unique("cp_hsb"), (hsb.h, hsb.s, hsb.b, nc.to_rgba8())));
+            // A Display P3 colour sRGB can't show: the canvas (sRGB) shows the nearest one.
+            if app.session.doc().is_ok_and(|d| d.color_profile.conversion_to(figcraft_color::ColorProfile::Srgb).clips(nc)) {
+                gamut_warning(ui, &t);
+            }
+            if changed {
+                match &mut paint.kind {
+                    PaintKind::Solid { color } => {
+                        *color = nc.with_alpha(1.0);
+                        paint.opacity = nc.a;
+                    }
+                    PaintKind::Gradient(g) => {
+                        let sel: usize = ui.data(|d| d.get_temp(sel_stop_id)).unwrap_or(0);
+                        if let Some(s) = g.stops.get_mut(sel) {
+                            s.color = nc;
                         }
                     }
-                });
+                    PaintKind::Image(_) | PaintKind::Pattern(_) => {}
+                }
+                write(app, &target, &paint, !done);
             }
-            // The paint's own blend mode, with the paints and layers under it.
-            if !matches!(
-                target,
-                PickerTarget::Effect { .. } | PickerTarget::PageBackground | PickerTarget::Variable { .. } | PickerTarget::PluginField { .. }
-            ) {
-                ui.horizontal(|ui| {
-                    ui.add_space(16.0);
-                    let resp = widgets::dropdown(ui, tr(paint.blend.label()), 208.0, Some(Icon::Blend)).on_hover_text(tr("Blend mode"));
-                    crate::right::menu_popup(&resp).width(200.0).show(|ui| {
-                        if let Some(b) = crate::right::blend_menu(ui, false) {
-                            paint.blend = b;
-                            write(app, &target, &paint, false);
-                        }
-                    });
-                });
+            if done {
+                finish(app);
             }
-            // Gradient stops.
-            let mut edit_color: Option<Color> = match &paint.kind {
-                PaintKind::Solid { color } => Some(color.with_alpha(color.a * paint.opacity)),
-                _ => None,
-            };
-            let sel_stop_id = stop_id();
-            if let PaintKind::Gradient(g) = &paint.kind {
-                let mut g = g.clone();
-                let mut sel: usize = ui.data(|d| d.get_temp(sel_stop_id)).unwrap_or(0).min(g.stops.len().saturating_sub(1));
-                let (bar, _) = ui.allocate_exact_size(vec2(240.0, 28.0), Sense::hover());
-                let bar = bar.shrink2(vec2(16.0, 6.0));
-                widgets::checker(&ui.painter().with_clip_rect(bar), bar, 4.0);
-                let n = 24;
-                for i in 0..n {
-                    let a = i as f32 / n as f32;
-                    let b = (i + 1) as f32 / n as f32;
-                    let r = Rect::from_min_max(pos2(bar.min.x + a * bar.width(), bar.min.y), pos2(bar.min.x + b * bar.width(), bar.max.y));
-                    ui.painter().rect_filled(r, CornerRadius::ZERO, doc_c32(ui.ctx(), g.sample((a + b) / 2.0)));
-                }
-                let mut changed = false;
-                let mut done = false;
-                // The bar first, so the stops on it take their own clicks.
-                let bresp = ui.interact(bar, Id::unique("cp_bar"), Sense::click());
-                for (i, s) in g.stops.clone().iter().enumerate() {
-                    let x = bar.min.x + s.position * bar.width();
-                    let r = Rect::from_center_size(pos2(x, bar.center().y), vec2(12.0, 18.0));
-                    let resp = ui.interact(r, Id::unique(("cp_stopk", i)), Sense::click_and_drag());
-                    ui.painter().rect_filled(r, CornerRadius::same(3), doc_c32(ui.ctx(), s.color.with_alpha(1.0)));
-                    ui.painter().rect_stroke(
-                        r,
-                        CornerRadius::same(3),
-                        Stroke::new(if i == sel { 2.0 } else { 1.0 }, if i == sel { crate::theme::ACCENT } else { Color32::WHITE }),
-                        StrokeKind::Outside,
-                    );
-                    if resp.clicked() || resp.drag_started() {
-                        sel = i;
-                    }
-                    if resp.dragged()
-                        && let Some(p) = resp.interact_pointer_pos()
-                        && let Some(st) = g.stops.get_mut(i)
-                    {
-                        st.position = ((p.x - bar.min.x) / bar.width()).clamp(0.0, 1.0);
-                        changed = true;
-                    }
-                    if resp.drag_stopped() {
-                        done = true;
+        }
+        // Colours used on this page.
+        let doc_colors = page_colors(app, ui);
+        if !doc_colors.is_empty() {
+            ui.horizontal(|ui| {
+                ui.add_space(16.0);
+                widgets::label(ui, tr("On this page"), t.text_secondary);
+            });
+            // Inset on both sides: `add_space` would only indent the first row of a wrap.
+            inset(ui, |ui| {
+                for c in &doc_colors {
+                    if widgets::swatch(ui, &Paint::solid(*c), 14.0).on_hover_text(c.to_hex()).clicked() {
+                        set_color(app, &target, &mut paint, *c, sel_stop_id, ui);
                     }
                 }
-                // Click on the bar adds a stop.
-                if bresp.clicked()
-                    && let Some(p) = bresp.interact_pointer_pos()
-                {
-                    let pos = ((p.x - bar.min.x) / bar.width()).clamp(0.0, 1.0);
-                    g.stops.push(ColorStop { position: pos, color: g.sample(pos) });
-                    sel = g.stops.len() - 1;
-                    changed = true;
-                    done = true;
-                }
-                ui.data_mut(|d| d.insert_temp(sel_stop_id, sel));
-                if changed {
-                    paint.kind = PaintKind::Gradient(g.clone());
-                    write(app, &target, &paint, !done);
-                }
-                if done {
-                    finish(app);
-                }
-                edit_color = g.stops.get(sel).map(|s| s.color);
-                ui.horizontal(|ui| {
-                    ui.add_space(16.0);
-                    if ui.small_button(tr("Remove stop")).clicked() && g.stops.len() > 2 {
-                        g.stops.remove(sel);
-                        ui.data_mut(|d| d.insert_temp(sel_stop_id, 0usize));
-                        paint.kind = PaintKind::Gradient(g.clone());
-                        write(app, &target, &paint, false);
+            });
+        }
+        // Recent colours.
+        let recent = app.session.recent_colors.clone();
+        if !recent.is_empty() {
+            ui.horizontal(|ui| {
+                ui.add_space(16.0);
+                widgets::label(ui, tr("Recent"), t.text_secondary);
+            });
+            inset(ui, |ui| {
+                for c in recent.iter().take(14) {
+                    if widgets::swatch(ui, &Paint::solid(*c), 14.0).clicked() {
+                        set_color(app, &target, &mut paint, *c, sel_stop_id, ui);
                     }
-                    if ui.small_button(tr("Flip")).clicked() {
-                        for s in &mut g.stops {
-                            s.position = 1.0 - s.position;
-                        }
-                        paint.kind = PaintKind::Gradient(g.clone());
-                        write(app, &target, &paint, false);
-                    }
-                    if ui.small_button(tr("Rotate 90°")).clicked() {
-                        let (fx, fy) = g.from;
-                        let rot = |(x, y): (f64, f64)| (fx - (y - fy), fy + (x - fx));
-                        g.to = rot(g.to);
-                        g.width = rot(g.width);
-                        paint.kind = PaintKind::Gradient(g.clone());
-                        write(app, &target, &paint, false);
-                    }
-                });
-                // The selected stop's colour can come from a colour variable.
-                if let PickerTarget::Paint { fills, index, ids } = &target {
-                    let field = format!("{}/{index}/stops/{sel}/color", if *fills { "fills" } else { "strokes" });
-                    let stop = g.stops.get(sel).map(|s| s.color);
-                    ui.horizontal(|ui| {
-                        ui.add_space(16.0);
-                        crate::variable_ui::bindable(app, ui, ids, &field, figcraft_doc::VariableType::Color, 208.0, |_, ui| {
-                            let (r, _) = ui.allocate_exact_size(vec2(208.0, widgets::FIELD_H), Sense::hover());
-                            ui.painter().rect_filled(r, CornerRadius::same(5), t.field);
-                            let sw = Rect::from_center_size(pos2(r.min.x + 13.0, r.center().y), vec2(14.0, 14.0));
-                            if let Some(c) = stop {
-                                widgets::paint_swatch(ui.painter(), sw, &Paint::solid(c));
-                                let text = trf("Stop {n}  {hex}", &[("n", &(sel + 1)), ("hex", &c.to_hex())]);
-                                ui.painter().text(pos2(sw.max.x + 8.0, r.center().y), Align2::LEFT_CENTER, text, regular(11.0), t.text);
-                            }
-                        });
-                    });
                 }
-            }
-            if let PaintKind::Image(img) = &paint.kind {
-                let mut img = img.clone();
-                ui.horizontal(|ui| {
-                    ui.add_space(16.0);
-                    let resp = widgets::dropdown(ui, tr(&format!("{:?}", img.scale_mode)), 100.0, None);
-                    crate::right::menu_popup(&resp).show(|ui| {
-                        for (l, m) in [
-                            (tr("Fill"), ImageScaleMode::Fill),
-                            (tr("Fit"), ImageScaleMode::Fit),
-                            (tr("Crop"), ImageScaleMode::Crop),
-                            (tr("Tile"), ImageScaleMode::Tile),
-                        ] {
-                            if crate::right::menu_item(ui, l, "") {
-                                img.scale_mode = m;
-                                paint.kind = PaintKind::Image(img.clone());
-                                write(app, &target, &paint, false);
-                                ui.close();
-                            }
-                        }
-                    });
-                    if icons::button(ui, Icon::Rotate, 24.0, false, tr("Rotate 90°")).clicked() {
-                        img.rotation = (img.rotation + 1) % 4;
-                        paint.kind = PaintKind::Image(img.clone());
-                        write(app, &target, &paint, false);
-                    }
-                });
-                // The image's own colour profile (decoding converts it into the file's).
-                let source = app.session.doc().ok().and_then(|d| figcraft_render::images::profile_name(&img.image, d.images.get(&img.image)));
-                let source = match source.as_deref() {
-                    None => tr("Unknown — treated as sRGB"),
-                    Some("") => tr("Embedded profile"),
-                    Some(name) => name,
-                };
-                ui.horizontal(|ui| {
-                    ui.add_space(16.0);
-                    let text = trf("Color profile: {name}", &[("name", &source)]);
-                    ui.add(egui::Label::new(egui::RichText::new(text).font(regular(11.0)).color(t.text_secondary)).truncate());
-                });
-                image_presets(app, ui, &target, &mut paint, img.filters);
-                for (label, val) in [
-                    (tr_noop("Exposure"), img.filters.exposure),
-                    (tr_noop("Contrast"), img.filters.contrast),
-                    (tr_noop("Saturation"), img.filters.saturation),
-                    (tr_noop("Temperature"), img.filters.temperature),
-                    (tr_noop("Tint"), img.filters.tint),
-                    (tr_noop("Highlights"), img.filters.highlights),
-                    (tr_noop("Shadows"), img.filters.shadows),
-                ] {
-                    ui.horizontal(|ui| {
-                        ui.add_space(16.0);
-                        // Labels share a column so the sliders line up.
-                        let (lr, _) = ui.allocate_exact_size(vec2(72.0, 18.0), Sense::hover());
-                        ui.painter().text(lr.left_center(), Align2::LEFT_CENTER, tr(label), regular(11.0), t.text);
-                        let mut v = val;
-                        let r = ui.add(egui::Slider::new(&mut v, -1.0..=1.0).show_value(false));
-                        if r.changed() {
-                            let f = &mut img.filters;
-                            match label {
-                                "Exposure" => f.exposure = v,
-                                "Contrast" => f.contrast = v,
-                                "Saturation" => f.saturation = v,
-                                "Temperature" => f.temperature = v,
-                                "Tint" => f.tint = v,
-                                "Highlights" => f.highlights = v,
-                                _ => f.shadows = v,
-                            }
-                            paint.kind = PaintKind::Image(img.clone());
-                            write(app, &target, &paint, !r.drag_stopped());
-                        }
-                        if r.drag_stopped() {
-                            finish(app);
-                        }
-                    });
-                }
-            }
-            if let PaintKind::Pattern(pt) = paint.kind.clone() {
-                pattern_controls(app, ui, &target, &mut paint, pt);
-            }
-            if let Some(color) = edit_color {
-                let mut hsb = ui
-                    .data(|d| d.get_temp::<(f32, f32, f32, [u8; 4])>(Id::unique("cp_hsb")))
-                    .filter(|(_, _, _, rgba)| *rgba == color.to_rgba8())
-                    .map(|(h, s, b, _)| Hsb { h, s, b })
-                    .unwrap_or_else(|| Hsb::from_color(color));
-                let (sq, _) = ui.allocate_exact_size(vec2(240.0, 240.0), Sense::hover());
-                let (c1, d1) = sv_square(ui, sq, &mut hsb);
-                let (hr, _) = ui.allocate_exact_size(vec2(240.0, 28.0), Sense::hover());
-                let hr = Rect::from_min_max(pos2(hr.min.x + 48.0, hr.min.y + 8.0), pos2(hr.max.x - 16.0, hr.max.y - 8.0));
-                if icons::button(
-                    &mut ui.new_child(
-                        egui::UiBuilder::new().max_rect(Rect::from_min_size(pos2(hr.min.x - 36.0, hr.center().y - 12.0), vec2(24.0, 24.0))),
-                    ),
-                    Icon::Eyedropper,
-                    24.0,
-                    false,
-                    tr("Pick color (I)"),
-                )
-                .clicked()
-                {
-                    app.run("edit.pickColor", json!({"apply": false}));
-                    return;
-                }
-                let (c2, d2) = hue_slider(ui, hr, &mut hsb);
-                let (ar, _) = ui.allocate_exact_size(vec2(240.0, 20.0), Sense::hover());
-                let ar = Rect::from_min_max(pos2(ar.min.x + 48.0, ar.min.y + 2.0), pos2(ar.max.x - 16.0, ar.max.y - 6.0));
-                let mut new_alpha = None;
-                if let Some((a, d)) = alpha_slider(ui, ar, color) {
-                    new_alpha = Some((a, d));
-                }
-                let mut nc = hsb.to_color().with_alpha(color.a);
-                let mut done = d1 || d2;
-                let mut changed = c1 || c2;
-                if let Some((a, d)) = new_alpha {
-                    nc = nc.with_alpha(a);
-                    changed = true;
-                    done |= d;
-                }
-                // Colour model fields (Hex, RGB, HSL, HSB, LCH, OKLCH or CSS) + alpha.
-                if let Some((c, d)) = model_fields(ui, nc) {
-                    nc = c;
-                    hsb = Hsb::from_color(nc);
-                    changed = true;
-                    done |= d;
-                }
-                ui.data_mut(|d| d.insert_temp(Id::unique("cp_hsb"), (hsb.h, hsb.s, hsb.b, nc.to_rgba8())));
-                // A Display P3 colour sRGB can't show: the canvas (sRGB) shows the nearest one.
-                if app.session.doc().is_ok_and(|d| d.color_profile.conversion_to(figcraft_color::ColorProfile::Srgb).clips(nc)) {
-                    gamut_warning(ui, &t);
-                }
-                if changed {
-                    match &mut paint.kind {
-                        PaintKind::Solid { color } => {
-                            *color = nc.with_alpha(1.0);
-                            paint.opacity = nc.a;
-                        }
-                        PaintKind::Gradient(g) => {
-                            let sel: usize = ui.data(|d| d.get_temp(sel_stop_id)).unwrap_or(0);
-                            if let Some(s) = g.stops.get_mut(sel) {
-                                s.color = nc;
-                            }
-                        }
-                        PaintKind::Image(_) | PaintKind::Pattern(_) => {}
-                    }
-                    write(app, &target, &paint, !done);
-                }
-                if done {
-                    finish(app);
-                }
-            }
-            // Colours used on this page.
-            let doc_colors = page_colors(app, ui);
-            if !doc_colors.is_empty() {
-                ui.horizontal(|ui| {
-                    ui.add_space(16.0);
-                    widgets::label(ui, tr("On this page"), t.text_secondary);
-                });
-                // Inset on both sides: `add_space` would only indent the first row of a wrap.
-                inset(ui, |ui| {
-                    for c in &doc_colors {
-                        if widgets::swatch(ui, &Paint::solid(*c), 14.0).on_hover_text(c.to_hex()).clicked() {
-                            set_color(app, &target, &mut paint, *c, sel_stop_id, ui);
-                        }
-                    }
-                });
-            }
-            // Recent colours.
-            let recent = app.session.recent_colors.clone();
-            if !recent.is_empty() {
-                ui.horizontal(|ui| {
-                    ui.add_space(16.0);
-                    widgets::label(ui, tr("Recent"), t.text_secondary);
-                });
-                inset(ui, |ui| {
-                    for c in recent.iter().take(14) {
-                        if widgets::swatch(ui, &Paint::solid(*c), 14.0).clicked() {
-                            set_color(app, &target, &mut paint, *c, sel_stop_id, ui);
-                        }
-                    }
-                });
-            }
-            ui.add_space(12.0);
-        });
-    if !open || close_now || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-        finish(app);
-        app.ui.picker = None;
+            });
+        }
+        ui.add_space(12.0);
+    });
+    if closed {
+        close(app);
+    } else if app.ui.picker.is_some() {
+        // Kept only while the picker is open: a body that closed it (the eyedropper) doesn't leave
+        // a stale place for the next picker to inherit.
+        app.ui.picker_popover = Some(pop);
     }
-    let _ = Pos2::ZERO;
+}
+
+/// Escape with the picker open closes it (the selection stays); false when it was not open, so the
+/// key goes on to the binding that deselects.
+pub fn close_if_open(app: &mut FigApp) -> bool {
+    if app.ui.picker.is_none() {
+        return false;
+    }
+    close(app);
+    true
+}
+
+/// The colour picker closes (its X, a press outside it, Escape, or another popover took over):
+/// pending edits commit and the picker with its popover go.
+pub fn close(app: &mut FigApp) {
+    finish(app);
+    app.ui.picker = None;
+    app.ui.picker_popover = None;
+    app.ui.picker_button = None;
+    app.ui.picker_button_id = None;
 }
 
 /// Swatches wrapped in rows inset 16 points from both sides of the picker.
@@ -1282,7 +1342,7 @@ mod selection_color_tests {
         s.execute("select.set", &json!({"ids":[a,b]})).unwrap();
         let mut app = FigApp::new(s, Box::new(NoServices));
         let targets = collect(app.session.doc().unwrap(), &[a, b])[0].targets.clone();
-        crate::selection_colors::open_picker(&mut app, targets);
+        crate::selection_colors::toggle(&mut app, targets, None);
         (app, a, b)
     }
 

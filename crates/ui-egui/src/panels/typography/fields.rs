@@ -2,7 +2,11 @@ use super::axes::variable_axes;
 use super::glyphs::{LeadGlyph, caption, feature_row, text_seg};
 use super::picker::{font_picker, remember_family};
 use super::spacing::{SpacingField, commit_spacing, parse_letter_spacing, parse_line_height, spacing_field, spacing_input};
-use super::*;
+use super::{
+    Arc, DecorationLength, Document, FEATURES, FIELD_H, FieldEdit, FigApp, Icon, Id, Lead, LeadingTrim, ListStyle, MIXED, NodeId, SIZES, Sense, TABS,
+    TextAlignH, TextAlignV, TextAutoResize, TextCase, TextData, TextDecoration, TextStyle, Tokens, Ui, Value, VariableType, common, field_row, icons,
+    json, live, menu_item, menu_popup, regular, row, semibold, text_style_params, tr, tr_noop, trf, trim_num, uniform, vec2, widgets,
+};
 
 /// The font rows: family, style and size, line height and letter spacing.
 pub(super) fn font_rows(
@@ -19,24 +23,11 @@ pub(super) fn font_rows(
     // Font family.
     let family = uniform(styles, |s| s.font_family.clone());
     let fstyle = uniform(styles, |s| s.font_style.clone());
-    row(ui, 32.0, |ui| {
-        let w = ui.available_width();
-        let resp = font_dropdown(app, ui, ids, "fontFamily", family.as_deref(), w, editing);
-        let before_search = |ui: &mut Ui| !editing && apply_variable_item(ui, ids, "fontFamily", &resp);
-        if let Some(pick) = font_picker(ui, &resp, family.as_deref(), w.max(240.0), before_search) {
-            if let Some(f) = pick.picked {
-                remember_family(ui.ctx(), &f);
-                apply_style(app, "fontFamily", json!(f));
-            } else if let Some(h) = pick.hovered.or(pick.highlighted) {
-                // The canvas shows the hovered family (or the one the arrow keys are on);
-                // closing without picking ends the preview.
-                app.preview_text(ui.ctx(), "text.style", text_style_params(ids, range, json!({"fontFamily": h})));
-            }
-        }
-    });
+    row(ui, 32.0, |ui| family_row(app, ui, ids, family.as_deref(), editing, apply_style));
 
     // Style + size.
-    let half = (ui.available_width() - PAD * 2.0 - 8.0) / 2.0;
+    // One of the two field columns of the section's grid.
+    let half = widgets::col_width(ui.available_width());
     row(ui, 32.0, |ui| {
         let resp = font_dropdown(app, ui, ids, "fontStyle", fstyle.as_deref(), half, editing);
         let fam = family.clone();
@@ -71,9 +62,9 @@ pub(super) fn font_rows(
         ui.spacing_mut().item_spacing.x = 0.0;
         // The whole layer's size can follow a variable; a selected range just takes a value.
         let e = if editing {
-            widgets::number_field(ui, Id::unique("ty_size"), Lead::None, size, "", half - 20.0, 1.0)
+            widgets::number_field(ui, Id::unique("ty_size"), Lead::None, size, "", ui.available_width() - 20.0, 1.0)
         } else {
-            crate::variable_ui::number_field(app, ui, ids, "fontSize", Id::unique("ty_size"), Lead::None, size, "", half - 20.0)
+            crate::variable_ui::number_field(app, ui, ids, "fontSize", Id::unique("ty_size"), Lead::None, size, "", ui.available_width() - 20.0)
         };
         match e {
             Some(FieldEdit::Set(v)) => apply_style(app, "fontSize", json!(v.clamp(1.0, 5000.0))),
@@ -128,7 +119,8 @@ pub(super) fn paragraph_rows(
     styles: &[TextStyle],
     apply_style: &dyn Fn(&mut FigApp, &str, Value),
 ) {
-    let half = (ui.available_width() - PAD * 2.0 - 8.0) / 2.0;
+    // One of the two field columns of the section's grid.
+    let half = widgets::col_width(ui.available_width());
     // Paragraph spacing + resizing.
     let ps = common(doc, ids, |n| n.kind.text().map(|t| t.paragraph_spacing.to_bits())).flatten().map(f64::from_bits);
     let resize = common(doc, ids, |n| n.kind.text().map(|t| t.auto_resize)).flatten();
@@ -220,6 +212,47 @@ fn apply_variable_item(ui: &mut Ui, ids: &[NodeId], field: &str, anchor: &egui::
     let picked = menu_item(ui, tr("Apply variable"), "");
     if picked {
         crate::variable_ui::open(ui, ids, field, VariableType::String, anchor.rect.left_bottom());
+        ui.close();
+    } else {
+        ui.separator();
+    }
+    picked
+}
+
+/// The font family field and its searchable menu (hovering a family previews it on the canvas).
+fn family_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], family: Option<&str>, editing: bool, apply_style: &dyn Fn(&mut FigApp, &str, Value)) {
+    let range = figcraft_engine::textedit::selected_range(&app.session);
+    let w = ui.available_width();
+    let resp = font_dropdown(app, ui, ids, "fontFamily", family, w, editing);
+    let offer = app.services.can_ask_for_local_fonts();
+    let mut ask = false;
+    let before_search = |ui: &mut Ui| {
+        if !editing && apply_variable_item(ui, ids, "fontFamily", &resp) {
+            return true;
+        }
+        ask = offer && local_fonts_item(ui);
+        ask
+    };
+    let pick = font_picker(ui, &resp, family, w.max(240.0), before_search);
+    if ask {
+        app.services.ask_for_local_fonts();
+    }
+    let Some(pick) = pick else { return };
+    if let Some(f) = pick.picked {
+        remember_family(ui.ctx(), &f);
+        apply_style(app, "fontFamily", json!(f));
+    } else if let Some(h) = pick.hovered.or(pick.highlighted) {
+        // The canvas shows the hovered family (or the one the arrow keys are on); closing without
+        // picking ends the preview.
+        app.preview_text(ui.ctx(), "text.style", text_style_params(ids, range, json!({"fontFamily": h})));
+    }
+}
+
+/// "Use fonts installed on this computer…" above the font search (where the browser can list
+/// them): true when clicked (the menu closes).
+fn local_fonts_item(ui: &mut Ui) -> bool {
+    let picked = menu_item(ui, tr("Use fonts installed on this computer…"), "");
+    if picked {
         ui.close();
     } else {
         ui.separator();

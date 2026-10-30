@@ -1,12 +1,12 @@
 //! Vector networks: vertices joined by curved segments, any number of segments per vertex, plus
 //! filled regions made of closed loops.
 
+use figcraft_color::Paint;
 use figcraft_geom::kurbo::{CubicBez, ParamCurve, ParamCurveArclen, ParamCurveDeriv};
-use figcraft_geom::{BezPath, Point, Vec2};
+use figcraft_geom::{Affine, BezPath, Point, Vec2};
 use serde::{Deserialize, Serialize};
 
 use crate::{StrokeCap, StrokeJoin};
-use figcraft_color::Paint;
 
 /// How a vertex's two bezier handles follow each other when one is dragged.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -89,6 +89,17 @@ pub enum WindingRule {
     EvenOdd,
 }
 
+/// The paint coordinate frame retained when a region moves or its vector is refit.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RegionPaintSpace {
+    /// Width of the box that defines paint coordinates.
+    pub width: f64,
+    /// Height of the box that defines paint coordinates.
+    pub height: f64,
+    /// Maps paint-local coordinates into this network's local coordinates.
+    pub transform: Affine,
+}
+
 /// A filled region: loops of segment indices.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct Region {
@@ -98,6 +109,25 @@ pub struct Region {
     /// The area's own fill paints; `None`: the layer's fills.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fills: Option<Vec<Paint>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paint_space: Option<RegionPaintSpace>,
+}
+
+impl Region {
+    /// Paint box and transform, falling back to the current node box for old or invalid metadata.
+    pub fn paint_frame(&self, width: f64, height: f64) -> (f64, f64, Affine) {
+        let Some(frame) = self.paint_space else { return (width, height, Affine::IDENTITY) };
+        let coefficients = frame.transform.as_coeffs();
+        let valid = frame.width.is_finite()
+            && frame.height.is_finite()
+            && frame.width > 0.0
+            && frame.height > 0.0
+            && coefficients.iter().all(|value| value.is_finite())
+            && frame.transform.determinant().is_finite()
+            && frame.transform.determinant() != 0.0
+            && frame.transform.inverse().as_coeffs().iter().all(|value| value.is_finite());
+        if valid { (frame.width, frame.height, frame.transform) } else { (width, height, Affine::IDENTITY) }
+    }
 }
 
 /// A segment's own stroke look: its paints and weight (`None`: the layer's weight).
@@ -168,7 +198,7 @@ impl VectorNetwork {
         let mut regions = Vec::new();
         if closed && n > 2 {
             segments.push(Segment::line(n - 1, 0));
-            regions.push(Region { loops: vec![(0..segments.len()).collect()], winding: WindingRule::NonZero, fills: None });
+            regions.push(Region { loops: vec![(0..segments.len()).collect()], winding: WindingRule::NonZero, fills: None, paint_space: None });
         }
         Self { vertices, segments, regions, strokes: Default::default() }
     }
@@ -257,7 +287,7 @@ impl VectorNetwork {
         }
         close_open(&mut net, &mut loop_segs, &mut all_loops, first_v, cur_v);
         if !all_loops.is_empty() {
-            net.regions.push(Region { loops: all_loops, winding: WindingRule::NonZero, fills: None });
+            net.regions.push(Region { loops: all_loops, winding: WindingRule::NonZero, fills: None, paint_space: None });
         }
         net
     }
@@ -751,12 +781,24 @@ impl VectorNetwork {
             s.ta = (s.ta.0 * sx, s.ta.1 * sy);
             s.tb = (s.tb.0 * sx, s.tb.1 * sy);
         }
+        let scale = Affine::scale_non_uniform(sx, sy);
+        for region in &mut self.regions {
+            if let Some(frame) = &mut region.paint_space {
+                frame.transform = scale * frame.transform;
+            }
+        }
     }
 
     pub fn translate(&mut self, dx: f64, dy: f64) {
         for v in &mut self.vertices {
             v.x += dx;
             v.y += dy;
+        }
+        let translate = Affine::translate((dx, dy));
+        for region in &mut self.regions {
+            if let Some(frame) = &mut region.paint_space {
+                frame.transform = translate * frame.transform;
+            }
         }
     }
 

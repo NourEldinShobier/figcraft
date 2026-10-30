@@ -173,7 +173,8 @@ fn pointer_event(app: &FigApp, kind: PointerKind, pos: Pos2, m: &egui::Modifiers
         sy: f64::from(pos.y),
         shift: m.shift,
         alt: m.alt,
-        cmd: m.command,
+        // Crop mode: resizing the layer crops it, as Cmd/Ctrl-resizing does.
+        cmd: m.command || app.ui.crop.is_some(),
         ctrl: m.ctrl,
         zoom,
         pressure: app.canvas.pressure,
@@ -297,6 +298,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     crate::comments::draw(app, &painter);
     crate::live_text::draw(app, &painter);
     crate::live::draw(app, &painter, &ctx);
+    crate::live::agent::draw(app, &painter, &ctx);
     crate::live::chat_box(app, &ctx);
     crate::live::spotlight_banner(app, &ctx, rect);
     crate::comments::popovers(app, &ctx);
@@ -361,6 +363,9 @@ fn describe_box([x0, y0, x1, y1]: [f64; 4]) -> String {
 
 #[cfg(test)]
 mod builder_poly_tests;
+
+#[cfg(test)]
+mod outline_tests;
 
 #[cfg(test)]
 mod zoom_preview_tests;

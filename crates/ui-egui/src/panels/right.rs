@@ -2,7 +2,11 @@
 
 use egui::{Align2, Color32, CornerRadius, Id, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use figcraft_color::{BlendMode, Paint, PaintKind};
-use figcraft_doc::*;
+use figcraft_doc::{
+    Blur, BlurType, BoolOp, Brush, Document, Effect, EffectKind, ExportFormat, ExportSetting, Glass, GridAlign, GridKind, LayoutGrid,
+    MAX_BLUR_RADIUS, MaskType, Node, NodeId, NodeKind, Noise, NoiseMode, Shadow, StrokeAlign, StrokeCap, StrokeJoin, StrokeProps, Texture,
+    VariableType, WidthPoint, WidthPreset, WidthProfile,
+};
 use figcraft_engine::cmd::lists::{moved_index, removed_index};
 use serde_json::{Value, json};
 
@@ -27,8 +31,10 @@ use inspect::inspect;
 pub(crate) use inspect::{inspect_section, prop_row};
 #[cfg(test)]
 pub(crate) use menu::menu_row_width;
+#[cfg(test)]
+pub(crate) use menu::preview_blend;
 pub use menu::{blend_menu, context_popup, menu_check, menu_item, menu_item_beside_checks, menu_item_with, menu_popup, menu_row};
-pub(crate) use menu::{block, menu_style, row, row_rect};
+pub(crate) use menu::{block, menu_row_lit, menu_style, row, row_rect};
 use paints::{appearance, paints, variable_modes};
 pub(crate) use stroke::{CAP_ART_W, cap_art, join_label};
 
@@ -99,6 +105,11 @@ impl FigApp {
 /// menu, then route the scroll area to comments, frame presets, design, prototype or inspect.
 pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
+    // The panel's edge, drawn here: the frame has no stroke (a stroke counts as margin and would
+    // take 1 pt off each side of the panel (240 pt by default)).
+    let edge = ui.max_rect();
+    app.ui.right_panel_rect = Some(edge);
+    ui.painter().line_segment([edge.left_top(), edge.left_bottom()], Stroke::new(1.0, t.border));
     let w = ui.available_width();
     // Top bar: people (you and the others in a live session), present, share.
     let (top, _) = ui.allocate_exact_size(vec2(w, 48.0), Sense::hover());
@@ -299,21 +310,16 @@ fn page_section(app: &mut FigApp, ui: &mut Ui, doc: &Document) {
         _ => figcraft_color::Color::DEFAULT_PAGE,
     };
     widgets::section_header(ui, tr("Page"), &[], false);
-    let mut open_picker = false;
     let mut new_hex = None;
     row(ui, 32.0, |ui| {
         let p = Paint::solid(bg);
-        if widgets::swatch(ui, &p, 16.0).clicked() {
-            open_picker = true;
-        }
+        let sw = widgets::swatch(ui, &p, 16.0);
+        app.picker_control(crate::colorpicker::PickerTarget::PageBackground, &sw);
         if let Some(h) = widgets::text_field(ui, Id::unique("pagebg"), &bg.to_hex(), 96.0, "") {
             new_hex = Some(h);
         }
         widgets::label(ui, "100 %", t.text);
     });
-    if open_picker {
-        app.ui.picker = Some(crate::colorpicker::PickerTarget::PageBackground);
-    }
     if let Some(h) = new_hex
         && let Some(c) = figcraft_color::Color::from_hex_or_name(&h)
     {

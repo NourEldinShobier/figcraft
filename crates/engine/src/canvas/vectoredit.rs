@@ -24,14 +24,14 @@ mod width_sides_tests;
 #[cfg(test)]
 mod width_tests;
 
-use figcraft_doc::*;
+use figcraft_doc::{Corners, Document, HandleMirroring, NodeId, NodeKind, StrokeAlign, StrokeCap, StrokeJoin, VectorNetwork, Vertex, WindingRule};
 use figcraft_geom::{Affine, Point, Rect, Vec2};
 use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::cmd::CommandSpec;
 use crate::cmd::props::enum_of;
-use crate::params::*;
+use crate::params::{boolean, f64_of, get, id, num, num_or, req_num, string, targets};
 use crate::{EngineError, Result, Session, bad, spec};
 
 pub(crate) use pointer::VGesture;
@@ -1219,17 +1219,31 @@ pub(crate) fn cut_across(s: &mut Session, a: Point, b: Point) -> Result<Vec<Node
 /// under it, the others get the same (points outside closed areas are skipped). A vector without
 /// fills gets the default fill so the painted area shows.
 pub fn paint_all(doc: &mut Document, id: NodeId, pts: &[Point]) -> Result<bool> {
+    let inherited = doc.get(id)?.fills.clone();
     let filled = edit(doc, id, |net| {
         let mut want = None;
         for p in pts {
-            want = net.paint_to(*p, want).or(want);
+            want = net.paint_to_with(*p, want, Some(&inherited)).or(want);
         }
         want
     })?
     .ok_or_else(|| bad("vector.edit.paint", "click inside a closed area"))?;
     let n = doc.get_mut(id)?;
     if filled && n.fills.iter().all(|f| !f.visible) {
-        n.fills = vec![figcraft_color::Paint::solid(figcraft_color::Color::DEFAULT_SHAPE)];
+        let default = figcraft_color::Paint::solid(figcraft_color::Color::DEFAULT_SHAPE);
+        let targets: std::collections::BTreeSet<usize> = match &n.kind {
+            NodeKind::Vector { network } => pts.iter().filter_map(|point| network.region_at(*point)).collect(),
+            _ => std::collections::BTreeSet::new(),
+        };
+        if let NodeKind::Vector { network } = &mut n.kind {
+            for (index, region) in network.regions.iter_mut().enumerate() {
+                if region.fills.is_none() && !targets.contains(&index) {
+                    // Freeze an untouched inherited region before adding a node-wide default.
+                    region.fills = Some(Vec::new());
+                }
+            }
+        }
+        n.fills = vec![default];
     }
     Ok(filled)
 }

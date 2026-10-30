@@ -1,6 +1,8 @@
 use super::handles::SNAP_PX;
 use super::pen::take_enclosed;
-use super::*;
+use super::{
+    Affine, Cursor, Gesture, Node, NodeId, NodeKind, Point, PointerEvent, Rect, Result, Session, StrokeCap, Targets, ToolId, Vec2, frame_at, textedit,
+};
 
 impl Session {
     pub(super) fn draw_down(&mut self, ev: &PointerEvent) -> Result<()> {
@@ -98,6 +100,10 @@ impl Session {
     }
 
     pub(super) fn up(&mut self, ev: &PointerEvent) -> Result<()> {
+        // Alt went down or up since the last move: the drop is a copy or a move as the release has it.
+        if matches!(&self.tool.gesture, Gesture::Move { moved: true, duplicate, .. } if *duplicate != ev.alt) {
+            self.drag(ev)?;
+        }
         let g = std::mem::take(&mut self.tool.gesture);
         self.tool.overlay.marquee = None;
         self.tool.overlay.guides.clear();
@@ -109,7 +115,7 @@ impl Session {
         self.tool.overlay.drop_cell = None;
         let drop_target = self.tool.overlay.drop_target.take();
         match g {
-            Gesture::Move { ids, moved, duplicate, start, deselect, .. } => {
+            Gesture::Move { ids, moved, duplicate, start, deselect, keep, .. } => {
                 if moved {
                     // A free move lands in the frame under the pointer (or the page) where it was
                     // dropped; layers in an auto layout frame already sit in their slot.
@@ -154,6 +160,13 @@ impl Session {
                     if let Some(d) = deselect {
                         let sel = self.selection().into_iter().filter(|x| *x != d).collect();
                         self.set_selection(sel);
+                    } else if let Some(k) = keep {
+                        // A click (not a drag) on one layer of a multi-selection selects just it.
+                        let doc = self.doc()?.clone();
+                        let sel = self.selection();
+                        if sel.len() > 1 && (sel.contains(&k) || sel.iter().any(|s| doc.is_ancestor(*s, k))) {
+                            self.set_selection(vec![k]);
+                        }
                     }
                     if deselect.is_none() && !(ev.shift || ev.cmd || duplicate) {
                         self.widget_click(start, ev.tol() * 2.0)?;

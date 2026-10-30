@@ -473,6 +473,10 @@ fn every_command_survives_junk_params() {
         json!({"commands": [{"command": "select.all", "as": "\u{0}"}, {"command": "node.set", "params": {"ids": [
             {"$ref": "\u{0}", "field": "ids/18446744073709551616/x"}, {"$ref": {"x": 1}}, {"$step": 0, "field": "//"}, {"$ref": "\u{0}", "field": "/"}],
             "props": {"name": {"$ref": "nope", "field": 5}}}}]}),
+        // Font downloads: family names as junk and as paths (a family is only ever looked up in
+        // the font index, never used as a path).
+        json!({"family": "../../\u{0}Lato"}),
+        json!({"family": ["Lato"], "style": 1e308}),
     ];
     for spec in all_commands() {
         if matches!(
@@ -492,11 +496,19 @@ fn every_command_survives_junk_params() {
             continue;
         }
         for j in &junk {
-            let mut s = sess();
-            let _ = s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10}));
-            let _ = s.execute("text.create", &json!({"text": "t"}));
-            if let Err(EngineError::Internal { cmd, msg }) = s.execute(spec.id, j) {
-                panic!("{cmd} panicked on {j}: {msg}");
+            // Each junk object as given (names the command doesn't take are refused) and cut down
+            // to the names it takes, so the junk values still reach its parsers.
+            let mut taken = j.clone();
+            if let (Some(names), Some(o)) = (crate::cmd::param_names(spec.id), taken.as_object_mut()) {
+                o.retain(|k, _| matches!(k.as_str(), "ids" | "id") || names.contains(&k.as_str()));
+            }
+            for params in if taken == *j { vec![j] } else { vec![j, &taken] } {
+                let mut s = sess();
+                let _ = s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10}));
+                let _ = s.execute("text.create", &json!({"text": "t"}));
+                if let Err(EngineError::Internal { cmd, msg }) = s.execute(spec.id, params) {
+                    panic!("{cmd} panicked on {params}: {msg}");
+                }
             }
         }
     }
@@ -630,13 +642,11 @@ fn document_colors_are_counted_per_page() {
     assert!(v["colors"].as_array().unwrap().is_empty());
 }
 
+/// `guide.add`, `guide.move` and `guide.remove` edit the current page's guides by index.
 #[test]
 fn guides_add_move_remove() {
     let mut s = sess();
-    let guides = |s: &Session| match &s.doc().unwrap().node(s.page().unwrap()).unwrap().kind {
-        NodeKind::Page { guides, .. } => guides.clone(),
-        _ => vec![],
-    };
+    let guides = |s: &Session| s.doc().unwrap().node(s.page().unwrap()).unwrap().guides.clone();
     let r = s.execute("guide.add", &json!({"vertical": true, "offset": 120})).unwrap();
     assert_eq!(r["index"], json!(0));
     s.execute("guide.add", &json!({"vertical": false, "offset": 40.5})).unwrap();

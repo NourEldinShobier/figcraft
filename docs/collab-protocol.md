@@ -8,7 +8,7 @@ embeds, invite links, document sync end to end (several apps edit one file), liv
 selections, avatars and follow. **Step 3 is implemented**: per-user undo and redo, rejection
 handling and offline queueing with reconnect (`crates/collab`, wired into the engine's live
 session and the transport). **Step 4 is implemented**: the browser build joins sessions a desktop
-app hosts, and `figcraft://` invite links open the app and join. Styles, variables, collections,
+app hosts and publishes files to a server, and `figcraft://` invite links open the app and join. Styles, variables, collections,
 modes and comments created in a session take ids from their creator's id space, and others' text
 carets, cursor chat and spotlights show live (see Presence). **Step 5 is implemented**: the
 standalone `figcraft-server` (`apps/figcraft-server`, running it: [`server.md`](server.md)) keeps
@@ -151,7 +151,18 @@ As built:
   colour profile, image presets, annotation categories and library data (whole values); styles,
   comment threads, variable collections and variables (one entry per id plus the order of ids;
   the whole list when ids aren't unique); dev-mode snapshots (per layer); images (per content
-  hash, the encoded bytes as base64); a board's timer and vote (whole values, `DocProp::Timer` and
+  hash, the encoded bytes as base64; as an entry applies the claim is checked: every key is
+  1–128 ASCII letters, digits, `-` or `_` (a saved file names the image `images/<key>`), a key
+  with the shape of a content hash (64 hex chars) must be exactly the lowercase sha256 hex of
+  those bytes (as the app writes them); a side is at most 65 535 px and the decoded bytes at
+  most 256 MiB (`ImageData::MAX_BYTES`, what the importers read), base64 that can't decode is
+  refused, a key that already holds an image can't be given other bytes, and an image a layer or
+  style still shows can't be removed; a snapshot or a server log written before these checks
+  opens without the image entries they refuse — judged against the state they apply to, so a
+  logged replacement or removal is left out too — rather than failing, and a file published to a
+  server is kept without them; a restarted server that left image entries out, or whose saved log
+  puts images, catches every resuming client up with its snapshot instead of that log); a
+  board's timer and vote (whole values, `DocProp::Timer` and
   `DocProp::Vote`) and the vote's ballots (`Entry::Ballot(voter)`, one per voter, so people voting
   at once write different entries). The timer travels as its end time (or, paused, the time left),
   never as ticks: each client counts down on its own clock. The page order is the pages'
@@ -187,7 +198,10 @@ an older client never gets a message it can't read. A server that takes them ans
 client, right after its welcome, with a `ready` signal about the client itself; a client sends
 signals only after that, so an older server never gets one either (the app says the host runs an
 older version). A signal is a kind and a text, so kinds added later are skipped by clients and
-dropped by servers that don't know them.
+dropped by servers that don't know them. The `name` kind (a rename) came after the first signals:
+a server that knows it keeps the new name and tells everyone with the client's `PeerJoined`
+(apps take a `PeerJoined` for someone already there as their new name and colour); an older
+server drops it, so the session keeps showing the name the client joined with.
 
 **Open hosting and reports** came later within version 2 the same way. A connection that opens
 with `OpenHosting` asks a server about its hosting, publishes without the key when the server is
@@ -236,7 +250,7 @@ Client → server:
 | `Admin {publish {name, snapshot} \| files \| links {file} \| createLink {file, access, label} \| revoke {file, link} \| remove {file}}` | A request on a managing connection; each gets one `Admin` reply, in order. |
 | `OpenLibrary {protocol, file, token, client_version}` | Instead of `Hello`: use a file's team library with one of the file's share links. |
 | `Library {fetch {have?, usage?} \| publish {archive} \| usage}` | A request on a library connection; each gets one `Library` reply, in order. `usage` is `{file, components: [(id, instances)]}`. |
-| `Signal {kind, text}` | Ephemeral presence, only after the server's `ready`: `chat` (the cursor chat message; empty: closed) or `spotlight` (`"on"`, or empty: stopped). |
+| `Signal {kind, text}` | Ephemeral presence, only after the server's `ready`: `chat` (the cursor chat message; empty: closed), `spotlight` (`"on"`, or empty: stopped) or `name` (your new name: the server keeps it, cleaned like a hello's, and sends everyone, you too, your `PeerJoined`; never passed on as a signal). |
 | `OpenPlugins {protocol, key, client_version}` | Instead of `Hello`: use the server's plugin directory; `key` empty to browse, the server key to publish too. |
 | `OpenHosting {protocol, client_version, file, owner}` | Instead of `Hello`: ask about the server's hosting; publish without the key (`Admin publish`) when it is open to the public; with a file's id and owner token, manage that file (`Admin links \| createLink \| revoke \| rename \| remove` of it). Answered with `Hosting` or `Refused`. |
 | `Admin {rename {file, name} \| listing \| reports \| block {ip} \| unblock {ip} \| blocked}` | Later managing requests: rename a file on the server, the files with what the operator moderates by, the reports, blocking addresses (an IPv6 address: its /64). Owner tokens may only rename their file. |
@@ -427,8 +441,10 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   With another document in front (or before the welcome arrives), cursors show in page
   coordinates on whatever page you look at and nothing is outlined.
 - Colours and names: the host hands out the first free colour of an eight-colour palette and
-  "Guest N" to people without a name (Preferences: your name, `pref.userName`; also in the Share
-  popover). After a newcomer's `Welcome` the host sends it its own `PeerJoined`, which is how it
+  "Guest N" to people without a name (Preferences ▸ Your name, `pref.userName`; also in the Share
+  popover and the Join dialog). Changing it while in a session renames you there at once (a
+  `name` signal, sent again after a reconnect, whose hello has the old name); clearing it keeps
+  the session's name until you join again. After a newcomer's `Welcome` the host sends it its own `PeerJoined`, which is how it
   learns its name and colour.
 - Idle cost is zero: network threads block, wake the window (`request_repaint`) only when a
   message arrives, cursors only ask for frames while they glide, and text carets never do.
@@ -516,7 +532,8 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   is final; a first join that can't reach the host fails at once. A reconnect resumes as the same
   client: the guest's connection keeps the session id, client id and last sequence number from
   the messages it read and sends them in its next `Hello` (see Offline and reconnect).
-- The browser build joins (see *Built (the browser client)*); hosting needs the desktop app.
+- The browser build joins and publishes to a server (see *Built (the browser client)*); hosting
+  needs the desktop app.
 
 *Built* (sharing with a join code; `figcraft_collab::code`, `collab.share`, `collab.join {code}`):
 
@@ -574,7 +591,8 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   Whoever sees the code learns the host's address. Everyone who joins edits; a host without an
   IPv4 address gets no code and shares its link.
 - **In the browser** a code joins like a link (the page asks the server over its own WebSocket,
-  then opens the session's); sharing needs the desktop app.
+  then opens the session's); it shares online through the server in Preferences as the desktop
+  app does, and not on the local network (a page can't listen).
 
 *Built* (your online files; `figcraft_engine::online`, `collab.files`, `collab.openFile`,
 `collab.forgetFile`, `collab.manageFile`):
@@ -589,7 +607,7 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   once when the list changes, so a crash doesn't lose a token. A file published with the server's
   key has no owner token and is the operator's to manage: it isn't recorded.
 - **The token is a password.** It is stored on this computer only (the desktop app's preferences
-  file; the browser build keeps no preferences and can't publish), is never logged, and no
+  file; the browser build keeps only your name across reloads, so a token it gets lasts as long as the page), is never logged, and no
   command result, summary or `ui.inspect` carries it or the owner's own links: `collab.files`
   says `hasOwnerToken: true`. The record's debug output leaves the secrets out. A session opened
   from a record holds no token either (`published.owner` is null there): requests that need it
@@ -850,9 +868,10 @@ Decisions, as built:
   welcomed as new after all (the server restarted without its state) starts over from the
   snapshot and is told how many unsent changes couldn't be kept.
 - **Catch-up.** The server keeps a log of accepted batches (`Limits::max_log_batches`, default
-  10 000, and `max_log_changes`, default 1 000 000). If every batch after the client's sequence
-  number is still in it, the welcome carries them (`CatchUp::Delta`); otherwise the whole document
-  (`CatchUp::Snapshot`).
+  10 000, `max_log_changes`, default 1 000 000, and `max_log_bytes`, default 64 MiB, which a
+  desktop host uses as they are and `figcraft-server` takes from its `max_log_mb`). If every batch
+  after the client's sequence number is still in it, the welcome carries them (`CatchUp::Delta`);
+  otherwise the whole document (`CatchUp::Snapshot`).
 - **What happened to the batches in flight.** The server remembers per client the last batch id it
   processed and the latest refused ids (at most 1 024). Batches up to that id that the catch-up
   doesn't confirm were refused (the user is told); the others are sent again, in order, keeping
@@ -991,7 +1010,7 @@ chooses to share on the network; the default is the invite link with a random to
    resuming connection), followed by client-scoped ids for document-level objects and remote text
    carets on the canvas.
 4. **Browser client** (WebSocket through `web-sys`). **Done** (the web build joins
-   desktop-hosted sessions; `figcraft://` links open the desktop app and join).
+   desktop-hosted sessions and publishes files to a server, #917; `figcraft://` links open the desktop app and join).
 5. **Standalone `figcraft-server`** with persistence, compaction, share links and permissions.
    **Done** (`apps/figcraft-server` on the shared hub; edit and view links, the server key,
    publishing from the app; see [`server.md`](server.md)), followed by open hosting for a public

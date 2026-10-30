@@ -800,7 +800,7 @@ impl<'a> Ctx<'a> {
                 },
             },
             "TEXT" => NodeKind::Text(Box::new(text::text_data(self, j))),
-            "COMPONENT" => NodeKind::Component { description: description(&self.component_meta, j), props: BTreeMap::new() },
+            "COMPONENT" => NodeKind::Component { description: description(&self.component_meta, j), props: BTreeMap::new(), prop_order: Vec::new() },
             "COMPONENT_SET" => NodeKind::ComponentSet { description: description(&self.set_meta, j) },
             "SLICE" => NodeKind::Slice,
             _ => return None,
@@ -942,9 +942,30 @@ impl<'a> Ctx<'a> {
     /// (exact look, editable as a shape): returns whether it does, and the caller moves the paints
     /// with [`outline_stroke`] once the styles and variables of the stroke are read.
     fn vector(&mut self, n: &mut Node, j: &Value) -> bool {
-        let net = match j.get("vectorNetworkRef") {
-            Some(r) => Some(r.as_u64().and_then(|i| self.networks.get(usize::try_from(i).ok()?).cloned().flatten())),
-            None => j.get("vectorNetwork").map(network),
+        let net = match j.get("vectorNetwork") {
+            Some(net) => Some(network(net).map(|mut network| {
+                // Private `.fig` mapper handoff only. Public REST `vectorNetwork` remains
+                // native network JSON; it never consumes the private mapper paint fields.
+                if self.fig_sources.is_some()
+                    && let Some(regions) = net.get("regions").and_then(Value::as_array)
+                {
+                    for (region, source) in network.regions.iter_mut().zip(regions) {
+                        let Some(fills) = source.get("_figRegionFills") else { continue };
+                        let Some(list) = fills.as_array() else {
+                            self.warn("invalid vector region paints were skipped");
+                            continue;
+                        };
+                        let before = list.len();
+                        let wrapper = serde_json::json!({"fills": fills});
+                        region.fills = props::paints(self, &wrapper, "fills");
+                        if region.fills.as_ref().is_some_and(|parsed| parsed.len() < before) {
+                            self.warn("invalid vector region paints were skipped");
+                        }
+                    }
+                }
+                network
+            })),
+            None => j.get("vectorNetworkRef").map(|r| r.as_u64().and_then(|i| self.networks.get(usize::try_from(i).ok()?).cloned().flatten())),
         };
         if let Some(net) = net {
             match net {
@@ -1163,7 +1184,10 @@ impl<'a> Ctx<'a> {
     }
 
     /// The document image key for an `imageRef`: its bytes when the resolver has them, else a
-    /// grey placeholder stored under the `imageRef` itself.
+    /// grey placeholder stored under the `imageRef` itself when that name can legitimately be an
+    /// archive member (`is_valid_key`) and claims no content hash (`claims_content_hash`: the
+    /// placeholder's bytes don't hash to it); any other name shares the `rest-image-missing`
+    /// placeholder.
     pub(crate) fn image_key(&mut self, image_ref: &str) -> String {
         if let Some(k) = self.image_keys.get(image_ref) {
             return k.clone();
@@ -1173,7 +1197,13 @@ impl<'a> Ctx<'a> {
             Some((hash, _, _)) => hash,
             None => {
                 self.missing_images += 1;
-                let key = if image_ref.is_empty() { MISSING_IMAGE } else { clip_str(image_ref) }.to_string();
+                // An `imageRef` arrives from an untrusted file, and keys become archive member
+                // names on save: a name that can't legitimately be one must not reach the map,
+                // nor one claiming a content hash the placeholder's bytes don't have.
+                let candidate = if image_ref.is_empty() { MISSING_IMAGE } else { clip_str(image_ref) };
+                let named = ImageData::is_valid_key(candidate) && !ImageData::claims_content_hash(candidate);
+                let key = if named { candidate } else { MISSING_IMAGE };
+                let key = key.to_string();
                 if !self.doc.images.contains_key(&key)
                     && let Some(png) = placeholder_png()
                 {
@@ -1234,7 +1264,7 @@ impl<'a> Ctx<'a> {
             let n = self.missing_images;
             let (s, verb) = if n == 1 { ("", "shows") } else { ("s", "show") };
             self.warn(format!(
-                "{n} image{s} without image data {verb} a grey placeholder named by its imageRef (put the downloaded images, named by imageRef, in an `images` folder next to the JSON)"
+                "{n} image{s} without image data {verb} a grey placeholder, named by its imageRef when that can legitimately name a file and by the shared name otherwise (put the downloaded images, named by imageRef, in an `images` folder next to the JSON)"
             ));
         }
         let unused = self.style_meta.keys().filter(|k| !self.doc.styles.iter().any(|s| s.id == **k)).count();
@@ -1596,6 +1626,11 @@ pub(crate) fn network(v: &Value) -> Option<VectorNetwork> {
         && net.segments.iter().all(|s| [s.ta.0, s.ta.1, s.tb.0, s.tb.1].into_iter().all(coord));
     if !fits {
         return None;
+    }
+    // Region paints come only from the validated `.fig` mapper handoff, never from public JSON.
+    for r in &mut net.regions {
+        r.fills = None;
+        r.paint_space = None;
     }
     for p in &mut net.vertices {
         p.radius = p.radius.clamp(0.0, MAX_SIZE);

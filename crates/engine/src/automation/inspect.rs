@@ -473,7 +473,7 @@ pub fn node_json_with_options(doc: &Document, id: NodeId, depth: usize, options:
                 put!("componentProperties", json!(props));
             }
         }
-        NodeKind::Component { description, props } => {
+        NodeKind::Component { description, props, .. } => {
             if !description.is_empty() {
                 put!("description", json!(description));
             }
@@ -547,6 +547,7 @@ pub fn document_with_options(s: &Session, depth: usize, all_pages: bool, options
             })
             .collect();
     json!({
+        "id": ds.uid,
         "name": doc.name,
         "kind": doc.kind.id(),
         "path": ds.path,

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Done, FigApp, LeftTab, MobilePanel, NodeId, PANEL_DEFAULT, RightTab, Value, comments, dev_compare, dialogs, home, i18n, import_report, json,
+    layers, live, menus, missing_fonts, plugins_ui, present, tabs, updates_ui, versions,
+};
 
 impl FigApp {
     /// Dismiss the composer after a successful switch away from the Comment tool.
@@ -223,6 +226,16 @@ impl FigApp {
                 "layers.collapseAll" => layers::collapse_all(self),
                 "contextMenu" => self.ui.key_menu = true,
                 "selectArea" => self.start_key_box(),
+                "image.crop" => {
+                    // Crop mode takes the canvas: an open colour picker would edit the same paint.
+                    self.ui.picker = None;
+                    self.ui.crop = r
+                        .data
+                        .get("id")
+                        .and_then(figcraft_engine::params::id_of)
+                        .zip(r.data.get("index").and_then(Value::as_u64))
+                        .map(|(id, i)| (id, i as usize));
+                }
                 "canvas.renameLabel" => {
                     self.ui.rename_label = r.data.get("id").and_then(figcraft_engine::params::id_of).map(|id| layers::Rename { id, start: true });
                 }

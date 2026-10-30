@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use super::*;
+use super::{Forms, LANGS, Lang, Plural, Text, chain, counted, fill, find, lookup, plural, plural_one, resolve};
 
 /// Keys looked up from data rather than written as `tr("…")` in the code: the main menu's
 /// submenu names (the engine's menu catalog) and labels of engine and document enums.
@@ -261,8 +261,16 @@ fn placeholders(s: &str) -> BTreeSet<&str> {
 fn forms(t: &Text) -> Vec<&'static str> {
     match t {
         Text::Plain(s) => vec![s],
-        Text::Plural { one, few, many, other } => one.iter().chain(few).chain(many).copied().chain([*other]).collect(),
+        Text::Plural(Forms { one, few, many, other }) => one.iter().chain(few).chain(many).copied().chain([*other]).collect(),
     }
+}
+
+/// The browser build bakes in every catalog: a row is a key and a two-word entry, not an entry
+/// with room for four strings.
+#[test]
+fn a_catalog_row_is_four_words() {
+    assert_eq!(std::mem::size_of::<Text>(), 2 * std::mem::size_of::<usize>());
+    assert_eq!(std::mem::size_of::<(&str, Text)>(), 4 * std::mem::size_of::<usize>());
 }
 
 fn english() -> &'static Lang {
@@ -315,10 +323,10 @@ fn catalogs_have_known_keys_and_matching_placeholders() {
             for (i, form) in forms(t).iter().enumerate() {
                 let got = placeholders(form);
                 // A "one" form may spell the count out ("una capa").
-                let ok = if matches!(t, Text::Plural { one: Some(_), .. }) && i == 0 { got.is_subset(&want) } else { got == want };
+                let ok = if matches!(t, Text::Plural(Forms { one: Some(_), .. })) && i == 0 { got.is_subset(&want) } else { got == want };
                 assert!(ok, "{}: {k:?} has placeholders {got:?}, English has {want:?}", lang.code);
             }
-            assert_eq!(matches!(t, Text::Plural { .. }), matches!(src, Text::Plural { .. }), "{}: {k:?} plural or not as in English", lang.code);
+            assert_eq!(matches!(t, Text::Plural(_)), matches!(src, Text::Plural(_)), "{}: {k:?} plural or not as in English", lang.code);
         }
         for (id, t) in lang.commands.iter().chain(lang.menu) {
             assert!(ids.contains(id), "{}: unknown command id {id:?}", lang.code);
@@ -479,7 +487,7 @@ fn japanese_korean_chinese_and_vietnamese_have_no_plural_forms() {
     for code in ["ja", "ko", "th", "zh-Hans", "vi"] {
         let lang = LANGS.iter().position(|l| l.code == code).unwrap();
         assert!(!plural_one(lang, 0) && !plural_one(lang, 1) && !plural_one(lang, 2), "{code}");
-        let ones: Vec<_> = LANGS[lang].ui.iter().filter(|(_, t)| matches!(t, Text::Plural { one: Some(_), .. })).map(|(k, _)| k).collect();
+        let ones: Vec<_> = LANGS[lang].ui.iter().filter(|(_, t)| matches!(t, Text::Plural(Forms { one: Some(_), .. }))).map(|(k, _)| k).collect();
         assert!(ones.is_empty(), "{code}: plural entries give only `other`: {ones:?}");
     }
 }
@@ -490,6 +498,50 @@ fn georgian_is_picked_for_georgian_locales() {
     for tag in ["ka", "ka-GE", "ka_GE.UTF-8"] {
         assert_eq!(code("system", Some(tag)), "ka", "{tag}");
     }
+}
+
+#[test]
+fn arabic_tags_and_count_neutral_forms() {
+    let ar = LANGS.iter().position(|l| l.code == "ar").unwrap();
+    assert_eq!(LANGS[ar].name, "العربية");
+    for tag in ["ar", "ar-SA", "ar_EG.UTF-8", "ar_AE@arabic"] {
+        assert_eq!(resolve("system", Some(tag)), ar, "{tag}");
+        assert_eq!(resolve(tag, None), ar, "{tag}");
+    }
+    let counts = [0, 1, 2, 3, 10, 11, 99, 100, 102, 103, 111, 200, 1000];
+    for (key, text) in LANGS[ar].ui {
+        if let Text::Plural(Forms { one, few, many, other }) = text {
+            assert!(one.is_none() && few.is_none() && many.is_none(), "{key}: count-neutral wording uses only other");
+            for n in counts {
+                assert_eq!(counted(ar, key, n), *other, "{key}, {n}");
+                assert!(fill(other, &[("n", &n)]).contains(&n.to_string()));
+            }
+        }
+    }
+}
+
+#[test]
+fn the_built_in_arabic_face_draws_the_arabic_catalog() {
+    if !figcraft_text::CRAFT_FONTS.iter().any(|f| f.family == "Noto Sans Arabic" && f.style == "Regular") {
+        eprintln!("built without craft-fonts' Noto Sans Arabic; skipping");
+        return;
+    }
+    let Some(face) = figcraft_text::face_with_char('ع', &["Noto Sans Arabic"]) else {
+        panic!("the supplied Noto Sans Arabic face must draw Arabic");
+    };
+    let ar = &LANGS[LANGS.iter().position(|l| l.code == "ar").unwrap()];
+    let letters: BTreeSet<char> = ar
+        .ui
+        .iter()
+        .chain(ar.commands)
+        .chain(ar.menu)
+        .flat_map(|(_, t)| forms(t))
+        .flat_map(str::chars)
+        .filter(|c| matches!(u32::from(*c), 0x0600..=0x06FF))
+        .collect();
+    assert!(letters.len() > 28);
+    let missing: String = letters.iter().filter(|c| !face.has_char(**c)).collect();
+    assert!(missing.is_empty(), "Arabic catalog glyphs missing from the embedded face: {missing:?}");
 }
 
 /// Release builds embed craft-fonts' Noto Sans Georgian (`theme::install_fonts`' built-in faces),

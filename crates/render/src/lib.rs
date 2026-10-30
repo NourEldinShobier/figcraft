@@ -18,6 +18,7 @@ pub mod glass;
 pub mod grain;
 pub mod image_profile;
 pub mod images;
+mod layer_budget;
 pub mod lod;
 pub mod paint;
 pub mod pattern;
@@ -27,7 +28,7 @@ pub mod shadow;
 pub use dots::Dots;
 pub use draw::{node_outline, paint_bounds, stroke_fill, subtree_outline, ts_path};
 pub use export_depth::{ExportDepthError, MAX_EXPORT_DEPTH, check_export_depth};
-pub use retained::{Retained, Work};
+pub use retained::{Begun, Retained, Steps, Work};
 pub use tiny_skia::{FillRule, Pixmap};
 
 use figcraft_color::{Color, ColorProfile};
@@ -80,8 +81,9 @@ pub struct Options {
     /// Draw only this layer of the page, where it is (Dev Mode's focus view).
     pub solo: Option<NodeId>,
     /// A preview (the canvas): when zoomed out, approximate what's too small on screen to see in
-    /// detail, see [`lod`]. Off for everything that must be exact (exports, thumbnails); no
-    /// effect in outline mode.
+    /// detail, see [`lod`]; at any zoom, draw a large image shown smaller than its pixels from a
+    /// smaller copy (see [`images::shown`]). Off for everything that must be exact (exports,
+    /// thumbnails); no effect in outline mode.
     pub lod: bool,
     pub magnified_image_pixels: bool,
     /// A dot grid over the background, under the layers (a board's canvas; drawn only where the
@@ -89,7 +91,7 @@ pub struct Options {
     pub dots: Option<Dots>,
 }
 
-fn new_pixmap(w: u32, h: u32) -> Option<Pixmap> {
+pub(crate) fn new_pixmap(w: u32, h: u32) -> Option<Pixmap> {
     let w = w.clamp(1, 16_384);
     let h = h.clamp(1, 16_384);
     Pixmap::new(w, h)
@@ -112,7 +114,7 @@ pub(crate) fn backdrop_reach(radius: f64, scale: f64) -> f64 {
 static RENDERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// The number of the render that just started.
-fn start_render() -> u64 {
+pub(crate) fn start_render() -> u64 {
     RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
 }
 
@@ -156,45 +158,80 @@ fn lod_on(opts: &Options, view: &View) -> bool {
 fn render_bands(doc: &Document, page: NodeId, view: &View, opts: &Options, bands: u32) -> Option<Pixmap> {
     use rayon::prelude::*;
     let band_h = view.height.div_ceil(bands.max(1));
-    let overlap = backdrop_reach(max_backdrop_blur(doc), view.scale).ceil();
-    if !overlap.is_finite() || overlap > f64::from(band_h) {
-        return None;
-    }
-    let overlap = overlap as u32;
-    let s = view.scale.max(1e-9);
+    let overlap = band_overlap(doc, view, band_h)?;
     let seed = bounds_cache::seed_for(doc);
     let parts: Vec<(u32, Option<Pixmap>, draw::Learned)> = (0..bands)
         .into_par_iter()
         .map(|i| {
             let y0 = i * band_h;
-            let h = band_h.min(view.height.saturating_sub(y0)).max(1);
-            let top = y0.saturating_sub(overlap);
-            let bottom = (y0 + h + overlap).min(view.height).max(y0 + h);
-            let v = View { origin: (view.origin.0, view.origin.1 + f64::from(top) / s), scale: view.scale, width: view.width, height: bottom - top };
             let bounds = draw::Bounds::seeded(seed.clone());
-            let part = render_one_in(doc, page, &v, opts, &bounds);
-            let own = tiny_skia::IntRect::from_xywh(0, (y0 - top) as i32, view.width.clamp(1, 16_384), h);
-            (y0, if overlap == 0 { part } else { part.zip(own).and_then(|(p, r)| p.clone_rect(r)) }, bounds.into_learned())
+            let part = render_band_in(doc, page, view, opts, y0, band_h, overlap, &bounds);
+            (y0, part, bounds.into_learned())
         })
         .collect();
     let mut out = new_pixmap(view.width, view.height)?;
-    let row = out.width() as usize * 4;
     let mut learned = Vec::new();
     for (y0, part, l) in parts {
         learned.push(l);
-        let Some(part) = part else { continue };
-        // Bands are as wide as the view: their rows go straight into place.
-        let start = y0 as usize * row;
-        let dst = out.data_mut();
-        let n = part.data().len().min(dst.len().saturating_sub(start));
-        if part.width() == view.width.clamp(1, 16_384)
-            && let (Some(d), Some(s)) = (dst.get_mut(start..start + n), part.data().get(..n))
-        {
-            d.copy_from_slice(s);
+        if let Some(part) = part {
+            put_band(&mut out, y0, &part);
         }
     }
     bounds_cache::keep(doc, seed, learned, lod_on(opts, view).then_some(view.scale.to_bits()));
     Some(out)
+}
+
+/// How many rows bands of `band_h` rows of `view` overlap (what background blurs read); `None`
+/// when that is more than a band.
+pub(crate) fn band_overlap(doc: &Document, view: &View, band_h: u32) -> Option<u32> {
+    let overlap = backdrop_reach(max_backdrop_blur(doc), view.scale).ceil();
+    (overlap.is_finite() && overlap <= f64::from(band_h)).then_some(overlap as u32)
+}
+
+/// The rows `y0 .. y0 + band_h` of `view` (fewer at the bottom), rendered with `overlap` rows
+/// more each way and cut back to their own.
+pub(crate) fn render_band(doc: &Document, page: NodeId, view: &View, opts: &Options, y0: u32, band_h: u32, overlap: u32) -> Option<Pixmap> {
+    render_band_in(doc, page, view, opts, y0, band_h, overlap, &draw::Bounds::default())
+}
+
+/// [`render_band`] recording what it learns about layer bounds in `bounds`.
+#[allow(clippy::too_many_arguments)]
+fn render_band_in<'d>(
+    doc: &'d Document,
+    page: NodeId,
+    view: &View,
+    opts: &Options,
+    y0: u32,
+    band_h: u32,
+    overlap: u32,
+    bounds: &draw::Bounds<'d>,
+) -> Option<Pixmap> {
+    let s = view.scale.max(1e-9);
+    let h = band_h.min(view.height.saturating_sub(y0)).max(1);
+    let top = y0.saturating_sub(overlap);
+    let bottom = (y0 + h + overlap).min(view.height).max(y0 + h);
+    let v = View { origin: (view.origin.0, view.origin.1 + f64::from(top) / s), scale: view.scale, width: view.width, height: bottom - top };
+    let part = render_one_in(doc, page, &v, opts, bounds);
+    if overlap == 0 {
+        return part;
+    }
+    let own = tiny_skia::IntRect::from_xywh(0, (y0 - top) as i32, view.width.clamp(1, 16_384), h);
+    part.zip(own).and_then(|(p, r)| p.clone_rect(r))
+}
+
+/// Copy a band's rows into `out` at row `y0` (bands are as wide as the view: their rows go
+/// straight into place).
+pub(crate) fn put_band(out: &mut Pixmap, y0: u32, part: &Pixmap) {
+    let row = out.width() as usize * 4;
+    let start = y0 as usize * row;
+    let width = out.width();
+    let dst = out.data_mut();
+    let n = part.data().len().min(dst.len().saturating_sub(start));
+    if part.width() == width
+        && let (Some(d), Some(s)) = (dst.get_mut(start..start + n), part.data().get(..n))
+    {
+        d.copy_from_slice(s);
+    }
 }
 
 /// Render a page region on the calling thread.
@@ -230,6 +267,7 @@ fn render_one_in<'d>(doc: &'d Document, page: NodeId, view: &View, opts: &Option
         outlined: &opts.outlined,
         skip: &opts.skip,
         lod,
+        preview: opts.lod,
         magnified_image_pixels: opts.magnified_image_pixels,
         under: None,
         time: 0.0,
@@ -264,6 +302,7 @@ fn nodes_into(doc: &Document, ids: &[NodeId], view: &View, pix: &mut Pixmap, tim
         outlined: &[],
         skip: &[],
         lod: false,
+        preview: false,
         magnified_image_pixels: false,
         under: None,
         time,
@@ -489,6 +528,8 @@ mod backdrop_tests;
 #[cfg(test)]
 mod band_tests;
 #[cfg(test)]
+mod boolean_budget_tests;
+#[cfg(test)]
 mod boolean_cache_tests;
 #[cfg(test)]
 mod bounds_cache_tests;
@@ -515,9 +556,17 @@ mod image_budget_tests;
 #[cfg(test)]
 mod image_profile_tests;
 #[cfg(test)]
+mod image_shadow_tests;
+#[cfg(test)]
+mod jpeg_sampling_tests;
+#[cfg(test)]
+mod large_image_tests;
+#[cfg(test)]
 mod lod_tests;
 #[cfg(test)]
 mod magnified_image_tests;
+#[cfg(test)]
+mod mask_bounds_tests;
 #[cfg(test)]
 mod paint_behaviour_tests;
 #[cfg(test)]

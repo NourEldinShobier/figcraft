@@ -4,13 +4,32 @@ FigCraft without a window: inspect, export, convert and render documents, run co
 commands, serve MCP and measure performance. Build it with
 `cargo build --release -p figcraft-cli` (binary `target/release/figcraft-cli`).
 
-`figcraft-cli --help` (or `-h`, or `help`) prints usage on stdout and exits with 0, and so does
-`--help` or `-h` after a subcommand (`figcraft-cli mcp --help`). Bad arguments print usage and exit
-with code 2; failures exit with 1. The CLI never panics on input.
+The CLI follows [RFC-0012](https://github.com/storytold/craft-contrib/blob/main/rfcs/0012-cli-conventions.md),
+the command-line conventions the Craft apps share, in how it parses its arguments (with clap). The
+rules it doesn't follow yet are listed below. `figcraft-cli --help` is the source of truth for
+the flags; this page explains what they do.
 
-Put options before `--` to pass a filename beginning with a dash, for example
-`figcraft-cli info --json -- --drawing.figcraft`. Every argument after `--` is literal,
-including a filename named `--no-system-fonts`.
+`figcraft-cli --help` (or `-h`, `help`, `help <subcommand>`) prints help on stdout and exits with
+0. So does `--help` or `-h` after a subcommand (`figcraft-cli mcp --help`), even after a mistake on
+the same line. `--version` (or `-V`) prints the version. Bad arguments are usage errors, caught
+before any work starts: an option the subcommand doesn't take, an option given twice (only the
+automation roots repeat), a missing or bad value (`--scale 0`, `--format bmp`, `--attach nope`)
+and `mcp --attach` with automation roots. They print `error: …` on stderr and exit with code 2.
+Failures exit with 1. The CLI never panics on input.
+
+A value that starts with `-` is written with `=`, for example `--filter=--json`, so an option never
+takes the next option as its value. Put options before `--` to pass a filename beginning with a
+dash, for example `figcraft-cli info --json -- --drawing.figcraft`. Every argument after `--` is
+literal, including a filename named `--no-system-fonts`.
+
+Not yet as RFC-0012 asks:
+- Arguments that name files are read as text, so a file name that isn't valid Unicode is a usage
+  error (exit 2) rather than reaching the command.
+- Failures are messages rather than error enums, and `main` isn't yet a `run(args, out, err)`
+  function the tests call in-process.
+- `FIGCRAFT_NO_SYSTEM_FONTS` and `FIGCRAFT_SERVER_KEY` are read where they're used, not declared
+  on a flag, so `--help` names them only in the flag descriptions.
+- There are no generated shell completions or man pages, and no ast-grep checks in CI yet.
 
 ## Fonts
 
@@ -64,7 +83,7 @@ page 1 "Screens": 380 nodes, 4 top-level
   …
 ```
 
-### `export <file> -o <out> [--format png|jpg|svg|webp|pdf|xml|fig] [--scale N] [--page NAME] [--node ID|NAME] [--bleed LENGTH] [--crop-marks] [--bleed-marks] [--cmyk] [--vd-compat bestEffort|exact|ignore]`
+### `export <file> -o <out> [--format png|jpg|svg|webp|pdf|xml|fig|penpot] [--scale N] [--page NAME] [--node ID|NAME] [--bleed LENGTH] [--crop-marks] [--bleed-marks] [--cmyk] [--vd-compat bestEffort|exact|ignore]`
 
 - `<out>` is a directory: one file per top-level frame of the page (default the first page), named
   after the frame (`Home.png`, `Settings.png`…); with no frames, one file per top-level layer.
@@ -86,6 +105,13 @@ page 1 "Screens": 380 nodes, 4 top-level
   approximated), `exact` (left out) or `ignore` (no notes: overlapping layer opacity is dropped,
   even-odd fills keep `fillType="evenOdd"`, diamond gradients are left out). See
   `docs/file-format-parity.md`.
+- `--format penpot` (or an `<out>` ending in `.penpot`) writes the whole file as a Penpot 2.x
+  archive (`manifest.json` plus one JSON per file, page and shape) that Penpot imports into a team:
+  pages, boards, groups, rectangles, ellipses, paths, booleans and text, fills, strokes, shadows and
+  blurs, flex and grid layout, components and variants, design tokens and prototype interactions.
+  Layers opened from a `.penpot` keep their Penpot ids, and unchanged text, layouts, interactions
+  and tokens are written back from the original. What Penpot cannot represent is printed as
+  `note:` lines.
 - The format comes from `--format`, else `<out>`'s extension, else png. `--scale` (default 1, max 64)
   applies to raster formats.
 - SVG/PDF/XML exports with visible descendants more than 256 levels below an exported root fail with
@@ -117,7 +143,8 @@ By extension. Inputs: `.figcraft`, `.json` (FigCraft or REST API file JSON), `.f
 shapes, text, gradients, masks and effects; `info` lists what it left out as `note:` lines), `.png/.jpg/.webp/.gif/.tif/.bmp`
 (an image layer). Outputs: `.figcraft`, `.json` (FigCraft JSON, pretty-printed), `.svg`,
 `.png/.jpg/.webp` (the current page rendered at 1x with its background), `.pdf` (the current page's
-frames, one page each), `.fig` (the whole file, experimental, as `export --format fig`).
+frames, one page each), `.fig` (the whole file, experimental, as `export --format fig`), `.penpot`
+(the whole file as a Penpot 2.x archive, as `export --format penpot`).
 
 ### `render <file> -o <out.png> [--scale N] [--page NAME]`
 
@@ -133,7 +160,9 @@ Runs commands in a headless session (a new document, or `--in`), printing one JS
 ```
 
 The whole script is **one undo step**, and it is **all-or-nothing**, exactly like running the same
-commands through `command.batch` (the MCP tool `batch`, the control channel, plugins). A step named
+commands through `command.batch` (the MCP tool `batch`, the control channel, plugins). A step key
+other than `command`, `params` and `as`, or a parameter the command's doc (`figcraft-cli commands`)
+doesn't list, fails the script with an error naming it (`ids` and `id` are always taken). A step named
 with `"as"` can be used by later steps: `{"$ref": "name"}` in a step's params is the `id` in that
 step's result (`{"$step": n}` does the same by zero-based position), and `"field"` takes another key
 or a slash path such as `ids/0`. So a step can target a layer an earlier step of the same script

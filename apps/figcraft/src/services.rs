@@ -27,24 +27,60 @@ pub struct Desktop {
     last_folder: Arc<Mutex<Option<PathBuf>>>,
 }
 
+/// The settings folder's name in the platform folder, as it always was (the suite keeps existing
+/// folder names), and craft-settings' app id: `FIGCRAFT_CONFIG_DIR` names another folder.
+const APP_ID: &str = "FigCraft";
+
+/// Where the preferences, recovery copies and installed plugins live ([`settings_dir`]).
 pub fn config_dir() -> Option<PathBuf> {
+    settings_dir(&craft_settings::Probe { platform_config_dir: platform_dir(), ..Default::default() })
+}
+
+/// The platform's config folder, read from the environment as before: `%APPDATA%` on Windows,
+/// so a test's own `APPDATA` keeps the app away from the user's settings.
+fn platform_dir() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     let base = std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support"));
     #[cfg(target_os = "windows")]
     let base = std::env::var_os("APPDATA").map(PathBuf::from);
     #[cfg(all(unix, not(target_os = "macos")))]
     let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
-    portable_dir().or_else(|| base.map(|b| b.join("FigCraft")))
+    base
 }
 
-/// Portable mode (#1320): the folder of the executable when `figcraft-settings.ini` already sits
-/// next to it (create an empty one to switch it on). The settings then live in that file.
-pub fn portable_dir() -> Option<PathBuf> {
-    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    dir.join(PORTABLE).is_file().then_some(dir)
+/// The settings folder by the suite's rules (craft-settings), from what `probe` sees:
+/// `FIGCRAFT_CONFIG_DIR` (set but empty: none, nothing read or written); a `portable` file next
+/// to the executable (next to the `.app` on macOS), which puts them in `config/` beside it; else
+/// `FigCraft` in the platform folder, where they always were. A portable folder without
+/// preferences yet starts with a copy of the platform folder's, so an existing copy that becomes
+/// portable keeps its settings; the original stays for an installed app. No platform folder: none.
+pub(crate) fn settings_dir(probe: &craft_settings::Probe) -> Option<PathBuf> {
+    use craft_settings::{Location, Portable, Rule};
+    let resolved = craft_settings::paths::resolve(APP_ID, &Portable::DEFAULT, &Location::Auto, probe);
+    match (&resolved.rule, &resolved.dir, &probe.platform_config_dir) {
+        (Rule::Portable, Some(dir), Some(platform)) => seed(dir, &platform.join(APP_ID)),
+        // The current directory instead: settings would follow wherever the app was started.
+        (Rule::Fallback, ..) => return None,
+        _ => {}
+    }
+    resolved.dir
 }
 
-/// The preferences' file in `dir`: the portable settings file when it exists there.
+/// Copy `from`'s preferences into the folder `to` when it has none (owner-only, as written).
+fn seed(to: &Path, from: &Path) {
+    let (target, source) = (to.join(STATE), from.join(STATE));
+    if target.exists() || !source.is_file() {
+        return;
+    }
+    let copied = std::fs::read(&source).and_then(|bytes| std::fs::create_dir_all(to).and_then(|()| write_private(&target, &bytes)));
+    match copied {
+        Ok(()) => log::info!("preferences: copied {} into the portable folder {}", source.display(), to.display()),
+        Err(e) => log::warn!("preferences: couldn't copy them into the portable folder {}: {e}", to.display()),
+    }
+}
+
+/// The preferences' file in `dir`: a `figcraft-settings.ini` already sitting there (#1320) holds
+/// them instead of `state.json`.
 fn state_file(dir: &Path) -> PathBuf {
     let ini = dir.join(PORTABLE);
     if ini.is_file() { ini } else { dir.join(STATE) }
@@ -343,6 +379,9 @@ fn picked(pick: impl Future<Output = Option<rfd::FileHandle>> + 'static) -> Dial
     Box::pin(async move { pick.await.map(|f| f.path().to_path_buf()) })
 }
 
+#[cfg(target_os = "macos")]
+const MACOS_PASTEBOARD_PNG: &str = "public.png";
+
 /// How long a clipboard read may wait on the app that copied (Linux and the BSDs).
 #[cfg(all(unix, not(target_os = "macos")))]
 const CLIPBOARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
@@ -453,6 +492,12 @@ impl Services for Desktop {
             return None;
         }
         Some((w, h, img.bytes.into_owned()))
+    }
+    #[cfg(target_os = "macos")]
+    fn clipboard_get_png(&mut self) -> Option<Vec<u8>> {
+        let board = objc2_app_kit::NSPasteboard::generalPasteboard();
+        let png = board.dataForType(&objc2_foundation::NSString::from_str(MACOS_PASTEBOARD_PNG))?;
+        (png.len() <= figcraft_ui_egui::MAX_CLIPBOARD_PNG_BYTES).then(|| png.to_vec())
     }
     fn open_url(&mut self, url: &str) {
         let _ = webbrowser::open(url);

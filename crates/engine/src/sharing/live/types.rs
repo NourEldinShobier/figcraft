@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Access, Admin, AdminReply, Arc, ClientMsg, Code, Document, HostInfo, IpAddr, LibraryReply, LibraryReq, NO_TEAM_LIBRARIES, Peer, PluginReply,
+    PluginReq, Presence, Resume, Serialize, ServerMsg, Signal, code,
+};
 
 /// The server files are shared through online unless Preferences name another: the only place
 /// its address is written.
@@ -15,7 +18,7 @@ pub const DEFAULT_SERVER: &str = match option_env!("FIGCRAFT_DEFAULT_SERVER") {
 pub const MAX_SELECTION: usize = 10_000;
 
 /// Longest name shown to others (characters).
-pub const MAX_NAME: usize = 64;
+pub const MAX_NAME: usize = Signal::MAX_NAME;
 
 /// The colours people get in a session, in the order the host hands them out (`#RRGGBB`, white
 /// text reads on each).

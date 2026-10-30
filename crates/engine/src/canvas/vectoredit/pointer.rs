@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use figcraft_doc::*;
+use figcraft_doc::{Document, HandleMirroring, NodeId, NodeKind, VectorNetwork, Vertex};
 use figcraft_geom::{Affine, Point, Rect, Vec2};
 
 use super::point_snap;
@@ -13,7 +13,7 @@ use super::regions::region_hit;
 use super::transform::{self, BoxHit, PointBox};
 use super::{EditPart, VHit, VTool, VectorEdit, edit, editing, hit, hit_any, local_offset, network, ops, points_of, selected_points, set_state};
 use crate::snap::Targets;
-use crate::tools::{Cursor, Gesture, Handle, PenCursor, PointerEvent, PointerKind};
+use crate::tools::{Cursor, Gesture, Handle, PenCursor, PointerEvent, PointerKind, within_slop};
 use crate::{Result, Session};
 
 /// An in-progress edit-mode gesture (cheap to clone: snap targets are shared).
@@ -67,10 +67,13 @@ pub(crate) enum VGesture {
         moved: bool,
         smooth: bool,
     },
-    /// Marquee and lasso: `base` is each edited layer's selection to add to.
+    /// Marquee and lasso: `base` is each edited layer's selection to add to. `leave` is a press
+    /// on another layer: released without a drag, it leaves edit mode and goes to the
+    /// normal tool.
     Marquee {
         start: Point,
         base: Vec<EditPart>,
+        leave: Option<PointerEvent>,
     },
     Lasso {
         points: Vec<Point>,
@@ -510,20 +513,25 @@ impl Session {
         Ok(())
     }
 
+    /// Another edited layer under the press (or, with the paint bucket, whose area it is in).
+    fn pressed_layer(doc: &Document, ve: &VectorEdit, ev: &PointerEvent, tol: f64) -> Option<NodeId> {
+        match hit_any(doc, ve, ev.p(), tol) {
+            Some((id, _)) => Some(id),
+            None if ve.tool == VTool::Paint => {
+                let inside = |id: NodeId| network(doc, id).is_some_and(|n| n.face_at(doc.world_transform(id).inverse() * ev.p()).is_some());
+                (!inside(ve.id)).then(|| ve.others.iter().map(|o| o.id).find(|id| inside(*id))).flatten()
+            }
+            None => None,
+        }
+    }
+
     /// Returns false when the click left edit mode (the caller then runs the normal tool).
     fn vector_down(&mut self, ve: &VectorEdit, ev: &PointerEvent) -> Result<bool> {
         let doc = self.doc()?.clone();
         let tol = 6.0 / ev.zoom.max(1e-6);
         // A press on another edited layer's point, handle or segment (or, with the paint bucket,
         // area) makes it the active layer; a pen drawing a path keeps to its own layer.
-        let other = match hit_any(&doc, ve, ev.p(), tol) {
-            Some((id, _)) => Some(id),
-            None if ve.tool == VTool::Paint => {
-                let inside = |id: NodeId| network(&doc, id).is_some_and(|n| n.face_at(doc.world_transform(id).inverse() * ev.p()).is_some());
-                (!inside(ve.id)).then(|| ve.others.iter().map(|o| o.id).find(|id| inside(*id))).flatten()
-            }
-            None => None,
-        };
+        let other = Self::pressed_layer(&doc, ve, ev, tol);
         let switched;
         let ve = match other {
             Some(id) if id != ve.id && !(ve.tool == VTool::Pen && ve.anchor.is_some()) => {
@@ -695,21 +703,18 @@ impl Session {
                     }
                 }
                 None => {
-                    // A press on another layer (and not shift) leaves edit mode, so the normal tool
-                    // takes it; empty canvas only clears the points and starts a marquee (a
-                    // double-click or Escape leaves edit mode).
+                    // Every drag here marquees (#1508). A click on another layer (and not shift)
+                    // leaves edit mode, so the normal tool takes it; a click on empty canvas only
+                    // clears the points (a double-click or Escape leaves edit mode).
                     let inside =
                         ve.parts().iter().any(|p| doc.world_render_bounds(p.id).is_some_and(|b| b.inflate(tol * 4.0, tol * 4.0).contains(ev.p())));
                     let page = self.ds()?.page;
                     let other = !inside && self.hit(&doc, page, ev.p(), tol * 2.0).is_some();
-                    if other && !ev.shift {
-                        super::end(self)?;
-                        return Ok(false);
-                    }
                     if !ev.shift {
                         set_state(self, VectorEdit::clear_selection)?;
                     }
-                    self.vgesture(VGesture::Marquee { start: ev.p(), base: Self::select_base(ve, ev.shift) });
+                    let leave = (other && !ev.shift).then(|| ev.clone());
+                    self.vgesture(VGesture::Marquee { start: ev.p(), base: Self::select_base(ve, ev.shift), leave });
                 }
             },
             VTool::Bend => match h {
@@ -733,7 +738,7 @@ impl Session {
                     self.begin_interaction("Bend")?;
                     self.vgesture(VGesture::BendSegment { seg, t });
                 }
-                None => self.vgesture(VGesture::Marquee { start: ev.p(), base: Self::select_base(ve, ev.shift) }),
+                None => self.vgesture(VGesture::Marquee { start: ev.p(), base: Self::select_base(ve, ev.shift), leave: None }),
             },
             VTool::Pen => {
                 let at = if h.is_none() && !ev.shift { self.snap_pen(ev, Some(id), &[])?.0 } else { ev.p() };
@@ -946,7 +951,7 @@ impl Session {
                 self.preview(|doc, _| edit(doc, id, |net| ops::make_smooth(net, v, d)))?;
                 self.vgesture(VGesture::BendVertex { v, origin, moved: true, smooth });
             }
-            VGesture::Marquee { start, base } => {
+            VGesture::Marquee { start, base, .. } => {
                 let r = Rect::from_points(start, ev.p());
                 self.tool.overlay.marquee = Some([r.x0, r.y0, r.x1, r.y1]);
                 self.select_parts(&base, |doc, id| super::vertices_in(doc, id, r), false)?;
@@ -1062,6 +1067,11 @@ impl Session {
             }
             VGesture::Handle { .. } | VGesture::BendSegment { .. } | VGesture::Pen { .. } | VGesture::BoxRotate { .. } => {
                 self.commit_interaction()?
+            }
+            VGesture::Marquee { start, leave: Some(press), .. } if within_slop(ev, start) => {
+                super::end(self)?;
+                self.pointer(&press)?;
+                return self.pointer(ev);
             }
             // The active layer moves to one with points selected when it has none.
             VGesture::Marquee { .. } | VGesture::Lasso { .. } => set_state(self, |e| {

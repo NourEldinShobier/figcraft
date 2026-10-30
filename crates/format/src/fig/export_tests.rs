@@ -410,7 +410,7 @@ impl Gen {
     /// A component with a boolean and a text property, a component set, and instances of both
     /// (with property values and overrides), and one nested two levels deep.
     fn components(&mut self, page: NodeId) {
-        let comp = self.node(page, NodeKind::Component { description: "A button".into(), props: BTreeMap::new() }, "Button");
+        let comp = self.node(page, NodeKind::Component { description: "A button".into(), props: BTreeMap::new(), prop_order: Vec::new() }, "Button");
         let icon = self.node(comp, NodeKind::Rectangle, "Icon");
         let label = self.node(comp, NodeKind::Text(Box::new(TextData::new("Label"))), "Label");
         {
@@ -449,7 +449,7 @@ impl Gen {
         }
         // A card holding an instance of the button, and an instance of the card overriding a layer of
         // the nested button.
-        let card = self.node(page, NodeKind::Component { description: String::new(), props: BTreeMap::new() }, "Card");
+        let card = self.node(page, NodeKind::Component { description: String::new(), props: BTreeMap::new(), prop_order: Vec::new() }, "Card");
         // A grid whose second cell holds the nested button.
         self.doc.node_mut(card).unwrap().layout =
             Some(Box::new(AutoLayout { mode: LayoutMode::Grid, grid_columns: 2, grid_rows: 1, ..AutoLayout::default() }));
@@ -466,7 +466,7 @@ impl Gen {
         let set = self.node(page, NodeKind::ComponentSet { description: "States".into() }, "Toggle");
         let mut variants = Vec::new();
         for name in ["State=Off", "State=On"] {
-            let v = self.node(set, NodeKind::Component { description: String::new(), props: BTreeMap::new() }, name);
+            let v = self.node(set, NodeKind::Component { description: String::new(), props: BTreeMap::new(), prop_order: Vec::new() }, name);
             self.node(v, NodeKind::Ellipse { start: 0.0, sweep: std::f64::consts::TAU, inner: 0.0 }, "Knob");
             variants.push(v);
         }
@@ -829,6 +829,51 @@ fn round_trip_keeps_the_details() {
 }
 
 #[test]
+fn fig_export_warns_when_region_paints_are_left_out() {
+    let mut doc = generate(3);
+    let Some(id) = doc.nodes().find_map(|node| match &node.kind {
+        NodeKind::Vector { network } if !network.regions.is_empty() => Some(node.id),
+        _ => None,
+    }) else {
+        panic!("generated document has no filled vector");
+    };
+    let node = doc.node_mut(id).unwrap();
+    let NodeKind::Vector { network } = &mut node.kind else { panic!("expected vector fixture") };
+    let region = network.regions.first_mut().unwrap();
+    region.fills = Some(Vec::new());
+
+    let (_, warnings) = export(&doc, None).unwrap();
+    assert!(warnings.iter().any(|warning| warning == "vector region paints were left out of the .fig export"), "{warnings:?}");
+}
+
+#[test]
+fn fig_export_warns_when_inherited_region_paints_have_a_paint_frame() {
+    let mut doc = generate(3);
+    let id = doc
+        .nodes()
+        .find_map(|node| match &node.kind {
+            NodeKind::Vector { network } if !network.regions.is_empty() => Some(node.id),
+            _ => None,
+        })
+        .unwrap();
+    let node = doc.node_mut(id).unwrap();
+    let NodeKind::Vector { network } = &mut node.kind else { panic!("expected vector fixture") };
+    let region = network.regions.first_mut().unwrap();
+    region.fills = None;
+    region.paint_space = Some(RegionPaintSpace { width: 20.0, height: 10.0, transform: Affine::translate((4.0, 8.0)) });
+
+    let (_, warnings) = export(&doc, None).unwrap();
+    assert!(warnings.iter().any(|warning| warning == "vector region paints were left out of the .fig export"), "{warnings:?}");
+
+    let mut plain = doc;
+    let node = plain.node_mut(id).unwrap();
+    let NodeKind::Vector { network } = &mut node.kind else { panic!("expected vector fixture") };
+    network.regions[0].paint_space = None;
+    let (_, warnings) = export(&plain, None).unwrap();
+    assert!(!warnings.iter().any(|warning| warning == "vector region paints were left out of the .fig export"), "{warnings:?}");
+}
+
+#[test]
 fn written_files_decode_and_list_parents_first() {
     for seed in 0..20 {
         let doc = generate(seed);
@@ -1076,7 +1121,17 @@ fn grid_track_sizes_round_trip() {
 fn instance_grid_tracks_clear_the_mains_sizes() {
     let mut doc = Document::new("File");
     let page = doc.first_page().unwrap();
-    let main = doc.create(page, NodeKind::Component { description: String::new(), props: BTreeMap::new() }, "Main", 0.0, 0.0, 400.0, 200.0).unwrap();
+    let main = doc
+        .create(
+            page,
+            NodeKind::Component { description: String::new(), props: BTreeMap::new(), prop_order: Vec::new() },
+            "Main",
+            0.0,
+            0.0,
+            400.0,
+            200.0,
+        )
+        .unwrap();
     let grid = doc.create(main, NodeKind::Frame, "Grid", 0.0, 0.0, 400.0, 200.0).unwrap();
     let layout = AutoLayout {
         mode: LayoutMode::Grid,
@@ -1283,8 +1338,17 @@ fn set_with_properties() -> (Document, NodeId) {
     }
     let mut doc = Document::new("File");
     let page = doc.first_page().unwrap();
-    let glyph =
-        doc.create(page, NodeKind::Component { description: String::new(), props: BTreeMap::new() }, "Glyph", 400.0, 0.0, 16.0, 16.0).unwrap();
+    let glyph = doc
+        .create(
+            page,
+            NodeKind::Component { description: String::new(), props: BTreeMap::new(), prop_order: Vec::new() },
+            "Glyph",
+            400.0,
+            0.0,
+            16.0,
+            16.0,
+        )
+        .unwrap();
     doc.create(glyph, NodeKind::Rectangle, "Shape", 0.0, 0.0, 16.0, 16.0).unwrap();
     let set = doc.create(page, NodeKind::ComponentSet { description: String::new() }, "Button", 0.0, 0.0, 300.0, 120.0).unwrap();
     let mut variants = Vec::new();
@@ -1293,7 +1357,9 @@ fn set_with_properties() -> (Document, NodeId) {
             ("Label".to_string(), PropDef::Text { default: "Button".into() }),
             ("Show icon".to_string(), PropDef::Boolean { default: true }),
         ]);
-        let v = doc.create(set, NodeKind::Component { description: String::new(), props }, name, 0.0, 60.0 * i as f64, 120.0, 40.0).unwrap();
+        let v = doc
+            .create(set, NodeKind::Component { description: String::new(), props, prop_order: Vec::new() }, name, 0.0, 60.0 * i as f64, 120.0, 40.0)
+            .unwrap();
         let label = doc.create(v, NodeKind::Text(Box::new(TextData::new("Button"))), "Label", 0.0, 0.0, 60.0, 20.0).unwrap();
         doc.node_mut(label).unwrap().prop_refs.insert("characters".into(), "Label".into());
         // The icon is an instance placed in the variant: like the editor's, its `source` is its
@@ -1422,7 +1488,17 @@ fn set_properties_round_trip() {
 fn an_instance_without_its_mains_maximum_size_overrides_it_with_infinity() {
     let mut doc = Document::new("File");
     let page = doc.first_page().unwrap();
-    let main = doc.create(page, NodeKind::Component { description: String::new(), props: BTreeMap::new() }, "Box", 0.0, 0.0, 100.0, 40.0).unwrap();
+    let main = doc
+        .create(
+            page,
+            NodeKind::Component { description: String::new(), props: BTreeMap::new(), prop_order: Vec::new() },
+            "Box",
+            0.0,
+            0.0,
+            100.0,
+            40.0,
+        )
+        .unwrap();
     doc.node_mut(main).unwrap().child_layout.max_w = Some(300.0);
     doc.create(page, NodeKind::Instance { component: main, props: BTreeMap::new() }, "Box", 0.0, 100.0, 100.0, 40.0).unwrap();
     let (bytes, _) = export(&doc, None).unwrap();

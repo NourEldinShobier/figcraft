@@ -83,7 +83,8 @@ fn node_find_other_page_requires_root_and_does_not_switch_pages() {
 fn node_find_instances_match_main_name_and_visit_actual_children_only() {
     let mut s = Session::new();
     let page = s.page().unwrap();
-    let main = add(&mut s, page, NodeKind::Component { description: String::new(), props: Default::default() }, "CAFÉ [Button]");
+    let main =
+        add(&mut s, page, NodeKind::Component { description: String::new(), props: Default::default(), prop_order: Vec::new() }, "CAFÉ [Button]");
     let original = add(&mut s, main, NodeKind::Text(Box::new(TextData::new("Original"))), "Original");
     let inst = idv(&ex(&mut s, "instance.create", json!({"component": main})));
     let child = s.doc().unwrap().get(inst).unwrap().children[0];
@@ -116,7 +117,7 @@ fn node_find_accepts_every_canonical_type() {
         NodeKind::Vector { network: Default::default() },
         NodeKind::Text(Box::new(TextData::new("Text"))),
         NodeKind::BooleanOp { op: BoolOp::Union },
-        NodeKind::Component { description: String::new(), props: Default::default() },
+        NodeKind::Component { description: String::new(), props: Default::default(), prop_order: Vec::new() },
         NodeKind::ComponentSet { description: String::new() },
         NodeKind::Instance { component: NodeId(u64::MAX), props: Default::default() },
         NodeKind::Slice,
@@ -226,9 +227,33 @@ fn node_find_matches_variant_properties_of_components_and_instances() {
     let mut s = Session::new();
     let page = s.page().unwrap();
     let set = add(&mut s, page, NodeKind::ComponentSet { description: String::new() }, "Button");
-    let d = add(&mut s, set, NodeKind::Component { description: String::new(), props: Default::default() }, "State=Default, Size=S");
-    let h = add(&mut s, set, NodeKind::Component { description: String::new(), props: Default::default() }, "State=Hover, Size=S");
+    let d = add(&mut s, set, NodeKind::Component { description: String::new(), props: Default::default(), prop_order: Vec::new() }, "State=Default, Size=S");
+    let h = add(&mut s, set, NodeKind::Component { description: String::new(), props: Default::default(), prop_order: Vec::new() }, "State=Hover, Size=S");
     found(&mut s, json!({"variant": {"State": "hover"}}), &[h]);
     found(&mut s, json!({"variant": {"Size": "S"}}), &[d, h]);
     found(&mut s, json!({"variant": {"Size": "L"}}), &[]);
+}
+
+#[test]
+fn node_set_rejects_non_boolean_flags() {
+    let mut s = Session::new();
+    let page = s.page().unwrap();
+    let rect = add(&mut s, page, NodeKind::Rectangle, "R");
+    let frame = add(&mut s, page, NodeKind::Frame, "F");
+    ex(&mut s, "node.set", json!({"ids": [rect], "props": {"isMask": true, "constrainProportions": true}}));
+    ex(&mut s, "node.set", json!({"ids": [frame], "props": {"layoutMode": "HORIZONTAL", "wrap": true, "strokesIncluded": true, "reverseZ": true}}));
+    for (id, key) in [(rect, "isMask"), (rect, "constrainProportions"), (frame, "wrap"), (frame, "strokesIncluded"), (frame, "reverseZ")] {
+        let r = s.execute("node.set", &json!({"ids": [id], "props": {key: "yes"}}));
+        assert!(r.is_err(), "{key} accepted a non-boolean");
+    }
+    let sec = add(&mut s, page, NodeKind::Section { contents_hidden: false }, "S");
+    ex(&mut s, "node.set", json!({"ids": [sec], "props": {"sectionContentsHidden": true}}));
+    let r = s.execute("node.set", &json!({"ids": [sec], "props": {"sectionContentsHidden": "yes"}}));
+    assert!(r.is_err(), "sectionContentsHidden accepted a non-boolean");
+    let doc = s.doc().unwrap();
+    assert!(matches!(doc.get(sec).unwrap().kind, figcraft_doc::NodeKind::Section { contents_hidden: true }));
+    assert!(doc.get(rect).unwrap().is_mask && doc.get(rect).unwrap().constrain_proportions);
+    let l = doc.get(frame).unwrap();
+    let l = l.layout.as_ref().unwrap();
+    assert!(l.wrap && l.strokes_included && l.reverse_z);
 }

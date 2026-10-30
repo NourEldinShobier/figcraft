@@ -1,6 +1,6 @@
 use super::layer::cap_name;
 use super::variables::alias;
-use super::*;
+use super::{Affine, Kv, Mapper, NO_STYLE, Obj, Point, Value, View, copy_num, copy_str, guid, json, matrix, num, rows, vec2};
 
 fn filter_number(value: &Kv) -> Option<f64> {
     let number = match value {
@@ -18,14 +18,16 @@ pub(super) fn color(c: &Kv) -> Value {
 }
 
 impl<'a> Mapper<'a> {
-    /// The style a layer links in `key` (by guid, else by the asset key and version a library copy
-    /// names it with), or in the older `legacy` field when `key` names none. An explicit NO_STYLE
-    /// in `key` is a detach and wins over the legacy field.
+    /// The style a layer links in `key`, by guid or by library asset (the file's copy of a library
+    /// style), or in the older `legacy` field when `key` names none. An explicit NO_STYLE guid in
+    /// `key` with no asset is a detach and wins over the legacy field.
     pub(super) fn style_link(&self, v: &View, key: &str, legacy: &str) -> Option<String> {
-        let link = v.get(key);
-        match link.and_then(|r| r.get("guid")).and_then(guid) {
-            Some(id) => Some(id).filter(|g| g != NO_STYLE),
-            None => link.and_then(|r| self.resource_id(r)).or_else(|| v.get(legacy).and_then(guid).filter(|g| g != NO_STYLE)),
+        let fallback = || v.get(legacy).and_then(guid).filter(|g| g != NO_STYLE);
+        let Some(link) = v.get(key) else { return fallback() };
+        match (self.resource_id(link), link.get("guid").and_then(guid)) {
+            (Some(id), _) => Some(id),
+            (None, Some(_)) => None,
+            (None, None) => fallback(),
         }
     }
 
@@ -217,6 +219,14 @@ pub(crate) fn paint(p: &Kv, warn: &mut dyn FnMut(String)) -> Option<Value> {
         _ => {}
     }
     Some(Value::Object(o))
+}
+
+pub(super) fn has_bound_variables(value: &Value) -> bool {
+    match value {
+        Value::Object(object) => object.contains_key("boundVariables") || object.values().any(has_bound_variables),
+        Value::Array(values) => values.iter().any(has_bound_variables),
+        _ => false,
+    }
 }
 
 /// The variables bound to the fields of a paint stop, an effect or a layout grid, as its REST

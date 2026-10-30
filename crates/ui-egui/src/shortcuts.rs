@@ -73,11 +73,6 @@ pub fn tip(label: &'static str, id: &str) -> &'static str {
     cached_tip(label, shortcut(id))
 }
 
-/// A tooltip naming a key ("Resources  ⇧I").
-pub fn key_tip(label: &'static str, key: &'static str) -> &'static str {
-    cached_tip(label, Some(key))
-}
-
 /// Panels ask for their tooltips every frame: each (label, key, platform) is built once.
 fn cached_tip(label: &'static str, key: Option<&'static str>) -> &'static str {
     type Entry = (Platform, &'static str, &'static str, &'static str);
@@ -179,7 +174,12 @@ pub(crate) fn handle_input(
     let now = ctx.input(|i| i.time);
     for ev in &events {
         match ev {
-            Event::Copy => crate::menus::invoke(app, "edit.copy"),
+            // egui-winit sends Cmd/Ctrl+C as a copy event whatever Alt does, so Copy properties
+            // (Alt+Cmd/Ctrl+C) arrives here and never as a key.
+            Event::Copy => {
+                let props = ctx.input(|i| i.modifiers.alt);
+                crate::menus::invoke(app, if props { "edit.copyProperties" } else { "edit.copy" });
+            }
             Event::Cut => cut(app),
             Event::Paste(text) if !swallowed.drop_text => crate::menus::paste(app, Some(text), None),
             Event::Key { key, physical_key, pressed: true, modifiers, repeat }
@@ -454,7 +454,16 @@ fn key_event(app: &mut FigApp, key: Key, physical: Option<Key>, m: Modifiers, re
     if key == Key::Escape && crate::selection_spacing::cancel(app, ctx) {
         return true;
     }
+    // The colour picker open: Escape closes it here, before the binding deselects — unless one of
+    // its own dropdowns is open, which takes this Escape.
+    if key == Key::Escape && !egui::Popup::is_any_open(ctx) && crate::colorpicker::close_if_open(app) {
+        return true;
+    }
     if key_box(app, key, m) {
+        return true;
+    }
+    // Enter or Escape finishes crop mode (the crop is already applied).
+    if matches!(key, Key::Enter | Key::Escape) && m.is_none() && app.ui.crop.take().is_some() {
         return true;
     }
     // A gradient open in the colour picker: Delete removes its selected stop.

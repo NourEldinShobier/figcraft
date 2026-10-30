@@ -11,7 +11,10 @@
 use std::collections::BTreeMap;
 
 use figcraft_color::{Color, Paint};
-use figcraft_doc::*;
+use figcraft_doc::{
+    AutoLayout, Collection, CollectionId, CrossAlign, DocError, DocResult, Document, LayoutMode, Mode, ModeId, Node, NodeId, NodeKind, PropDef,
+    Sizing, Style, StyleKind, TextAutoResize, TextData, TextStyle, Variable, VariableType, VariableValue,
+};
 use serde_json::Value;
 
 use crate::components::{create_instance, sync_instance};
@@ -115,7 +118,7 @@ fn var_id(name: &str) -> String {
 }
 
 fn component() -> NodeKind {
-    NodeKind::Component { description: String::new(), props: BTreeMap::new() }
+    NodeKind::Component { description: String::new(), props: BTreeMap::new(), prop_order: Vec::new() }
 }
 
 fn text(chars: &str) -> NodeKind {

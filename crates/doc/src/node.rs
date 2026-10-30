@@ -63,7 +63,22 @@ pub enum PropDef {
     },
 }
 
+/// A component's properties in the order they show: the names in `order` first (as they were
+/// made; renaming keeps the place), then any others by name (files from before the order was kept).
+pub fn ordered_props<'a>(props: &'a BTreeMap<String, PropDef>, order: &[String]) -> Vec<(&'a String, &'a PropDef)> {
+    let mut out: Vec<(&String, &PropDef)> = Vec::with_capacity(props.len());
+    for (k, d) in order.iter().filter_map(|k| props.get_key_value(k)).chain(props.iter()) {
+        if !out.iter().any(|(o, _)| *o == k) {
+            out.push((k, d));
+        }
+    }
+    out
+}
+
 /// What a node is, with per-type data.
+// Text sets the size; the lint counts the gap to the next largest variant, which grew only because
+// Page's guides moved to the node (#1476).
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum NodeKind {
@@ -74,8 +89,6 @@ pub enum NodeKind {
         flows: Vec<crate::proto::Flow>,
         #[serde(default)]
         prototype: crate::proto::PrototypeSettings,
-        #[serde(default)]
-        guides: Vec<Guide>,
     },
     Frame,
     Group,
@@ -112,6 +125,9 @@ pub enum NodeKind {
         description: String,
         #[serde(default)]
         props: BTreeMap<String, PropDef>,
+        /// The order `props` show in, as they were made: see [`ordered_props`].
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        prop_order: Vec<String>,
     },
     ComponentSet {
         #[serde(default)]
@@ -219,7 +235,7 @@ pub struct Annotation {
 /// (`figcraft_engine::code_connect`).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeLink {
-    /// `react`, `swiftui` or `compose`.
+    /// `react`, `leptos`, `vue`, `swiftui`, `compose`, `arkui` or `flutter`.
     pub language: String,
     /// What the snippet imports from (`@acme/ui`, a Swift module, a Kotlin name).
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -470,8 +486,8 @@ pub struct Node {
     pub mask_type: MaskType,
     #[serde(default, skip_serializing_if = "is_default")]
     pub grids: Vec<LayoutGrid>,
-    /// A frame's ruler guides, in its own coordinates (a page's are in [`NodeKind::Page`]).
-    #[serde(default, skip_serializing_if = "is_default")]
+    /// A page's or frame's ruler guides, in its own coordinates (see [`guides_key`]).
+    #[serde(flatten, with = "guides_key")]
     pub guides: Vec<Guide>,
     #[serde(default, skip_serializing_if = "is_default")]
     pub exports: Vec<ExportSetting>,
@@ -577,6 +593,77 @@ fn is_pass(v: &BlendMode) -> bool {
 }
 fn is_identity(v: &Affine) -> bool {
     *v == identity()
+}
+
+/// A layer's `guides` key: left out when there are none, and every `guides` list the layer has is
+/// read. Pages used to keep their guides in [`NodeKind::Page`] while the layer field took the
+/// `guides` key on reading, so a reopened page lost its guides, and saving it then wrote two
+/// `guides` keys, which a plain field refuses (#1476). Both lists are kept, in file order.
+mod guides_key {
+    use super::Guide;
+    use serde::de::{IgnoredAny, MapAccess, Visitor};
+    use serde::ser::SerializeMap;
+    use serde::{Deserialize, Deserializer, Serializer};
+    use std::fmt;
+
+    const KEY: &str = "guides";
+
+    /// Write `guides` as the layer's `guides` key, or nothing when there are none.
+    pub fn serialize<S: Serializer>(guides: &[Guide], s: S) -> Result<S::Ok, S::Error> {
+        let mut map = s.serialize_map(None)?;
+        if !guides.is_empty() {
+            map.serialize_entry(KEY, guides)?;
+        }
+        map.end()
+    }
+
+    /// Read every `guides` list among the layer's fields, joined in file order.
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Guide>, D::Error> {
+        d.deserialize_map(Lists)
+    }
+
+    /// Reads the `guides` lists of a layer's fields and skips the other fields.
+    struct Lists;
+
+    impl<'de> Visitor<'de> for Lists {
+        type Value = Vec<Guide>;
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a layer's fields")
+        }
+        /// Every `guides` value joined, in order; a malformed one is an error.
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Vec<Guide>, A::Error> {
+            let mut guides = Vec::new();
+            while let Some(key) = map.next_key::<Key>()? {
+                if key.0 {
+                    guides.extend(map.next_value::<Vec<Guide>>()?);
+                } else {
+                    map.next_value::<IgnoredAny>()?;
+                }
+            }
+            Ok(guides)
+        }
+    }
+
+    /// Whether a field name is `guides` (without copying the name).
+    struct Key(bool);
+
+    impl<'de> Deserialize<'de> for Key {
+        /// Compare a field name with `guides` as it is read.
+        fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            struct Name;
+            impl Visitor<'_> for Name {
+                type Value = Key;
+                fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                    f.write_str("a field name")
+                }
+                /// `guides` or another field.
+                fn visit_str<E: serde::de::Error>(self, s: &str) -> Result<Key, E> {
+                    Ok(Key(s == KEY))
+                }
+            }
+            d.deserialize_identifier(Name)
+        }
+    }
 }
 
 impl Node {
@@ -714,17 +801,12 @@ impl Node {
 
     /// The ruler guides on this page or frame, in its own coordinates.
     pub fn guides(&self) -> &[Guide] {
-        match &self.kind {
-            NodeKind::Page { guides, .. } => guides,
-            _ => &self.guides,
-        }
+        &self.guides
     }
 
+    /// The ruler guides on this page or frame, to edit.
     pub fn guides_mut(&mut self) -> &mut Vec<Guide> {
-        match &mut self.kind {
-            NodeKind::Page { guides, .. } => guides,
-            _ => &mut self.guides,
-        }
+        &mut self.guides
     }
 
     /// Children in paint order, bottom to top: the child list, reversed in an auto layout frame

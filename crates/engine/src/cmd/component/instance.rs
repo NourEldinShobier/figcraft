@@ -1,5 +1,10 @@
 use super::props::{Owner, add_prop_for, delete_prop, prop_defs};
-use super::*;
+use super::{
+    BTreeMap, BTreeSet, Document, EngineError, NodeId, NodeKind, OVERRIDE_GROUPS, PROP_BINDING, PropDef, Result, SLOT, Session, Value, bad, boolean,
+    copy_group, create_instance_at, default_props, get, id_of, inside_instance, is_slot, json, keep_text_overrides, main_of, ok, owning_component,
+    owning_instance, rebase_instance, req_id, req_num, req_targets, root_instance, slot_edited, slot_name, slots_of, string, targets, unlink_layers,
+    variant_options,
+};
 
 pub(super) fn detach(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "component.detach";
@@ -327,7 +332,7 @@ pub(super) fn restore_main(s: &mut Session, p: &Value) -> Result<Value> {
         let Some(mut n) = doc.node(*d).cloned() else { continue };
         if *d == i {
             let defs = restore_prop_defs(doc, &props);
-            n.kind = NodeKind::Component { description: String::new(), props: defs };
+            n.kind = NodeKind::Component { description: String::new(), props: defs, prop_order: Vec::new() };
             n.source = None;
             n.overrides.clear();
             n.prop_refs.clear();
@@ -372,8 +377,8 @@ pub(super) fn swap(s: &mut Session, p: &Value) -> Result<Value> {
 /// Make instance `i` show main component `c`, keeping the values of properties with the same names
 /// (the layers' overrides follow by name when the instance is rebuilt).
 pub(crate) fn swap_instance(doc: &mut Document, i: NodeId, c: NodeId) -> std::result::Result<(), String> {
-    if doc.is_ancestor(c, i) {
-        return Err("an instance can't show the component it is inside".into());
+    if crate::components::would_contain_itself(doc, c, i) {
+        return Err(crate::components::contains_itself_error(doc, c));
     }
     let defaults = doc.node(c).map(default_props).unwrap_or_default();
     // An instance sized differently from its main keeps its size on the new main, as a resize would.
