@@ -1,6 +1,6 @@
 //! Document inspection as JSON, so agents can verify their work without screenshots.
 
-use figcraft_doc::*;
+use figcraft_doc::{Document, NodeId, NodeKind, StrokeJoin, TextDecoration};
 use serde_json::{Value, json};
 
 use crate::Session;

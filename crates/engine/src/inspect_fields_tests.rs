@@ -65,7 +65,9 @@ fn golden_tree() -> (Session, NodeId) {
 #[test]
 fn empty_options_keep_the_main_tree_and_document_output() {
     let (s, frame) = golden_tree();
-    // Captured with this builder on origin/main (43af145a12eacd1e87f5f5e6984c49b7da040288).
+    // Captured with this builder on origin/main (43af145a12eacd1e87f5f5e6984c49b7da040288), plus the
+    // document `id` that #1533 added. That id comes from a process-wide counter, so it is the
+    // session's own.
     let expected = json!({
         "colorProfile": "srgb",
         "currentPage": 7,
@@ -81,6 +83,7 @@ fn empty_options_keep_the_main_tree_and_document_output() {
                 "Create layer"
             ]
         },
+        "id": s.ds().unwrap().uid,
         "images": 0,
         "kind": "design",
         "name": "Untitled",
@@ -418,8 +421,31 @@ fn page_properties_and_other_page_summaries_respect_fields() {
 
 #[test]
 fn the_catalogue_accepts_emitted_keys_and_structure_keys() {
-    let (s, frame, _) = tree();
-    let full = node_json(s.doc().unwrap(), frame, 2);
+    let (mut s, frame, text) = tree();
+    run(&mut s, "node.set", json!({"ids": [frame], "props": {"layout": "grid", "fill": "#123456", "stroke": "#abcdef"}}));
+    s.doc_mut().unwrap().get_mut(frame).unwrap().dev_note = "Ready for review".into();
+    s.doc_mut().unwrap().get_mut(frame).unwrap().dev_changed = true;
+    let main = create(&mut s, json!({"type": "component", "name": "Button"}));
+    let instance = crate::params::id_of(&run(&mut s, "instance.create", json!({"component": main}))["id"]).unwrap();
+    s.doc_mut().unwrap().get_mut(text).unwrap().kind.text_mut().unwrap().style.style_id = Some("synthetic-style".into());
+    // Exercise each of the six property helpers, including their more expensive values.
+    for (id, key, sibling) in [
+        (frame, "absoluteBounds", "width"),
+        (frame, "fills", "strokes"),
+        (text, "gridCell", "sizing"),
+        (frame, "devNote", "devChanged"),
+        (text, "textStyleRanges", "fontFamily"),
+        (instance, "mainComponentName", "mainComponent"),
+    ] {
+        let full = node_json(s.doc().unwrap(), id, 0);
+        assert!(full.get(key).is_some(), "fixture must emit {key}: {full}");
+        assert!(full.get(sibling).is_some(), "fixture must emit {sibling}: {full}");
+        let selected = node(&s, id, 0, json!({"fields": [key]}));
+        assert_eq!(selected[key], full[key]);
+        assert!(selected.get(sibling).is_none(), "unrequested {sibling}: {selected}");
+        keys(&selected, &["id", "children", "childCount", key]);
+    }
+    let full = node_json(s.doc().unwrap(), s.page().unwrap(), 3);
     fn check(s: &Session, full: &Value) {
         let id = crate::params::id_of(&full["id"]).unwrap();
         for (key, value) in full.as_object().unwrap() {
@@ -473,8 +499,10 @@ fn node_get_uses_options_but_keeps_its_existing_depth_and_selection() {
     let history = s.undo_depth();
     let default = node_json(s.doc().unwrap(), frame, 1);
     assert_eq!(run(&mut s, "node.get", json!({"id": frame})), default);
-    let compact = run(&mut s, "node.get", json!({"id": frame, "fields": [], "depth": 0}));
+    let compact = run(&mut s, "node.get", json!({"id": frame, "fields": []}));
     assert!(compact["children"].is_array(), "the engine command still inspects to depth 1");
+    let error = s.execute("node.get", &json!({"id": frame, "fields": [], "depth": 0})).unwrap_err();
+    assert!(error.to_string().contains("unknown parameter `depth`"), "{error}");
     keys(&compact, &["id", "children", "childCount"]);
     assert!(s.execute("node.get", &json!({"id": frame, "outline": true, "fields": []})).is_err());
     assert_eq!(s.selection(), selection);

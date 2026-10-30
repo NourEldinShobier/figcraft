@@ -17,6 +17,10 @@
 mod auto_layout_sizing_tests;
 #[cfg(test)]
 mod connector_label_tests;
+#[cfg(test)]
+mod deep_import_tests;
+#[cfg(test)]
+mod expansion_cost_tests;
 mod export;
 #[cfg(test)]
 mod export_tests;
@@ -57,7 +61,7 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::sync::Arc;
 
-use figcraft_doc::Document;
+use figcraft_doc::{Document, FileKind};
 
 pub use export::export;
 
@@ -86,6 +90,9 @@ const MAX_FIG_NODES: usize = 2_000_000;
 pub(crate) fn layer_budget(packed: usize) -> usize {
     (packed / PACKED_BYTES_PER_LAYER).clamp(crate::rest::MAX_NODES, MAX_FIG_NODES)
 }
+
+/// The canvas header of a FigJam whiteboard (a `.jam`); a `.fig` has `fig-kiwi`.
+pub const JAM_HEADER: &[u8] = b"fig-jam.";
 
 /// Whether `bytes` look like a `.fig` file: a zip holding `canvas.fig`, or a bare canvas.
 pub fn is_fig(bytes: &[u8]) -> bool {
@@ -143,6 +150,8 @@ pub fn import_staged(
     // The budgets follow the compressed canvas, which the file itself bounds (its zip member may
     // inflate too).
     let packed = archive.canvas.len().min(bytes.len());
+    // FigJam writes its whiteboards with this header: they open as boards.
+    let board = archive.canvas.starts_with(JAM_HEADER);
     // Each stage's input is dropped as soon as the next one is built: in a large file every one
     // of them takes gigabytes, and holding them all at once runs out of memory.
     let (schema, message) = decode_canvas(&std::mem::take(&mut archive.canvas))?;
@@ -156,7 +165,7 @@ pub fn import_staged(
     let images = |r: &str| archive.image(r).or_else(|| embedded.get(r).map(|b| b.to_vec()));
     let nodes = msg.get("nodeChanges").map_or(0, |changes| changes.list().len());
     let staging = (nodes >= page_first.min_nodes).then_some((page_first.max_first_share, first));
-    import_message(msg, file_name, max_nodes, &images, staging)
+    import_message(msg, file_name, max_nodes, &images, staging, board)
 }
 
 /// Pages built as they are mapped, with the first one offered early (see [`import_staged`]).
@@ -172,6 +181,7 @@ pub(crate) fn import_message(
     max_nodes: usize,
     images: crate::rest::ImageResolver,
     staging: Option<Staging>,
+    board: bool,
 ) -> Result<(Document, Vec<String>), FormatError> {
     let mut built: Option<crate::rest::Incremental> = None;
     let mut failed: Option<FormatError> = None;
@@ -205,11 +215,14 @@ pub(crate) fn import_message(
     if let Some(e) = failed {
         return Err(e);
     }
-    let (doc, more) = match built {
+    let (mut doc, more) = match built {
         Some(inc) if staged => inc.finish(&json)?,
         _ => crate::rest::import_packed(&json, packed, images, networks, max_nodes)?,
     };
     drop_later(json);
+    if board {
+        doc.kind = FileKind::Board;
+    }
     // Both stages stop at the same cap and say so in the same words: one note (#981).
     for w in more.into_iter().filter_map(map::adapt_warning) {
         let base = w.rsplit_once(" (×").map_or(w.as_str(), |(b, _)| b);

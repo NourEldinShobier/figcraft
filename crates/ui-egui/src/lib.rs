@@ -5,6 +5,15 @@
 //! below this crate knows about egui, so the frontend can be replaced.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+/// FigCraft as craft-update knows it, with its 128 px icon and accent colour: the update
+/// prompt shows both, and an AppImage's menu entry gets the icon.
+#[cfg(not(target_arch = "wasm32"))]
+pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
+    icon_png: Some(include_bytes!("../../../assets/app-icon/hicolor/128x128/apps/ai.storyteller.figcraft.png")),
+    accent: Some([0x02, 0xda, 0x96]),
+    ..craft_update::suite::FIGCRAFT
+};
+
 pub mod a11y;
 pub mod bidi;
 pub mod canvas;
@@ -49,6 +58,8 @@ mod canvas_drag_tests;
 #[cfg(test)]
 mod canvas_fixes_tests;
 #[cfg(test)]
+mod canvas_hover_tests;
+#[cfg(test)]
 mod canvas_image_rect_tests;
 #[cfg(test)]
 mod clipboard_fence_tests;
@@ -60,6 +71,8 @@ mod colorpicker_selection_tests;
 mod comments_tests;
 #[cfg(test)]
 mod component_props_reorder_tests;
+#[cfg(test)]
+mod component_set_narrow_tests;
 #[cfg(test)]
 mod component_swap_default_tests;
 #[cfg(test)]
@@ -120,6 +133,8 @@ mod layers_keyboard_tests;
 mod layers_keys_tests;
 #[cfg(test)]
 mod layers_rename_tests;
+#[cfg(test)]
+mod library_beacon_tests;
 #[cfg(test)]
 mod live_chat_tests;
 #[cfg(test)]
@@ -309,6 +324,7 @@ pub use control::{ControlReply, ControlRequest, RequestGate, RequestState};
 mod app;
 mod clock;
 mod open;
+mod selection_cache;
 mod services;
 mod state;
 
@@ -542,6 +558,8 @@ pub struct UiState {
     /// With auto-save on: when (monotonic [`FrameClock`], seconds) files with unsaved changes are next saved, and
     /// the revisions of those files it waits on (a change restarts the wait).
     pub auto_save_at: Option<(f64, u64)>,
+    /// When (monotonic [`FrameClock`], seconds) the active file is next compared with the copy on disk.
+    pub disk_check_at: f64,
     /// Files being encoded for auto-save on threads of their own (tab `uid`).
     pub auto_saving: Vec<(u64, AutoSaveEncoding)>,
     /// The Assets panel shows the libraries view (publish this file, enabled libraries).
@@ -676,6 +694,7 @@ impl Default for UiState {
             held: egui::Modifiers::NONE,
             next_autosave: 0.0,
             auto_save_at: None,
+            disk_check_at: 0.0,
             auto_saving: Vec::new(),
             libraries: false,
             nav: a11y::Nav::default(),

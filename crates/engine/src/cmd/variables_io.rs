@@ -25,7 +25,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "variable.import",
             "Import variables",
-            "{variables (the local variables JSON, as variable.export writes it: an object, JSON text or a path; `variableCollections` and `variables` under `meta` or at the top level)}  collections join this file's collection of the same name (values by mode name; new modes and variables are added, a variable of another type is skipped), others are added  → {collections (added), variables (added), updated, warnings (also when it holds no variables, or fewer than its collections list)}",
+            "{variables (the local variables JSON, as variable.export writes it: an object, JSON text or a path to a regular file of at most 256 MiB; `variableCollections` and `variables` under `meta` or at the top level)}  collections join this file's collection of the same name (values by mode name; new modes and variables are added, a variable of another type is skipped), others are added  → {collections (added), variables (added), updated, warnings (also when it holds no variables, or fewer than its collections list)}",
             true,
             import
         ),
@@ -102,7 +102,7 @@ pub(super) fn css_with(doc: &Document, colls: &[&Collection], tailwind: bool, at
                     Some(VariableValue::Number(x)) => format!("{}px", trim_num(*x)),
                     Some(VariableValue::String(t)) => format!("\"{}\"", css_safe(t)),
                     Some(VariableValue::Boolean(b)) => b.to_string(),
-                    Some(VariableValue::Alias(a)) => match vars.get(a) {
+                    Some(VariableValue::Alias(a)) => match vars.get_by_id(a) {
                         Some(t) => format!("var({})", name(t)),
                         None => continue,
                     },
@@ -337,7 +337,7 @@ pub(super) fn import(s: &mut Session, p: &Value) -> Result<Value> {
                 VariableValue::Alias(a) => {
                     let Some(var) = doc.variables.variables.iter().find(|x| x.id == *local) else { continue };
                     let target = ids.get(a).ok_or_else(|| "its alias target wasn't imported".to_string());
-                    match target.and_then(|t| super::variables::alias_target(&doc.variables, var, t)) {
+                    match target.and_then(|t| super::variables::alias_target_by_id(&doc.variables, var, t)) {
                         Ok(t) => VariableValue::Alias(t),
                         Err(e) => {
                             warnings.push(format!("`{}`: {e}", v.name));

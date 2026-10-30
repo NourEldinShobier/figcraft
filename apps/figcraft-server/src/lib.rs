@@ -95,9 +95,15 @@ mod cli_tests;
 #[cfg(test)]
 mod codes_tests;
 #[cfg(test)]
+mod comment_link_tests;
+#[cfg(test)]
 mod directory_tests;
 #[cfg(test)]
+mod download_burst_tests;
+#[cfg(test)]
 mod hardening_tests;
+#[cfg(test)]
+mod idle_io_tests;
 #[cfg(test)]
 mod library_tests;
 #[cfg(test)]

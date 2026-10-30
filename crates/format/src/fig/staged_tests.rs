@@ -64,14 +64,14 @@ fn no_images(_: &str) -> Option<Vec<u8>> {
 }
 
 fn whole(msg: Kv<'static>) -> (Document, Vec<String>) {
-    super::import_message(msg, "Staged", 1_000, &no_images, None).unwrap()
+    super::import_message(msg, "Staged", 1_000, &no_images, None, false).unwrap()
 }
 
 /// The import page-first: the early documents, then the whole one with its warnings.
 fn page_first(msg: Kv<'static>, max_share: f64) -> (Vec<Document>, Document, Vec<String>) {
     let mut firsts = Vec::new();
     let mut hook = |doc: Document| firsts.push(doc);
-    let (doc, warnings) = super::import_message(msg, "Staged", 1_000, &no_images, Some((max_share, &mut hook))).unwrap();
+    let (doc, warnings) = super::import_message(msg, "Staged", 1_000, &no_images, Some((max_share, &mut hook)), false).unwrap();
     (firsts, doc, warnings)
 }
 

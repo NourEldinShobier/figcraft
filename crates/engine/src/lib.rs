@@ -190,6 +190,8 @@ mod arc_fields_tests;
 #[cfg(test)]
 mod arc_handles_tests;
 #[cfg(test)]
+mod auto_layout_move_tests;
+#[cfg(test)]
 mod autosave_tests;
 #[cfg(test)]
 mod batch_continue_events_tests;
@@ -197,6 +199,8 @@ mod batch_continue_events_tests;
 mod batch_rollback_tests;
 #[cfg(test)]
 mod batch_step_ref_tests;
+#[cfg(test)]
+mod batch_undo_snapshot_tests;
 #[cfg(test)]
 mod binding_lists_tests;
 #[cfg(test)]
@@ -238,6 +242,8 @@ mod collab_undo_tests;
 #[cfg(test)]
 mod comment_agent_tests;
 #[cfg(test)]
+mod comment_link_tests;
+#[cfg(test)]
 mod comment_mentions_tests;
 #[cfg(test)]
 mod comments_polish_tests;
@@ -275,6 +281,8 @@ mod devinspect_tests;
 mod devmode_behaviour_tests;
 #[cfg(test)]
 mod devmode_tail_tests;
+#[cfg(test)]
+mod doc_list_paths_tests;
 #[cfg(test)]
 mod doc_urls_tests;
 #[cfg(test)]
@@ -364,7 +372,11 @@ mod interaction_rollback_tests;
 #[cfg(test)]
 mod invite_links_tests;
 #[cfg(test)]
+mod jam_open_tests;
+#[cfg(test)]
 mod keymap_tests;
+#[cfg(test)]
+mod library_beacon_tests;
 #[cfg(test)]
 mod library_path_tests;
 #[cfg(test)]
@@ -379,6 +391,8 @@ mod lint_icons_tests;
 mod live_access_tests;
 #[cfg(test)]
 mod live_docs_tests;
+#[cfg(test)]
+mod live_peer_cap_tests;
 #[cfg(test)]
 mod live_share_tests;
 #[cfg(test)]
@@ -424,11 +438,15 @@ mod paint_tests;
 #[cfg(test)]
 mod panels_behaviour_tests;
 #[cfg(test)]
+mod path_read_caps_tests;
+#[cfg(test)]
 mod pdf_print_tests;
 #[cfg(test)]
 mod pen_end_tests;
 #[cfg(test)]
 mod pen_overlay_tests;
+#[cfg(test)]
+mod pen_vector_edit_tests;
 #[cfg(test)]
 mod penpot_export_tests;
 #[cfg(test)]

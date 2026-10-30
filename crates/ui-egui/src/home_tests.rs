@@ -894,7 +894,7 @@ fn dropping_an_unsupported_file_on_the_home_screen_opens_nothing() {
     drop_file(&mut u, &path);
     assert!(u.app.session.docs.is_empty());
     assert!(u.app.ui.home);
-    assert_eq!(u.app.ui.toast.as_ref().map(|t| t.0.as_str()), Some("Drop a .figcraft, .fig, .sketch, .json, .svg or image file."));
+    assert_eq!(u.app.ui.toast.as_ref().map(|t| t.0.as_str()), Some("Drop a .figcraft, .fig, .jam, .sketch, .json, .svg or image file."));
 }
 
 #[test]
@@ -933,4 +933,14 @@ fn home_screen_preferences_shortcut_and_sidebar_access() {
     let s = shapes(&mut u);
     click(&mut u, text_center(&s, "Preferences"));
     assert!(!u.app.ui.preferences, "Clicking Preferences in sidebar again should close it");
+}
+
+#[test]
+fn a_jam_file_is_a_document_open_and_drops_take() {
+    // FigJam `.jam` files (#1342) open like `.fig` files, from File ▸ Open, a drop or the
+    // command line, and a drop on the canvas opens one as a file of its own.
+    for name in ["Board.jam", "BOARD.JAM"] {
+        let path = std::path::Path::new(name);
+        assert!(crate::open::opens(path) && crate::open::is_document(path), "{name}");
+    }
 }

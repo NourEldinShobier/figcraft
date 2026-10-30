@@ -220,12 +220,15 @@ impl Session {
     }
 
     /// A live session's document you may only view (or that is on its way to a server) is
-    /// read-only: refuse an edit (it is rolled back).
+    /// read-only: refuse an edit (it is rolled back). With a comment link, one that changes only
+    /// comment threads goes through.
     fn check_live_access(&self, id: &str, before: &Option<(Arc<Document>, Vec<NodeId>, NodeId, u64)>) -> Result<()> {
         let Some((bdoc, _, _, uid)) = before else { return Ok(()) };
         let Some(ds) = self.docs.iter().find(|d| d.uid == *uid) else { return Ok(()) };
         match self.live_read_only(*uid) {
-            Some(why) if !Arc::ptr_eq(&ds.doc, bdoc) => Err(EngineError::Disabled(id.to_string(), why.into())),
+            Some(why) if !Arc::ptr_eq(&ds.doc, bdoc) && !self.live_comment_edit(*uid, &ds.doc) => {
+                Err(EngineError::Disabled(id.to_string(), why.into()))
+            }
             _ => Ok(()),
         }
     }
@@ -287,8 +290,18 @@ impl Session {
         if self.live_doc(uid) {
             return self.live_edit(uid, label);
         }
+        let grouped = self.group_depth > 0;
         if let (Some(label), Some(ds)) = (label, self.docs.iter_mut().find(|d| d.uid == uid)) {
+            // A group becomes one step at its end: its edits add to the step it already pushed,
+            // so a long batch keeps one snapshot, not one per edit (#1099).
+            if grouped && ds.history.group_step == Some(ds.history.undo.len()) {
+                ds.history.redo.clear();
+                return;
+            }
             ds.push_undo(label, before, selection, page);
+            if grouped {
+                ds.history.group_step = Some(ds.history.undo.len());
+            }
         }
     }
 }

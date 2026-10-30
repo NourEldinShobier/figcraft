@@ -1,8 +1,8 @@
 use super::host::{clean_hosting, clean_shared};
-use super::types::{Event, PageInfo, Role, SessionId, Status};
+use super::types::{Event, MAX_PEERS, PageInfo, Role, SessionId, SessionInfo, Status};
 use super::{
     Access, Arc, Client, ClientMsg, DocState, Document, EngineError, Live, NodeId, PUBLISHING, Peer, Presence, Result, ServerMsg, Session, Signal,
-    ToolId, VIEW_ONLY, display_name, editing_hint, editing_of, sanitize,
+    ToolId, display_name, editing_hint, editing_of, limited_by, sanitize, tool_left,
 };
 
 /// What a live session's document holding components that contain each other's instances shows
@@ -25,6 +25,24 @@ fn reset_for_reconnect(live: &mut Live) {
     if let Some(c) = live.client.as_mut() {
         c.disconnect();
     }
+}
+
+/// Joined, or joined again: who you are and who else is here (at most [`MAX_PEERS`] of them).
+fn welcome_in(live: &mut Live, mut info: SessionInfo, peers: Vec<Peer>) {
+    // The shared file's name and pages come with the document (the sync welcome).
+    if let Some(old) = live.info.as_ref().filter(|_| info.file_name.is_empty()) {
+        info.file_name = old.file_name.clone();
+        info.pages = old.pages.clone();
+    }
+    live.status = Status::Live;
+    live.info = Some(info);
+    live.peers = peers.into_iter().take(MAX_PEERS).map(|p| (p.client_id, p)).collect();
+    live.presence.retain(|id, _| live.peers.contains_key(id));
+    if live.follow.is_some_and(|f| !live.peers.contains_key(&f)) {
+        live.unfollow();
+    }
+    // Others need your presence again.
+    live.sent = None;
 }
 
 impl Session {
@@ -160,25 +178,14 @@ impl Session {
                 }
                 live.status = st;
             }
-            Event::Welcome { mut info, peers } => {
-                // The shared file's name and pages come with the document (the sync welcome).
-                if let Some(old) = live.info.as_ref().filter(|_| info.file_name.is_empty()) {
-                    info.file_name = old.file_name.clone();
-                    info.pages = old.pages.clone();
-                }
-                live.status = Status::Live;
-                live.info = Some(info);
-                live.peers = peers.into_iter().map(|p| (p.client_id, p)).collect();
-                live.presence.retain(|id, _| live.peers.contains_key(id));
-                if live.follow.is_some_and(|f| !live.peers.contains_key(&f)) {
-                    live.unfollow();
-                }
-                // Others need your presence again.
-                live.sent = None;
-            }
+            Event::Welcome { info, peers } => welcome_in(live, info, peers),
             Event::PeerJoined(p) => {
                 // Someone already here was renamed: no newcomer to announce.
                 if !live.peers.contains_key(&p.client_id) {
+                    if live.peers.len() >= MAX_PEERS {
+                        log::warn!("live session: {MAX_PEERS} people already here; leaving out another");
+                        return;
+                    }
                     self.message = Some(format!("{} joined{behind}", p.name));
                 }
                 live.peers.insert(p.client_id, p);
@@ -410,8 +417,11 @@ impl Session {
             }
             _ => return,
         };
-        // A view link: the editing tools are off.
-        if client.access() == Access::View && self.tab() == Some(uid) && !matches!(self.tool.tool, ToolId::Move | ToolId::Hand) {
+        // A view or comment link: the editing tools are off.
+        if let Some(why) = limited_by(client.access())
+            && self.tab() == Some(uid)
+            && !tool_left(why, self.tool.tool)
+        {
             self.set_tool(ToolId::Move);
         }
         let Some(live) = self.live.sessions.get_mut(&id) else { return };
@@ -439,16 +449,23 @@ impl Session {
         self.message = Some(reason);
     }
 
-    /// Why document `uid` can't be edited now, if it can't: you may only view it in its session,
-    /// or it is on its way to a server.
+    /// Why document `uid` can't be edited now, if it can't: you may only view it (or view and
+    /// comment on it: see [`live_comment_edit`](Self::live_comment_edit)) in its session, or it is
+    /// on its way to a server.
     pub fn live_read_only(&self, uid: u64) -> Option<&'static str> {
         let live = self.live.doc(uid)?;
         match &live.client {
-            Some(c) if c.access() == Access::View => Some(VIEW_ONLY),
-            Some(_) => None,
+            Some(c) => limited_by(c.access()),
             None if live.status.active() && live.role() != Some(Role::Host) => Some(PUBLISHING),
             None => None,
         }
+    }
+
+    /// Whether `doc` is session document `uid` with nothing but comment threads changed, and the
+    /// link it was joined with lets you comment: such an edit goes through where others are refused.
+    pub(crate) fn live_comment_edit(&self, uid: u64, doc: &Document) -> bool {
+        let client = self.live.doc(uid).and_then(|l| l.client.as_ref());
+        client.is_some_and(|c| c.access() == Access::Comment && c.changes_only_comments(doc))
     }
 
     /// The active document can't be edited now (see [`live_read_only`](Self::live_read_only)).

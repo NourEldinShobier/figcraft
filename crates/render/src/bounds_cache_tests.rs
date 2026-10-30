@@ -24,14 +24,14 @@ fn tree() -> (Document, [figcraft_doc::NodeId; 5]) {
 }
 
 fn bounds_of(d: &Document, id: figcraft_doc::NodeId, seed: &Seed) -> Rect {
-    draw::bounds_within(d, d.node(id).unwrap(), 0, None, Some(&Bounds::seeded(seed.clone()))).0
+    draw::bounds_within(d, d.node(id).unwrap(), figcraft_geom::Affine::IDENTITY, 0, None, Some(&Bounds::seeded(seed.clone()))).0
 }
 
 /// The answers for the layers of `d` that have children.
 fn learn(d: &Document, ids: &[figcraft_doc::NodeId]) -> Seed {
     let memo = Bounds::default();
     for id in ids {
-        draw::bounds_within(d, d.node(*id).unwrap(), 0, None, Some(&memo));
+        draw::bounds_within(d, d.node(*id).unwrap(), figcraft_geom::Affine::IDENTITY, 0, None, Some(&memo));
     }
     let l = memo.into_learned();
     Seed { paint: Arc::new(l.paint), splat: Arc::new(l.splat), greek: None }

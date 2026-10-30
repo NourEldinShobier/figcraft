@@ -73,7 +73,7 @@ impl FigApp {
         let exts: &[&str] = if place {
             &["png", "jpg", "jpeg", "webp", "gif", "tif", "tiff"]
         } else {
-            &["penpot", "svg", "png", "jpg", "jpeg", "webp", "gif", "tif", "tiff", "figcraft", "fig", "sketch"]
+            &["penpot", "svg", "png", "jpg", "jpeg", "webp", "gif", "tif", "tiff", "figcraft", "fig", "jam", "sketch"]
         };
         let title = if place { i18n::tr("Place image") } else { i18n::tr("Import") };
         self.pick_file(title, exts, true, |app, file| {
@@ -221,6 +221,31 @@ impl FigApp {
         repaint_in(ctx, AUTOSAVE_SECS);
     }
 
+    /// Reads the open file again when another app, `figcraft-cli` or an agent saved it and this tab
+    /// has no unsaved changes. A tab with changes keeps them: saving it stops at the disk-change check.
+    pub(super) fn disk_reload_tick(&mut self, ctx: &egui::Context, now: f64) {
+        const CHECK_SECS: f64 = 1.0;
+        if cfg!(target_arch = "wasm32") {
+            return;
+        }
+        if now < self.ui.disk_check_at {
+            repaint_in(ctx, self.ui.disk_check_at - now);
+            return;
+        }
+        self.ui.disk_check_at = now + CHECK_SECS;
+        repaint_in(ctx, CHECK_SECS);
+        let Some(d) = self.session.docs.get(self.session.active) else { return };
+        let idle = d.interaction.is_none() && d.text_preview.is_none() && d.preview.is_none() && d.branch_of.is_none();
+        let saving = self.ui.auto_saving.iter().any(|(uid, _)| *uid == d.uid);
+        if !idle || saving || d.is_dirty() || !d.changed_on_disk() || self.session.live().doc_uid.is_some() {
+            return;
+        }
+        let name = d.path.as_deref().and_then(|p| Path::new(p).file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        if self.run("file.revert", json!({})).is_some() {
+            self.toast(format!("{} {name}", i18n::tr("Reloaded from disk:")));
+        }
+    }
+
     /// With auto-save on, files that have a path are saved [`AUTO_SAVE_SECS`] after they last
     /// changed (not during a gesture, a live preview or while a version is shown). The file is
     /// encoded on a thread of its own, so a big one doesn't hold up the window, and written here.
@@ -257,7 +282,7 @@ impl FigApp {
                             let bytes = file.encode();
                             (file, bytes)
                         };
-                        match std::thread::Builder::new().name("figcraft-save".into()).spawn(encode) {
+                        match std::thread::Builder::new().name("figcraft-save".into()).stack_size(figcraft_render::RENDER_STACK).spawn(encode) {
                             Ok(h) => self.ui.auto_saving.push((uid, h)),
                             Err(e) => {
                                 failed.get_or_insert(e.to_string());

@@ -362,7 +362,7 @@ The SVG icon preset (`iconPreset: true` on `export` and `export_many`, with `cur
 |---|---|
 | `list_commands {filter?}` | Every command: id, label, menu, shortcut, undoable, params doc. |
 | `run_command {command, params}` | Run any command (e.g. `align.left`, `layout.add`, `component.create`, `instance.place` (drop an instance at a page point into the frame or auto layout slot under it), `component.exposeInstance` / `instance.exposed` (nested instance properties on instances), `component.makeSlot` / `instance.slotInsert` / `instance.resetSlot` (slots, below), `inspect.code` (CSS, HTML + CSS for a whole frame, React, Leptos, Vue, SwiftUI, Jetpack Compose, ArkUI or Flutter for a layer; components take their properties as parameters and instances are calls, see Dev Mode below), `inspect.properties` (layout, auto layout, typography, fills, strokes and effects with their style and variable names; `colorFormat`: hex, rgb, css, hsl or hsb), `inspect.assets` (layers under the selection with export settings, icons and images, each with its `kind`), `inspect.code` takes `unit: rem` and `rootFontSize` for CSS, HTML, React, Leptos and Vue, `style.create`, `variable.bind`, `variable.update` (rename, describe, scope), `variable.set` with `{alias}`, `variable.renameMode` / `variable.removeMode`, `variable.deleteCollection`, `proto.interaction.add`, `codeConnect.set` (components linked to real code, see Dev Mode below)). |
-| `batch {commands: [{command, params}], label?, onError?, quiet?}` | `quiet: true` returns only `{ok, count, failures?}` (failed steps of `onError: "continue"`). An empty `node.set` inside a batch is a no-op. Several commands as one undo step (`command.batch`); a failing step aborts with an error like `step 2 (node.set): no such node 999 (the whole batch was rolled back: nothing changed)`; all-or-nothing for open documents and their document state. Failed inner commands are removed from the journal; preferences, clipboard, tool state and UI requests are not rolled back. A step can use what an earlier step returned: name it with `"as": "card"` and `{"$ref": "card"}` anywhere in a later step's params becomes the `id` in its result (`{"$step": n}` does the same by zero-based position); `"field"` takes another key or a slash path such as `ids/0` (see Step references below). |
+| `batch {commands: [{command, params}], label?, onError?, quiet?}` | `quiet: true` returns only `{ok, count, failures?}` (failed steps of `onError: "continue"`). An empty `node.set` inside a batch is a no-op. Several commands as one undo step (`command.batch`), which keeps one copy of the document however many steps there are (an `edit.undo` step undoes the batch's edits so far together); a failing step aborts with an error like `step 2 (node.set): no such node 999 (the whole batch was rolled back: nothing changed)`; all-or-nothing for open documents and their document state. Failed inner commands are removed from the journal; preferences, clipboard, tool state and UI requests are not rolled back. A step can use what an earlier step returned: name it with `"as": "card"` and `{"$ref": "card"}` anywhere in a later step's params becomes the `id` in its result (`{"$step": n}` does the same by zero-based position); `"field"` takes another key or a slash path such as `ids/0` (see Step references below). |
 | `create_node {type, x, y, width, height, parent, index, name, text, path, absolute?, props}` | Create a frame, rectangle, ellipse, polygon, star, line, arrow, text, vector, section, component or slice; returns `{id, node}`. Style keys may sit beside `type` (`fill`, `stroke`, `layout`, ...) and count as `props` (`props` wins on a clash). `absolute: true` puts a child of an auto-layout frame outside the flow at x/y. A frame with `props.layout` made in an auto-layout parent without `height` hugs vertically. |
 | `set_properties {ids, props, quiet?}` | With `quiet` (default for more than one layer) returns only `{ok, ids, warnings?}` instead of every updated layer. `node.set` on layers (geometry, fills, strokes, effects, corner radius, auto layout, sizing, constraints, masks (`isMask`, `maskType: alpha\|vector\|luminance`), handoff status (`devStatus: none\|readyForDev\|completed`; marking again clears "Changed"), a section's `sectionContentsHidden`, text…); returns the updated layers. |
 | `inspect_document {depth, allPages, fields?, outline?}` | The document as JSON (its `id`, layer tree, styles, selection, history); `fields` selects layer properties, `outline: true` gives a compact tree (below). The tools that act on a document also take `document` (see Naming the document below). |
@@ -375,7 +375,7 @@ The SVG icon preset (`iconPreset: true` on `export` and `export_many`, with `cur
 | `export_tokens {format?, collection?, modes?, path?}` | Engine `variable.exportTokens`. `format` `dtcg` (default): Design Tokens Format Module (2025.10) files, one per collection and mode, `{files: [{name, collection, mode, tokens}]}` (the format module leaves modes to a separate resolver, so each file is a complete standalone tree); names split on `/` into groups, a variable that is also a group gets `$root`; colours are `{colorSpace: "srgb", components, alpha?, hex}` converted from the document's colour profile to sRGB, lengths `{value, unit: "px"}`, unitless numbers (opacity, font weight) plain `number`, strings and booleans `string` / `boolean` (not types of the format: tools that only know the standard ones ignore them); aliases `{group.token}` (`{Collection.group.token}` into another collection). `css`: custom properties, the first selected mode on `:root`, every other on `[data-theme="<mode>"]`. `tailwind`: `{theme: {extend: {colors, borderRadius, fontSize, spacing, fontFamily}}, text}` with `var(--name)` values and the css defining them, named as `inspect.code`'s Tailwind utilities read them. `json`: the local variables JSON. `modes` limits the modes (names or ids). `path` writes the file (a folder for dtcg). Read it back with `run_command` `variable.importTokens {files: [{tokens, mode}], collection?}` (a single `{tokens, mode?}` too): colour, dimension (px, rem), number, fontWeight, fontFamily, string and boolean tokens become variables, aliases are kept, other types are skipped with a warning; the round trip of an export is exact. |
 | `check_contrast {ids?, level?, all?}` or `{fg, bg, fontSize?, bold?}` | Engine `a11y.checkContrast` / `a11y.contrast`, read-only. Text layers (default every one on the page) against what is painted behind them: the layers before the text in document order whose box holds its centre, solid fills blended from the top down to the first opaque one over the page colour. Gradient, image, pattern or blended fills behind make the result `unknown` (listed in `unknown`, not guessed). WCAG 2.x ratio against AA (4.5, large text 3) or AAA (7, large 4.5) by font size and weight (large: 24 px, or 18.66 px bold), plus APCA Lc (75 body, 60 large, simplified guidance). One entry per variable mode (`mode` "Collection/Mode") when the text or a background is bound to a colour variable. Returns `{level, checked, failures: [{id, name, mode, fg, bg, ratio, requiredRatio, apcaLc, fontSize, large, boundVariable?, fixable, suggestion: {textColor, ratio}}], unknown, passed}` (`all: true` adds `results`). Boxes are bounding boxes: rotation, ellipse and vector outlines, masks and strokes are not followed. With `fg` and `bg` it checks one pair (`#767676` on `#FFFFFF` is 4.54). |
 | `screenshot {ids?, scale?, maxSize?, window?, cvd?}` | PNG of the page (with background) or of layers, scaled to fit `maxSize` (default 1600). `window: true` captures the app window in front when attached, a window id (see Windows below) that window. `cvd` (`protanopia`, `deuteranopia`, `tritanopia`, `achromatopsia`) shows it as a person with that colour vision deficiency sees it (Machado, Oliveira and Fernandes 2009 matrices at full severity, applied to linear RGB; achromatopsia is relative luminance). `export` takes `cvd` for PNG too; `run_command` `a11y.simulate {cvd, ids?, scale?, path?}` does both in one step. |
-| `open_file {path, variables?, reload?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.fig` (best effort, see below), `.sketch` (Sketch 48 and newer, best effort), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. `open_file` returns `opened` (for a file opened anew, a `summary` of `name`, `pages`, `layers` and `images`, and `warnings` or `repairs`; a file that was already open gives its `index`, with `stale: true` when the file changed on disk since that tab read or saved it; `reload: true` reads it again into the tab, refused while the tab has unsaved changes) and the document's `document` outline. |
+| `open_file {path, variables?, reload?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.fig` or FigJam `.jam` (best effort, see below), `.sketch` (Sketch 48 and newer, best effort), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. `open_file` returns `opened` (for a file opened anew, a `summary` of `name`, `pages`, `layers` and `images`, and `warnings` or `repairs`; a file that was already open gives its `index`, with `stale: true` when the file changed on disk since that tab read or saved it; `reload: true` reads it again into the tab, refused while the tab has unsaved changes) and the document's `document` outline. |
 | `undo` / `redo` | Step through history. |
 | `history {limit?, revertTo?, hash?}` | The active document's undo stack as data (engine `history.list`, `history.revertTo {index}`, `history.hash`). Default: the newest `limit` (1–200, default 20) steps, oldest first, then the redo steps: `{entries: [{index, label, changedIds, changedCount, time, kind, applied}], applied, total, hash}`. `label` is the batch's `label` or the command's menu label (a generic "Create layer" becomes `Create layer "Card"` or `Create 6 layers`); `changedIds` are the layers the step added, removed or edited (pages left out; at most 200, `changedCount` is the full count); `time` is Unix seconds; `kind` is `edit`, `batch` or `restore` (a version restore). `index` n is the state just before that entry, so `revertTo: n` undoes (or redoes) every step from there in one operation and returns `{applied, total, hash, previousHash}`; `total` is the latest state. It is refused across a `restore` entry and in a live session. `hash` is a 64-bit FNV-1a hash of the document's content: equal documents have equal hashes, so an agent can check that a revert restored the state it expected. `hash: true` returns just `{hash}`. |
 | `auto_name_layers {ids?, scope?, dryRun?}` | Engine `layer.autoName`: renames generic names (`Vector`, `Rectangle 12`, `Frame 5`, `Group 3`, `Ellipse`, `Text 2`; a name is generic when it is one of Vector, Rectangle, Ellipse, Line, Polygon, Star, Frame, Group, Union, Subtract, Intersect, Exclude, Boolean, Text with an optional number) by the rules below, as one undo step. `ids` (default the selection) are the roots; `scope` is `selection`, `page` or `document` (default the selection, or the current page when nothing is selected). `dryRun: true` changes nothing. Returns `{renames: [{id, from, to}], count, dryRun}`. |
@@ -420,6 +420,28 @@ XML outline with geometry (x, y, width, height) and an `omitted` child count, no
 `get_metadata` to see where layers sit; use `fields` / `outline` on `get_node` and
 `inspect_document` when you want JSON with chosen properties (for example `characters` or
 `mainComponentName`).
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"inspect_document","arguments":{"depth":6,"outline":true}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_node","arguments":{"id":3,"depth":2,"fields":["name","width","height"]}}}
+```
+
+### Compact layer trees
+
+`inspect_document` and `get_node` accept `fields`, an array of exact, case-sensitive top-level node
+keys, applied to every layer and page. For example, `fields: ["name", "type", "width", "height"]`
+leaves out paints and text properties; `fields: []` keeps only ids and structure. `id`, `children`,
+depth-boundary `childCount` and the transport's `truncated` marker are always kept (`truncated` is
+not a selectable field). An unknown key is an error that lists the valid keys; a `fields` that is
+not an array of strings, or an `outline` that is not a boolean, is an error too. Document metadata
+stays unchanged.
+
+`outline: true` selects `id`, `name`, `type`, `characters`, `mainComponentName` and `visible`, plus
+structure. `characters` is cut after 120 characters (Unicode scalars), with ASCII `...` appended
+only when longer. Selecting `visible`, explicitly or through outline, reports a boolean even for
+visible layers and pages;
+without these options the output stays sparse. `outline: true` cannot be combined with `fields`;
+`outline: false` can. Both options keep the existing depth and response-size limits.
 
 ```json
 {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"inspect_document","arguments":{"depth":6,"outline":true}}}
@@ -952,7 +974,9 @@ most when it can't be reached).
 - `library.add {path: <share link>}` enables it (a view link is enough); then `library.place`,
   `library.applyStyle`, `library.bindVariable`… work as for library files. `library.list` and
   `library.updates` ask the server for a newer version first (`"server": true` in the listing);
-  `library.acceptUpdates` takes it, overrides kept.
+  `library.acceptUpdates` takes it, overrides kept. The app's own background checks ask only about
+  team libraries added (`library.add`) or checked (`library.check {library?}`) on this computer,
+  so opening a file that names another one contacts nothing (#1097).
 - `library.usage {library?}` → `{id, name, instances, files: [{name, updated, instances}],
   components: [{id, name, instances, files}]}`: what the files using it reported (each fetch
   reports the asking document's name and its instances per component). `library` is an enabled
@@ -1217,7 +1241,8 @@ default mode's named after the collection and the others after the collection an
 `static const` `Color`, `double`, `String` or `bool` per variable; names become camelCase Dart
 identifiers kept apart, aliases are resolved to their value in that mode), and
 returns `{text}` (or writes `path` and returns `{path}`). `variable.import {variables}` (an object,
-JSON text or a path; `variableCollections` and `variables` under `meta` or at the top level) reads
+JSON text or a path to a regular file of at most 256 MiB;
+`variableCollections` and `variables` under `meta` or at the top level) reads
 one back: a collection joins this file's collection of the same name
 (values matched by mode name, new modes and variables added, a same-named variable of another type
 skipped with a warning; library copies and extended collections are never targets), others are
@@ -1258,22 +1283,29 @@ and read state are its own, it can edit and delete only its own messages, and it
 Preferences is unchanged. It is set once per connection, so no command needs `author`; an `author`
 param still wins. In the app, comments act as the name from Preferences (`pref.userName {name}`,
 default "You"); only a message's author can edit or delete it. `@Name` in a message mentions
-someone (`comment.people` lists the names used in the file and, as `you`, who is acting).
+someone (`comment.people` lists the names used in the file: everyone who wrote or reacted, and
+every name a message @mentions, once each in any case; and, as `you`, who is acting).
 
 Read state is kept per name: a new message is unread for everyone but its author;
 `comment.markRead {id? | link?, read?}` marks one thread (or, without `id`, all of them) read or
 unread (not an undo step). `comment.list {page? | "all", filter? (all|open|resolved|mine|unread),
-sort? (date|page), query?, frame?}` returns the threads with their position, `frame`/`frameName`,
+sort? (date|page), query?, frame?, mentions?}` returns the threads with their position, `frame`/`frameName`,
 `pageName`, `unread`, `link` and replies (with `edited` times and `reactions`). Each message, the
 first and every reply, has `mentions`: the names it @mentions by the rule the app highlights them
 with, `{name, known, you}` each. `known` means the file's people (`comment.people`, or you) have
 the name, spelt as they spell it; `you` means it names you (or `author`). `@Name` counts at the
 start of the text or after a character that isn't a letter or digit, so `a@b.com` mentions nobody;
-an unknown name is the letters and digits after the `@`. Links are
+an unknown name is the letters and digits after the `@`. `mentions: "<name>"` (any case; a leading
+`@` is fine) lists only the threads where a message, the first or a reply, mentions that name as
+those `mentions` report it, combined with the other filters: `{"mentions": "Claude", "filter":
+"unread"}` is the unread threads that tag Claude. `@Ada Lovelace` mentions "Ada Lovelace", not
+"Ada", when the file knows Ada Lovelace; a name nobody in the file has can still be several words
+(`"Zoe Smith"` finds `@Zoe Smith`). Links are
 `figcraft://comment/<id>`: `comment.link {id}` returns one, `comment.open {id | link, view?}` goes
 to its page, zooms to its frame (`fit`, the default; `center` keeps the zoom; `keep` doesn't move)
-and opens it in the app, and `comment.next {id?, dir?, …list params}` steps to the next or previous
-thread of a list the same way. `comment.zoom {ids}` zooms in on a group of pins. Comment ids made in
+and opens it in the app, and `comment.next {id?, dir?, …list params}` (`mentions` too) steps to the
+next or previous thread of a list the same way. Both return the thread as `comment.list` lists it,
+with each message's `mentions`. `comment.zoom {ids}` zooms in on a group of pins. Comment ids made in
 a live session are large numbers (their creator's id space): pass them back as given.
 
 An agent can read every open thread as one resource (`figcraft://comments`) or call
@@ -1281,8 +1313,9 @@ An agent can read every open thread as one resource (`figcraft://comments`) or c
 query?, includeResolved?}` returns `{count, truncated, text, comments}`, where `text` is a Markdown
 task brief with the document, each thread's page, frame, anchor, point, messages, replies and link,
 and the instructions to fix, reply and resolve. `comments` is bounded metadata for at most 200 of
-the selected threads (id, page, frame, anchor, status, link, author, preview and reply count), not
-the full threads: use `comment.list` for those. The Comments panel's **Copy for AI** action uses
+the selected threads (id, page, frame, anchor, status, link, author, preview, reply count and
+`mentions`: the names the whole thread @mentions, as `comment.list` reports them per message, at most
+32 with names cut to 80 characters), not the full threads: use `comment.list` for those. The Comments panel's **Copy for AI** action uses
 it. The `fix_comments` prompt runs the review loop: inspect the anchored layer, make the
 smallest change (one `batch` per thread), reply with what changed, verify with a screenshot, then
 resolve. Reply before resolving: `comment.reply` reopens a thread, so resolving first and replying
@@ -1401,7 +1434,7 @@ take an optional `document`: the file's `id` (in `run_command {command: "doc.lis
 of the `document` outline `open_file` and `inspect_document` return) or the path of an open file.
 The call acts on that file and the tab in front stays in front, unless the command itself opens or
 switches to another file (`file.open`, `file.new`, `doc.switch`), as it would without `document`. A
-file that isn't open is an error. `screenshot {window}` captures what the window shows, so it
+file that isn't open is an error. `doc.list` gives an agent each open file's `id`, name and state, not`nwhere it is on disk (#1117). `screenshot {window}` captures what the window shows, so it
 needs the file in front. Over the control channel, `engine.execute`, `document.inspect`,
 `node.get` and `ui.render` take the same `document`; other methods refuse one naming a file behind
 the tab in front. Headless sessions take it too.
@@ -1427,10 +1460,12 @@ only: a host stops hosting it, a guest leaves it.
   FigCraft server unless changed; `{url: ""}` turns online sharing off, `{}` goes back to the
   built-in one; `server` names another for this call, with `?key=…` when it needs its key) and
   returns `status: "connecting"`; once `collab.peers` says `"live"`, `code` is the code to give
-  others (`K7M-2QX-9TD`) and `share` is `{via, access, shared, editCode, viewCode, editLink,
-  viewLink}`: links and codes made for others (`published.edit` / `published.view` and `link` are
+  others (`K7M-2QX-9TD`) and `share` is `{via, access, shared, editCode, viewCode, commentCode, editLink,
+  viewLink, commentLink}`: links and codes made for others (`published.edit` / `published.view` and `link` are
   your own way in; keep them). `access: "view"` (or calling again with it while shared) makes
-  `code` the view-only one. A server older than join codes leaves `code` null: give
+  `code` the view-only one, and `access: "comment"` the one for viewing and commenting (whoever
+  joins with it adds, replies to, reacts to and resolves comments but can't change the design;
+  `commentCode` is null from a server older than comment links, and asking for it then fails). A server older than join codes leaves `code` null: give
   `share.editLink` / `share.viewLink` instead. `via: "local"`
   hosts the document for people on the same network and returns at once with a longer `code`
   (20 symbols, carrying this machine's IPv4 address, the port and the session's secret; `bind:
@@ -1475,6 +1510,8 @@ only: a host stops hosting it, a guest leaves it.
   file, name, edit, view}` with the file's first edit link and view link (they carry their
   tokens: share them like passwords). Someone joining with the view link gets `access: "view"`:
   every edit on the synced document is refused with "View only: …" (the server refuses them too).
+  With a comment link (`access: "comment"`) the comment commands work and sync, and every other edit
+  is refused with "Can comment: …".
   On a server open to the public ([`server.md`](server.md#running-a-public-server)) `server` needs no
   key (`wss://figcraft.example.com/`): `published` then also has `owner` (the owner token, shown this
   once: keep it) and `expires` (when the server deletes the file unless someone opens it, seconds
@@ -1535,10 +1572,11 @@ only: a host stops hosting it, a guest leaves it.
   and the rest is null or empty), status
   (off|connecting|live|reconnecting|failed), reason?,
   attempt?, role (host|guest), me, name, color, fileName, pages, link, url, address, network,
-  access (edit|view), readOnly (the active document can't be edited now: view only, or being
-  published), published (a file you published: {server, file, name, edit, view, owner, expires}),
+  access (edit|view|comment), readOnly (the active document can't be edited now: view only,
+  comment only, or being published), published (a file you published: {server, file, name, edit, view, owner, expires}),
   code (the join code to give others when the document was shared with `collab.share`, else
-  null), share ({via: online|local, access, shared, editCode, viewCode, editLink, viewLink}, or
+  null), share ({via: online|local, access, shared, editCode, viewCode, commentCode, editLink, viewLink,
+  commentLink}, or
   null; `shared: false`: your file on a server, not shared now),
   hosting (what the server of the file you're in says: {open, operator, terms, idleDays, maxFileMb,
   expires}, or null),

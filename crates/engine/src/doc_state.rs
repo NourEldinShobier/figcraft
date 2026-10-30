@@ -19,6 +19,9 @@ pub struct History {
     pub undo: Vec<HistoryEntry>,
     pub redo: Vec<HistoryEntry>,
     pub limit: usize,
+    /// Inside a group, the undo depth just after the step the group pushed: the group's later
+    /// edits add to that step instead of keeping a snapshot each (#1099).
+    pub(crate) group_step: Option<usize>,
 }
 
 /// An in-progress gesture: the document before it started, so previews re-apply from scratch.
@@ -236,6 +239,14 @@ impl DocState {
     pub fn with_images_left_in_file(mut self, path: &str, count: usize) -> Self {
         self.images_left_in_file = (count > 0).then(|| (path.to_string(), count));
         self
+    }
+
+    /// The file changed on disk since this tab read or wrote it (another app, figcraft-cli or an agent saved it).
+    pub fn changed_on_disk(&self) -> bool {
+        match (&self.on_disk, self.path.as_deref()) {
+            (Some(read), Some(p)) => library::stat(p).ok().as_ref().is_some_and(|now| now != read),
+            _ => false,
+        }
     }
 
     /// The tab's file now holds what this tab read or wrote.
