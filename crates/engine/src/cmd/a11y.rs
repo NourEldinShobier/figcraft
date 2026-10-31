@@ -12,11 +12,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use base64::Engine as _;
 use figcraft_color::a11y::{self as ca, Cvd};
 use figcraft_color::{BlendMode, Color, PaintKind};
-use figcraft_doc::*;
+use figcraft_doc::{Document, ExportFormat, ExportSize, Node, NodeId, NodeKind, TextStyle, VariableValue};
 use serde_json::{Value, json};
 
 use super::CommandSpec;
-use crate::params::*;
+use crate::params::{boolean, color, get, num, num_or, req_targets, string};
 use crate::{EngineError, Result, Session, bad, spec};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -177,6 +177,7 @@ struct Painter {
     rect: figcraft_geom::Rect,
 }
 
+#[allow(clippy::cognitive_complexity)] // shortcut: one pass over every case; split it when the next case lands.
 fn analyze(doc: &Document, roots: &[NodeId], aaa: bool) -> Result<Report> {
     let page = match roots.first() {
         Some(r) => doc.page_of(*r).or_else(|| doc.node(*r).filter(|n| n.is_page()).map(|n| n.id)),

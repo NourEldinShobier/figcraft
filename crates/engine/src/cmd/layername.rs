@@ -8,7 +8,7 @@ use figcraft_doc::{Document, Node, NodeId, NodeKind};
 use serde_json::{Value, json};
 
 use super::CommandSpec;
-use crate::params::*;
+use crate::params::{bool_of, get, id, req_targets, string};
 use crate::{Result, Session, bad, spec};
 
 const MAX_VISIT: usize = 20_000;

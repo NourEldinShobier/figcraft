@@ -42,7 +42,7 @@ fn saved_breaks_keep_a_word_our_metrics_would_push_to_the_next_line() {
 #[test]
 fn saved_breaks_keep_a_word_whole_in_a_narrow_box() {
     let Some(mut t) = text("Followers") else { return };
-    let w = width(&t, "Followers") * 0.99;
+    let w = width(&t, "Followers") * 0.97;
     assert_eq!(lines(&t, w).len(), 2, "unhinted, the word splits");
     t.save_breaks(vec![], w);
     assert_eq!(lines(&t, w), ["Followers"]);

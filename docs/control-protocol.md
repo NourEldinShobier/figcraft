@@ -1,6 +1,6 @@
 # FigCraft control protocol
 
-The desktop app can be driven by other programs (tests, scripts, `figcraft-cli mcp --attach`,
+Without `--control`, the window listens on port 7979 when that port is free (the first window to start gets it; a second one runs without a control channel). `--control <port>` picks the port and, as before, skips restoring the window size and the Home start screen. The desktop app can be driven by other programs (tests, scripts, `figcraft-cli mcp --attach`,
 sibling Crafting Apps) through a loopback socket:
 
 ```bash

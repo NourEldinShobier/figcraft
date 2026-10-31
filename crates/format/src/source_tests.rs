@@ -13,7 +13,7 @@ fn sample() -> Document {
     d.node_mut(card).unwrap().set_key(Some("card"));
     let bg = d.create(card, NodeKind::Rectangle, "Bg", 0.0, 0.0, 200.0, 100.0).unwrap();
     d.node_mut(bg).unwrap().fills = vec![Paint::solid(Color::new(1.0, 0.0, 0.0, 1.0))];
-    d.create(card, NodeKind::Ellipse { start: 0.0, sweep: 6.28, inner: 0.0 }, "Dot", 5.0, 5.0, 10.0, 10.0).unwrap();
+    d.create(card, NodeKind::Ellipse { start: 0.0, sweep: std::f64::consts::TAU, inner: 0.0 }, "Dot", 5.0, 5.0, 10.0, 10.0).unwrap();
     d.add_page("Second");
     d
 }

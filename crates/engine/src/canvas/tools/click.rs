@@ -1,6 +1,6 @@
 use super::handles::{PATH_REACH_PX, label_at, locked_in, path_candidates, readable_text_fills};
 use super::{
-    Affine, Document, Gesture, Node, NodeId, NodeKind, Point, PointerEvent, Rect, Result, Session, Sizing, TextAutoResize, TextData, TextPath,
+    Affine, Document, Gesture, Node, NodeId, NodeKind, Point, PointerEvent, Rect, Result, Session, Sizing, TextAutoResize, TextPath,
     ToolId, frame_at, json, select_target, textedit, within_slop,
 };
 

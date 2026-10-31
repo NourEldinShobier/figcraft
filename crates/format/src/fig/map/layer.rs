@@ -2,7 +2,7 @@ use super::component::{Entry, Inst, OverrideRow, prop_ref, uniform_scale};
 use super::connector::connector_has_saved_label;
 use super::layout::{layout_grid, tracks};
 use super::paint::{effect, export_setting, has_bound_variables, paint, paint_bound, stroke};
-use super::*;
+use super::{BTreeMap, BTreeSet, Affine, Kv, MAX_COMMANDS, MAX_DEPTH, Mapper, Obj, Value, View, copy_num, copy_str, generated_record, guid, json, matrix, network, num, rows, size};
 use std::fmt::Write as _;
 
 /// How the layers of a resized container follow it when the file gives no derived layout for
@@ -96,6 +96,7 @@ impl<'a> Mapper<'a> {
 
     /// [`Self::layer`], keeping only the layers in `included` (all when `None`) below the
     /// top-level one: the cached library definitions of an internal canvas.
+    #[allow(clippy::cognitive_complexity)] // shortcut: one pass over the layer's fields; split it when the next field lands.
     pub(super) fn layer_filtered(
         &mut self,
         id: &str,
@@ -299,7 +300,7 @@ impl<'a> Mapper<'a> {
             if let Some((sub, sym)) = self.instance(o, view, id, inst, rest_id) {
                 let main = self.nodes.get(&sym).map(|m| View::of(m));
                 let (from, to) = (main.as_ref().and_then(View::size), view.size());
-                let uniform = uniform_scale(&view);
+                let uniform = uniform_scale(view);
                 // A uniformly scaled instance (or one in such an instance) scales its layers whole.
                 let fit = match uniform {
                     Some(k) => Some(Fit::Scale(k, k)),

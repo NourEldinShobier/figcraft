@@ -102,7 +102,7 @@ fn export_many_refuses_unknown_keys_and_can_flatten_slashes() {
     let mut s = Session::new();
     let f = frame(&mut s, json!({"name": "state/win/dark"}));
     let err = s.execute("file.exportMany", &json!({"ids": [f], "items": []})).unwrap_err().to_string();
-    assert!(err.contains("unknown key `items`"), "{err}");
+    assert!(err.contains("unknown parameter `items`"), "{err}");
     let nested = ex(&mut s, "file.exportMany", json!({"ids": [f]}));
     assert_eq!(nested["files"][0]["name"], "state/win/dark.png");
     let flat = ex(&mut s, "file.exportMany", json!({"ids": [f], "flatten": true}));

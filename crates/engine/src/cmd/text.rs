@@ -186,7 +186,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "text.setRange",
             "Style characters",
-            "{id? | ids?, start, end (character offsets, end exclusive), fill? (colour), weight? (100-900), fontSize?, fontFamily?, fontStyle?, lineHeight?, letterSpacing?, textDecoration?, textCase?, hyperlink?, ...}  styles those characters of a text layer; the same entries go in `node.set`'s `ranges`",
+            "{id? | ids?, start, end (character offsets, end exclusive), fill? (colour), weight? (100-900), fontWeight?, fontSize?, fontFamily?, fontStyle?, lineHeight?, letterSpacing?, textDecoration?, textCase?, hyperlink?, textFills?, textDecorationStyle?, textDecorationThickness?, textDecorationOffset?, textDecorationSkipInk?, textDecorationColor?}  styles those characters of a text layer; the same entries go in `node.set`'s `ranges`",
             true,
             |s, p| {
                 let ids = req_targets("text.setRange", s, p)?;

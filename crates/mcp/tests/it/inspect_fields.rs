@@ -101,7 +101,9 @@ fn fields_and_outline_survive_every_depth_retry() {
         for (tool, method) in [("inspect_document", "document.inspect"), ("get_node", "node.get")] {
             backend.calls.clear();
             let mut args = options.clone();
-            args["id"] = root.clone();
+            if tool == "get_node" {
+                args["id"] = root.clone();
+            }
             args["depth"] = json!(6);
             args["maxBytes"] = json!(6000);
             let result = call_tool(&mut backend, tool, &args);

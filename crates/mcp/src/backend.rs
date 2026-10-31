@@ -108,6 +108,11 @@ impl Attached {
         Ok(r)
     }
 
+    /// Connect to the window listening on the default control port (`figcraft` without `--control`).
+    pub fn default_app() -> std::io::Result<Self> {
+        Self::port(figcraft_collab_net::control_auth::DEFAULT_CONTROL_PORT)
+    }
+
     /// Connect to 127.0.0.1:port.
     pub fn port(port: u16) -> std::io::Result<Self> {
         Self::connect(&format!("127.0.0.1:{port}"))

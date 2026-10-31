@@ -12,12 +12,12 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use figcraft_color::Color;
-use figcraft_doc::*;
+use figcraft_doc::{Collection, CollectionId, Document, Mode, Variable, VariableId, VariableType, VariableValue};
 use serde_json::{Map, Value, json};
 
 use super::CommandSpec;
 use crate::library::local_collections;
-use crate::params::*;
+use crate::params::{get, string};
 use crate::token_roles::{NumberRole, Roles};
 use crate::{Result, Session, bad, spec};
 
@@ -423,6 +423,7 @@ fn tokens_value(cmd: &str, v: &Value) -> Result<Map<String, Value>> {
     }
 }
 
+#[allow(clippy::cognitive_complexity)] // shortcut: one pass over every case; split it when the next case lands.
 fn import_tokens(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "variable.importTokens";
     // (mode name, tokens) per file.

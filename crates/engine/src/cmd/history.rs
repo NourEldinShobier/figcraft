@@ -7,7 +7,7 @@ use figcraft_doc::{Document, NodeId};
 use serde_json::{Value, json};
 
 use super::CommandSpec;
-use crate::params::*;
+use crate::params::{f64_of, get};
 use crate::{EngineError, Result, Session, bad, spec};
 
 const MAX_LIMIT: usize = 200;

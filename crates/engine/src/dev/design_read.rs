@@ -5,13 +5,13 @@
 
 use std::collections::BTreeMap;
 
-use figcraft_doc::*;
+use figcraft_doc::{Document, Node, NodeId, NodeKind, VariableId, VariableValue};
 use serde_json::{Value, json};
 
 use crate::cmd::CommandSpec;
 use crate::codegen::{CodeLang, code_for};
 use crate::devinspect::{assets, properties};
-use crate::params::*;
+use crate::params::{f64_of, get, opt_id, string, targets};
 use crate::{bad, spec};
 
 const MAX_DEPTH: usize = 32;

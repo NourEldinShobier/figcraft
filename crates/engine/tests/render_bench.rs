@@ -6,6 +6,7 @@ use std::time::Instant;
 
 #[test]
 #[ignore]
+#[allow(clippy::disallowed_methods)] // a hand-run bench reads its own file, outside any automation roots
 fn render_timings() {
     let Ok(path) = std::env::var("FIGCRAFT_BENCH_FILE") else { return };
     let page_name = std::env::var("FIGCRAFT_BENCH_PAGE").unwrap_or_else(|_| "git".into());

@@ -173,13 +173,21 @@ fn main() -> eframe::Result {
             std::process::exit(2);
         }
     };
-    let port = args.control.or_else(|| std::env::var("FIGCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok()));
+    let explicit_port = args.control.or_else(|| std::env::var("FIGCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok()));
+    // Without `--control` the window still listens on the default port when it is free, so an agent
+    // edits this window and its auto-save applies; the window otherwise starts as usual (`explicit_port`).
+    let port = explicit_port.or_else(default_control_port);
     let control_token = match port {
         Some(p) => match figcraft_collab_net::control_auth::ControlToken::for_server(p) {
             Ok(token) => Some(token),
-            Err(e) => {
+            Err(e) if explicit_port.is_some() => {
                 eprintln!("FigCraft control server not started: {e}");
                 std::process::exit(2);
+            }
+            Err(e) => {
+                // The default port is a convenience: without a token file the window just runs on its own.
+                eprintln!("FigCraft control server not started on the default port: {e}");
+                None
             }
         },
         None => None,
@@ -233,7 +241,7 @@ fn main() -> eframe::Result {
     session.live.links = figcraft_collab_net::links::system();
     session.invite_links_startup();
     let first_run = svc.prefs.is_none() && args.join.is_none();
-    if session.docs.is_empty() && opens_new_file(first_run, session.prefs.start_on_home, port.is_some()) {
+    if session.docs.is_empty() && opens_new_file(first_run, session.prefs.start_on_home, explicit_port.is_some()) {
         let _ = session.execute("file.new", &json!({}));
     }
     // The interface language from the first frame on, and for the message when the window can't
@@ -276,7 +284,7 @@ fn main() -> eframe::Result {
     }
     // Control-channel runs neither restore nor save the native window, so their screenshots start
     // from the same window every time.
-    let mut options = eframe::NativeOptions { viewport, renderer: eframe::Renderer::Wgpu, persist_window: port.is_none(), ..Default::default() };
+    let mut options = eframe::NativeOptions { viewport, renderer: eframe::Renderer::Wgpu, persist_window: explicit_port.is_none(), ..Default::default() };
     let graphics = graphics::Plan::configure(&mut options.wgpu_options);
     // Counts the frames drawn, which tells a window that failed starting up from one that ran.
     let window = ctx_slot.clone();
@@ -317,10 +325,17 @@ fn main() -> eframe::Result {
     let frames = window.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map_or(0, egui::Context::cumulative_frame_nr);
     // Start again on other graphics, or say why instead of quitting silently: release builds on
     // Windows have no console.
-    graphics.finish(result, frames, port.is_some())
+    graphics.finish(result, frames, explicit_port.is_some())
 }
 
 /// With nothing to open, whether the window starts in a new file rather than on the home screen.
+/// The default control port, when nothing listens on it: a second window must not take over the
+/// first one's port (and its token file).
+fn default_control_port() -> Option<u16> {
+    let port = figcraft_collab_net::control_auth::DEFAULT_CONTROL_PORT;
+    std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).ok().map(|_| port)
+}
+
 /// A first run (no settings kept yet) shows the home screen's tips and templates, and later runs
 /// start in a new file unless the preference asks for Home, which `--control` overrides: its
 /// callers expect a document to act on.
@@ -422,6 +437,14 @@ mod title_bar_tests {
 #[cfg(test)]
 mod start_tests {
     use super::opens_new_file;
+
+    #[test]
+    fn the_default_control_port_is_skipped_while_something_listens_on_it() {
+        let port = figcraft_collab_net::control_auth::DEFAULT_CONTROL_PORT;
+        // Held here, or by another process: either way the helper must not offer the port.
+        let _held = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port));
+        assert_eq!(super::default_control_port(), None);
+    }
 
     #[test]
     fn the_home_preference_starts_on_home_except_for_control_callers() {

@@ -6,7 +6,7 @@
 //! kind of patch for the document's other fields. Replaying it on the previous snapshot gives
 //! back the document exactly.
 
-use super::*;
+use super::{Arc, BTreeMap, BTreeSet, Deserialize, Document, Finite, FormatError, ImageData, MAX_VERSIONS, MAX_VERSION_DESCRIPTION, MAX_VERSION_INDEX, MAX_VERSION_NAME, Packed, Read, Seek, Serialize, Snapshot, Value, Version, VersionLimits, Write, clip, io_err, is_valid_version_id, json, json_options, put, put_versions, read_member};
 use serde_json::Map;
 
 /// A keyframe (a full snapshot) at least every this many versions.

@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use super::load::{import_summary, read_capped, write};
 use crate::cmd::CommandSpec;
-use crate::params::*;
+use crate::params::string;
 use crate::{DocState, EngineError, Result, Session, bad, file_access, spec};
 
 /// Longest source text read.
@@ -106,6 +106,26 @@ fn import_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"index": s.active, "summary": summary, "warnings": issues}))
 }
 
+
+pub fn specs() -> Vec<CommandSpec> {
+    vec![
+        spec!(
+            "file.exportSource",
+            "Export plain-text source",
+            "{path? (a file ending in an extension: the text; no extension or an existing folder: design.jsonl plus images/<hash>; without a path the text comes back as `source`)}  the document as canonical JSON Lines, one object per line with sorted keys and no volatile fields: saving twice gives identical bytes and a changed fill changes one line (docs/source-format.md). Returns {lines, images, source? | path}",
+            false,
+            export_cmd
+        ),
+        spec!(
+            "file.importSource",
+            "Import plain-text source",
+            "{source (the text) | path (a text file, or a folder with design.jsonl and images/)}  rebuilds the document from file.exportSource's text as a new unsaved tab; images load from images/<hash> next to the file (missing ones are named in `warnings`). Returns {index, summary, warnings}",
+            false,
+            import_cmd
+        ),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -139,23 +159,4 @@ mod tests {
         assert_eq!(s.execute("file.importSource", &json!({"path": dir})).unwrap()["summary"]["layers"], json!(1));
         let _ = std::fs::remove_dir_all(&base);
     }
-}
-
-pub fn specs() -> Vec<CommandSpec> {
-    vec![
-        spec!(
-            "file.exportSource",
-            "Export plain-text source",
-            "{path? (a file ending in an extension: the text; no extension or an existing folder: design.jsonl plus images/<hash>; without a path the text comes back as `source`)}  the document as canonical JSON Lines, one object per line with sorted keys and no volatile fields: saving twice gives identical bytes and a changed fill changes one line (docs/source-format.md). Returns {lines, images, source? | path}",
-            false,
-            export_cmd
-        ),
-        spec!(
-            "file.importSource",
-            "Import plain-text source",
-            "{source (the text) | path (a text file, or a folder with design.jsonl and images/)}  rebuilds the document from file.exportSource's text as a new unsaved tab; images load from images/<hash> next to the file (missing ones are named in `warnings`). Returns {index, summary, warnings}",
-            false,
-            import_cmd
-        ),
-    ]
 }

@@ -43,7 +43,9 @@ fn measures_paths_by_length() {
     let c = Circle::new((0.0, 0.0), 10.0).to_path(0.01);
     let l = &polylines(&c).unwrap()[0];
     assert!(l.closed);
-    assert_eq!(l.points.first(), l.points.last());
+    // The circle's last point is its first up to the platform's float rounding.
+    let (f, e) = (l.points.first().unwrap(), l.points.last().unwrap());
+    assert!((f.x - e.x).abs() < 1e-9 && (f.y - e.y).abs() < 1e-9, "{f:?} {e:?}");
     assert!((l.length() - std::f64::consts::TAU * 10.0).abs() < 0.1, "{}", l.length());
 }
 

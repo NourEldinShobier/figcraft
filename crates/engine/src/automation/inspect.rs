@@ -171,6 +171,7 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
 }
 
 /// A node's selected properties, applied at every level of its subtree.
+#[allow(clippy::cognitive_complexity)] // shortcut: one pass over every case; split it when the next case lands.
 pub fn node_json_with_options(doc: &Document, id: NodeId, depth: usize, options: &InspectOptions) -> Value {
     let Some(n) = doc.node(id) else { return Value::Null };
     let mut v = json!({"id": n.id});

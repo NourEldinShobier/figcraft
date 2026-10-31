@@ -81,6 +81,18 @@ fn obj(props: Value, required: &[&str]) -> Value {
     o
 }
 
+/// A schema that also takes keys it doesn't list: [`refuse_unknown_args`] lets them through here.
+trait OpenKeys {
+    fn with_open_keys(self) -> Value;
+}
+
+impl OpenKeys for Value {
+    fn with_open_keys(mut self) -> Value {
+        self["additionalProperties"] = json!(true);
+        self
+    }
+}
+
 fn tool(name: &str, title: &str, desc: &str, schema: Value, read_only: bool) -> Value {
     json!({
         "name": name,
@@ -216,7 +228,8 @@ fn tools() -> Vec<Value> {
                     "props": {"type": "object", "description": "Any set_properties keys applied at creation (they may also be given beside `type`, like fill or layout), e.g. {\"fill\":\"#3366FF\",\"cornerRadius\":12,\"fontSize\":24,\"layout\":\"vertical\",\"gap\":8,\"padding\":16}"},
                 }),
                 &["type"],
-            ),
+            )
+            .with_open_keys(),
             false,
         ),
         tool(
@@ -699,7 +712,9 @@ fn friendly_params(p: &mut Value) {
 /// error (`commands[0].`).
 fn refuse_unknown_args(schema: &Value, args: &Value, path: &str) -> Result<(), String> {
     if let (Some(props), Some(given)) = (schema.get("properties").and_then(Value::as_object), args.as_object()) {
-        let unknown: Vec<String> = given.keys().filter(|k| !props.contains_key(*k)).map(|k| format!("`{path}{k}`")).collect();
+        // A schema that says so takes further keys (create_node: any set_properties key beside `type`).
+        let open = schema.get("additionalProperties") == Some(&Value::Bool(true));
+        let unknown: Vec<String> = given.keys().filter(|k| !open && !props.contains_key(*k)).map(|k| format!("`{path}{k}`")).collect();
         if !unknown.is_empty() {
             let s = if unknown.len() == 1 { "" } else { "s" };
             let takes: Vec<&str> = props.keys().map(String::as_str).collect();

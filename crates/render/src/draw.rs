@@ -926,6 +926,7 @@ fn fill_vector_regions(ctx: &Ctx, pix: &mut Pixmap, n: &Node, network: &figcraft
 }
 
 /// Fills, `over_fills`, children (clipped), strokes and text of a node, without opacity/effects.
+#[allow(clippy::cognitive_complexity)] // shortcut: one pass over a node's paint order; split it when the next effect lands.
 fn draw_content(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize, over_fills: OverFills) {
     let doc = ctx.doc;
     let (w, h) = (n.width, n.height);

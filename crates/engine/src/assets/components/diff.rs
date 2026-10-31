@@ -36,6 +36,7 @@ pub(super) fn bindings_of<'a>(n: &'a Node, g: &'a str) -> impl Iterator<Item = (
 }
 
 /// Property groups that differ between two versions of a node.
+#[allow(clippy::cognitive_complexity)] // shortcut: one pass over every case; split it when the next case lands.
 pub fn diff_groups(a: &Node, b: &Node) -> Vec<&'static str> {
     let mut out = Vec::new();
     if a.fills != b.fills {

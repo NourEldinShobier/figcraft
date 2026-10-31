@@ -22,7 +22,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use figcraft_doc::{Corners, Document, Node, NodeId, NodeKind, StrokeProps, VectorNetwork, WindingRule};
+use figcraft_doc::{Corners, Document, Node, NodeId, NodeKind, VectorNetwork, WindingRule};
 use figcraft_geom::kurbo::PathEl;
 use figcraft_geom::{Affine, BezPath, Point, Rect, Shape};
 use serde_json::{Value, json};

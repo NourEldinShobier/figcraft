@@ -148,8 +148,7 @@ fn the_next_dialog_starts_in_the_folder_of_the_last_pick() {
 #[test]
 fn portable_settings_file_is_used_when_present() {
     let dir = root("portable");
-    let mut prefs = figcraft_engine::Prefs::default();
-    prefs.recent_files = vec!["a.figcraft".into()];
+    let mut prefs = figcraft_engine::Prefs { recent_files: vec!["a.figcraft".into()], ..Default::default() };
     crate::services::write_prefs(&dir, &prefs);
     assert!(dir.join("state.json").is_file() && !dir.join("figcraft-settings.ini").exists());
 

@@ -87,7 +87,7 @@ fn batch_steps_refuse_unknown_keys_and_parameters() {
     assert!(e.contains("step 1: unknown key `args`"), "{e}");
     let e =
         err(&mut s, "command.batch", json!({"commands": [{"command": "select.all"}, {"command": "comment.list", "params": {"filterr": "open"}}]}));
-    assert!(e.contains("comment.list") && e.contains("step 1: unknown parameter `filterr`"), "{e}");
+    assert!(e.contains("step 1 (comment.list): unknown parameter `filterr`"), "{e}");
 }
 
 #[test]

@@ -116,6 +116,7 @@ fn a_line_that_is_not_json_ends_the_connection_before_anything_after_it_runs() {
     assert!(pending.lock().unwrap().is_empty(), "nothing was dispatched");
 }
 
+#[test]
 fn missing_or_wrong_token_never_dispatches_and_closes() {
     for request in [
         br#"{"id":1,"method":"engine.execute"}"#.as_slice(),
@@ -372,7 +373,7 @@ fn events_poll_is_answered_without_the_ui_queue() {
     log.push("comment.added", "Doc", None, json!({"commentId": 7}));
     let l = log.clone();
     let worker = std::thread::spawn(move || serve_with_events(server, token(), q, context(), l, Duration::from_secs(5)));
-    client.write_all(b"{\"id\":1,\"method\":\"events.poll\",\"params\":{\"after\":0,\"timeoutMs\":0}}\n").unwrap();
+    client.write_all(b"{\"id\":1,\"method\":\"events.poll\",\"token\":\"test_control_token_with_32_chars\",\"params\":{\"after\":0,\"timeoutMs\":0}}\n").unwrap();
     let mut reader = BufReader::new(client);
     let r = reply(&mut reader);
     assert_eq!(r["id"], 1);
@@ -499,7 +500,7 @@ fn events_poll_rejects_an_unknown_topic_without_the_ui_queue() {
     let l = log.clone();
     let worker = std::thread::spawn(move || serve_with_events(server, token(), q, context(), l, Duration::from_secs(5)));
     let mut reader = BufReader::new(client);
-    reader.get_mut().write_all(b"{\"id\":1,\"method\":\"events.poll\",\"params\":{\"topics\":[\"nope\"],\"timeoutMs\":0}}\n").unwrap();
+    reader.get_mut().write_all(b"{\"id\":1,\"method\":\"events.poll\",\"token\":\"test_control_token_with_32_chars\",\"params\":{\"topics\":[\"nope\"],\"timeoutMs\":0}}\n").unwrap();
     let r = reply(&mut reader);
     assert_eq!(r["id"], 1);
     assert_eq!(r["ok"], false);
@@ -518,7 +519,7 @@ fn events_poll_reports_reset_for_a_cursor_ahead_of_the_log() {
     let l = log.clone();
     let worker = std::thread::spawn(move || serve_with_events(server, token(), q, context(), l, Duration::from_secs(5)));
     let mut reader = BufReader::new(client);
-    reader.get_mut().write_all(b"{\"id\":1,\"method\":\"events.poll\",\"params\":{\"after\":2,\"timeoutMs\":0}}\n").unwrap();
+    reader.get_mut().write_all(b"{\"id\":1,\"method\":\"events.poll\",\"token\":\"test_control_token_with_32_chars\",\"params\":{\"after\":2,\"timeoutMs\":0}}\n").unwrap();
     let r = reply(&mut reader);
     assert_eq!(r["result"]["reset"], true, "{r}");
     assert!(r["result"]["events"].as_array().unwrap().is_empty(), "{r}");

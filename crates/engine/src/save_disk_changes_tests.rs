@@ -108,3 +108,25 @@ fn opening_an_open_file_says_it_is_stale_and_reloads_on_request() {
     assert!(app.ds().unwrap().is_dirty(), "the unsaved edit is still there");
     let _ = std::fs::remove_file(&path);
 }
+
+#[test]
+fn a_saved_file_is_reported_changed_only_after_another_writer_saved_it() {
+    let path = temp_file("changed");
+    let mut setup = Session::new();
+    setup.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap();
+    setup.execute("file.save", &json!({"path": path})).unwrap();
+    let mut app = Session::new();
+    app.execute("file.open", &json!({"path": path})).unwrap();
+    assert!(!app.ds().unwrap().changed_on_disk(), "nothing wrote the file since it was opened");
+
+    let mut agent = Session::new();
+    agent.execute("file.open", &json!({"path": path})).unwrap();
+    agent.execute("page.rename", &json!({"name": "AGENT"})).unwrap();
+    agent.execute("file.save", &json!({})).unwrap();
+    assert!(app.ds().unwrap().changed_on_disk(), "the agent's save is seen");
+
+    app.execute("file.revert", &json!({})).unwrap();
+    assert!(!app.ds().unwrap().changed_on_disk(), "reverting reads the new copy");
+    let ds = app.ds().unwrap();
+    assert_eq!(ds.doc.node(ds.page).unwrap().name, "AGENT");
+}

@@ -8,13 +8,13 @@
 
 use std::collections::BTreeMap;
 
-use figcraft_doc::*;
+use figcraft_doc::{Document, NodeId, NodeKind};
 use figcraft_geom::Rect;
 use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::cmd::CommandSpec;
-use crate::params::*;
+use crate::params::{color_of, f64_of, get, string, targets};
 use crate::{bad, spec};
 
 const MAX_ISSUES: usize = 500;

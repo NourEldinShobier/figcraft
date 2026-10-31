@@ -318,7 +318,7 @@ impl Backend for Headless {
     }
 
     fn describe(&self) -> String {
-        "headless (in-process engine session; no window)".into()
+        "headless (in-process engine session; no window). Edits change a copy in this process, not the open FigCraft window: start FigCraft first (it listens on port 7979) and restart this server, or save the file and let the window reload it".into()
     }
 
     fn render_png(&mut self, ids: &[u64], scale: f64) -> Result<Vec<u8>, String> {

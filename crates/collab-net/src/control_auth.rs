@@ -6,6 +6,10 @@ use std::path::PathBuf;
 
 use figcraft_collab::same_secret;
 
+/// The port a running window listens on when `--control` is not given, and the one `figcraft-cli mcp`
+/// tries first, so an agent edits the open window instead of a copy of the file.
+pub const DEFAULT_CONTROL_PORT: u16 = 7979;
+
 /// A validated control-channel token. Its contents are intentionally absent from Debug output.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ControlToken(String);

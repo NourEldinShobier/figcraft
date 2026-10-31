@@ -720,7 +720,7 @@ impl<'a> Ctx<'a> {
     /// bounds (roots of a nodes response, whose parent isn't in the file). Depth first in the
     /// file's order, on a work list rather than the call stack (#1101): a level took about 4 KB of
     /// stack, so the deepest files filled the browser's 1 MB.
-    fn build<'j>(&mut self, j: &'j Value, parent: NodeId, space: Space, parent_mode: Option<LayoutMode>, depth: usize, root_abs: bool) {
+    fn build(&mut self, j: &Value, parent: NodeId, space: Space, parent_mode: Option<LayoutMode>, depth: usize, root_abs: bool) {
         let mut work = vec![Build::Layer(Layer { j, parent, space, parent_mode, depth, root_abs })];
         while let Some(step) = work.pop() {
             match step {

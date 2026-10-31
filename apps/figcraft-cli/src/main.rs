@@ -154,6 +154,12 @@ fn mcp(attach: Option<&str>, roots: Option<figcraft_engine::file_access::Roots>)
                 .map_err(|e| format!("can't reach the FigCraft app at {addr}: {e} (start it with `figcraft --control PORT`)"))?;
             Box::new(b)
         }
+        // No flags: edit the open window when one listens on the default port, so every change shows
+        // live and the window's auto-save applies; otherwise a headless copy.
+        None if roots.is_none() => match figcraft_mcp::Attached::default_app() {
+            Ok(b) => Box::new(b),
+            Err(_) => Box::new(figcraft_mcp::Headless::new()),
+        },
         None => Box::new(figcraft_mcp::Headless::new()),
     };
     eprintln!("figcraft MCP server ({}) on stdio", backend.describe());

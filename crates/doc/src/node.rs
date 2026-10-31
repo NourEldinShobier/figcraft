@@ -2,7 +2,7 @@
 
 use crate::NodeId;
 use crate::cold::Cold;
-use crate::props::*;
+use crate::props::{AutoLayout, ChildLayout, Constraints, Corners, Effect, EffectKind, ExportSetting, LayoutGrid, SPREAD_MITER_LIMIT, StrokeAlign, StrokeCap, StrokeProps};
 use crate::proto::{Interaction, Overflow, ScrollPosition};
 use crate::styles::{CollectionId, ModeId, StyleRefs, VariableId};
 use crate::text::TextData;

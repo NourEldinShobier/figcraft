@@ -916,11 +916,13 @@ pub(crate) fn load_within(bytes: &[u8], budget: ImageBudget) -> Result<Loaded, F
 }
 
 /// [`load_within`] unpacking at most `total` bytes from the archive, every area together.
+#[cfg(test)]
 pub(crate) fn load_limited(bytes: &[u8], budget: ImageBudget, total: u64) -> Result<Loaded, FormatError> {
     load_core(bytes, budget, total, VersionLimits::DEFAULT)
 }
 
 /// [`load_within`] with the version history's own limits.
+#[cfg(test)]
 pub(crate) fn load_within_limits(bytes: &[u8], budget: ImageBudget, limits: VersionLimits) -> Result<Loaded, FormatError> {
     load_core(bytes, budget, MAX_UNPACKED, limits)
 }
@@ -1260,6 +1262,7 @@ mod image_budget_tests;
 mod image_tests;
 #[cfg(test)]
 mod journal_tests;
+#[cfg(test)]
 mod jpeg_tests;
 #[cfg(test)]
 mod large_tests;

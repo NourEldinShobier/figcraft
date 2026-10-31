@@ -99,7 +99,7 @@ fn without_map_the_result_is_just_the_ids() {
     for p in [json!({"ids": [scr]}), json!({"ids": [scr], "map": false})] {
         let out = ex(&mut s, "edit.duplicate", p);
         let keys: Vec<&String> = out.as_object().unwrap().keys().collect();
-        assert_eq!(keys, ["ids"], "{out}");
+        assert_eq!(keys, ["idMap", "ids"], "{out}"); // idMap is always returned here; `map: true` adds `map`
     }
 }
 

@@ -1,7 +1,7 @@
 //! Creating nodes.
 
 use figcraft_color::{ImageScaleMode, Paint};
-use figcraft_doc::{Document, Node, NodeId, NodeKind, StrokeCap, TextAutoResize, TextData, VectorNetwork};
+use figcraft_doc::{Document, Node, NodeId, NodeKind, StrokeCap, TextAutoResize, VectorNetwork};
 use figcraft_geom::Point;
 use serde_json::{Value, json};
 
@@ -55,7 +55,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "node.create",
             "Create layer",
-            "{type: rectangle|ellipse|polygon|star|line|arrow|vector|text|frame|section|component|slice, x?, y? (relative to the parent frame; groups don't count), width?, height?, parent? (id; default: the page), index?, name?, absolute? (true: outside an auto-layout parent's flow, at x/y; a frame with `props.layout` made in an auto-layout parent without `height` hugs its content vertically), text? | characters? (for text), path? | points? (vector: SVG path data | [[x,y],..]), closed? (vector), props? {node.set keys}, select? (default true)}",
+            "{type: rectangle|ellipse|polygon|star|line|arrow|vector|text|frame|section|component|slice, x?, y? (relative to the parent frame; groups don't count), width?, height?, parent? (id; default: the page), index?, name?, key? (a stable name for the layer: later ids can say it), absolute? (true: outside an auto-layout parent's flow, at x/y; a frame with `props.layout` made in an auto-layout parent without `height` hugs its content vertically), text? | characters? (for text), path? | points? (vector: SVG path data | [[x,y],..]), closed? (vector), props? {node.set keys}, select? (default true)}",
             true,
             create
         ),

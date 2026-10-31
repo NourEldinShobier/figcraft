@@ -223,17 +223,17 @@ impl FigApp {
 
     /// Reads the open file again when another app, `figcraft-cli` or an agent saved it and this tab
     /// has no unsaved changes. A tab with changes keeps them: saving it stops at the disk-change check.
-    pub(super) fn disk_reload_tick(&mut self, ctx: &egui::Context, now: f64) {
+    pub(super) fn disk_reload_tick(&mut self, now: f64) {
         const CHECK_SECS: f64 = 1.0;
         if cfg!(target_arch = "wasm32") {
             return;
         }
+        // No timer: an idle window draws no frames. The check runs whenever the window wakes (input,
+        // focus, any repaint), at most once a second.
         if now < self.ui.disk_check_at {
-            repaint_in(ctx, self.ui.disk_check_at - now);
             return;
         }
         self.ui.disk_check_at = now + CHECK_SECS;
-        repaint_in(ctx, CHECK_SECS);
         let Some(d) = self.session.docs.get(self.session.active) else { return };
         let idle = d.interaction.is_none() && d.text_preview.is_none() && d.preview.is_none() && d.branch_of.is_none();
         let saving = self.ui.auto_saving.iter().any(|(uid, _)| *uid == d.uid);

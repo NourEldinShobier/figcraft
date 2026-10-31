@@ -14,7 +14,7 @@ The server lives in `crates/mcp` (`figcraft-mcp`) and is started by the CLI:
 
 | Command | Backend |
 |---|---|
-| `figcraft-cli mcp` | **Headless**: an in-process engine session with one untitled document. No window; renders with the CPU renderer. |
+| `figcraft-cli mcp` | **Automatic**: attaches to the open FigCraft window when one listens on the default control port (7979), so every edit shows live and the window's auto-save applies; with no window, or with `--automation-*-root`, it runs **headless**: an in-process engine session with one untitled document, no window, CPU renderer. A headless session edits a copy: save the file and the window reloads it when the tab has no unsaved changes. |
 | `figcraft-cli mcp --attach <port>` | **Attached**: drives a running FigCraft app through its control channel (`figcraft --control <port>`). The user sees every change live. |
 
 `--attach` also takes `host:port`. The app listens on 127.0.0.1 only. Attached clients resolve the target once per connection and reject before dialing if any resolved address is non-loopback; remote hosts and DNS names with any remote result are refused.
