@@ -855,7 +855,8 @@ fn grid_children_beyond_the_declared_rows_get_implicit_rows() {
     for i in 0..5 {
         add(&mut doc, frame, NodeKind::Rectangle, &format!("Item {i}"), 0.0, 0.0, 10.0, 10.0);
     }
-    doc.node_mut(frame).unwrap().layout = Some(Box::new(AutoLayout { mode: LayoutMode::Grid, grid_columns: 2, grid_rows: 1, ..AutoLayout::default() }));
+    doc.node_mut(frame).unwrap().layout =
+        Some(Box::new(AutoLayout { mode: LayoutMode::Grid, grid_columns: 2, grid_rows: 1, ..AutoLayout::default() }));
     let (bytes, warnings) = export(&doc).unwrap();
     assert!(warnings.is_empty(), "{warnings:?}");
     let e = entries(&bytes);

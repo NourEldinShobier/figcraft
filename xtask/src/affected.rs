@@ -107,7 +107,11 @@ fn affected(files: &[String], m: &Members) -> Option<Affected> {
 
 /// The package whose directory is the longest prefix of `file`.
 fn owner(file: &str, m: &Members) -> Option<String> {
-    m.dirs.iter().filter(|(dir, _)| file.strip_prefix(dir.as_str()).is_some_and(|rest| rest.starts_with('/'))).max_by_key(|(dir, _)| dir.len()).map(|(_, n)| n.clone())
+    m.dirs
+        .iter()
+        .filter(|(dir, _)| file.strip_prefix(dir.as_str()).is_some_and(|rest| rest.starts_with('/')))
+        .max_by_key(|(dir, _)| dir.len())
+        .map(|(_, n)| n.clone())
 }
 
 #[cfg(test)]

@@ -2,7 +2,10 @@ use super::component::{Entry, Inst, OverrideRow, prop_ref, uniform_scale};
 use super::connector::{ConnectorShape, connector_has_saved_label};
 use super::layout::{layout_grid, tracks};
 use super::paint::{effect, export_setting, has_bound_variables, paint, paint_bound, stroke};
-use super::{BTreeMap, BTreeSet, Affine, Kv, MAX_COMMANDS, MAX_DEPTH, Mapper, Obj, Value, View, copy_num, copy_str, generated_record, guid, json, matrix, network, num, rows, size};
+use super::{
+    Affine, BTreeMap, BTreeSet, Kv, MAX_COMMANDS, MAX_DEPTH, Mapper, Obj, Value, View, copy_num, copy_str, generated_record, guid, json, matrix,
+    network, num, rows, size,
+};
 use std::fmt::Write as _;
 
 /// How the layers of a resized container follow it when the file gives no derived layout for

@@ -106,7 +106,6 @@ fn import_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"index": s.active, "summary": summary, "warnings": issues}))
 }
 
-
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         spec!(

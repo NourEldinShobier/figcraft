@@ -62,8 +62,15 @@ fn a_raised_timeout_is_asked_for_on_each_request() {
         }
         lines
     });
-    Attached::connect_with_token(&format!("127.0.0.1:{port}"), figcraft_collab_net::control_auth::ControlToken::new(&"a".repeat(43)).unwrap()).unwrap().call("engine.commands", json!({})).unwrap();
-    let mut long = Attached::connect_with_token(&format!("127.0.0.1:{port}"), figcraft_collab_net::control_auth::ControlToken::new(&"a".repeat(43)).unwrap()).unwrap().with_timeout(Duration::from_secs(300)).unwrap();
+    Attached::connect_with_token(&format!("127.0.0.1:{port}"), figcraft_collab_net::control_auth::ControlToken::new(&"a".repeat(43)).unwrap())
+        .unwrap()
+        .call("engine.commands", json!({}))
+        .unwrap();
+    let mut long =
+        Attached::connect_with_token(&format!("127.0.0.1:{port}"), figcraft_collab_net::control_auth::ControlToken::new(&"a".repeat(43)).unwrap())
+            .unwrap()
+            .with_timeout(Duration::from_secs(300))
+            .unwrap();
     long.call("engine.commands", json!({})).unwrap();
     let lines = app.join().unwrap();
     assert_eq!(lines[0].get("timeoutMs"), None, "{:?}", lines[0]);

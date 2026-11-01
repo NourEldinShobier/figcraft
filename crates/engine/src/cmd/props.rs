@@ -549,7 +549,9 @@ fn apply_look(cmd: &str, doc: &mut Document, id: NodeId, k: &str, v: &Value) -> 
                 set_paints(doc.get_mut(id)?, false, vec![Paint::solid(c)]);
             }
         }
-        "strokeWeight" | "strokeWidth" => doc.get_mut(id)?.stroke.weight = f64_of(v).ok_or_else(|| bad(cmd, "`strokeWeight` must be a number"))?.max(0.0),
+        "strokeWeight" | "strokeWidth" => {
+            doc.get_mut(id)?.stroke.weight = f64_of(v).ok_or_else(|| bad(cmd, "`strokeWeight` must be a number"))?.max(0.0)
+        }
         "strokeAlign" => doc.get_mut(id)?.stroke.align = enum_of(v).ok_or_else(|| bad(cmd, "strokeAlign: inside|center|outside"))?,
         "strokeSides" => {
             doc.get_mut(id)?.stroke.sides = if v.is_null() { None } else { Some(four(v).ok_or_else(|| bad(cmd, "strokeSides: [t,r,b,l]"))?) }
@@ -1139,9 +1141,9 @@ fn set_path(cmd: &str, doc: &mut Document, id: NodeId, v: &Value, props: &Map<St
 pub fn override_group(k: &str) -> &'static str {
     match k {
         "fills" | "fill" => "fills",
-        "strokes" | "stroke" | "strokeWeight" | "strokeWidth" | "strokeAlign" | "dashes" | "dashCap" | "strokeCap" | "startCap" | "endCap" | "strokeJoin"
-        | "strokeSides" | "strokeTopWeight" | "strokeRightWeight" | "strokeBottomWeight" | "strokeLeftWeight" | "miterLimit" | "miterAngle"
-        | "widthProfile" | "brush" | "strokeBrush" => "strokes",
+        "strokes" | "stroke" | "strokeWeight" | "strokeWidth" | "strokeAlign" | "dashes" | "dashCap" | "strokeCap" | "startCap" | "endCap"
+        | "strokeJoin" | "strokeSides" | "strokeTopWeight" | "strokeRightWeight" | "strokeBottomWeight" | "strokeLeftWeight" | "miterLimit"
+        | "miterAngle" | "widthProfile" | "brush" | "strokeBrush" => "strokes",
         "effects" => "effects",
         "opacity" | "blend" | "blendMode" => "opacity",
         "visible" => "visible",

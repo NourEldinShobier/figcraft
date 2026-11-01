@@ -1,11 +1,11 @@
 use super::cycles::expansion_layers;
 use super::diff::diff_groups;
 use super::instances::{Carry, apply_prop, carry_overrides, carry_prop_bindings, copy_group, field_group, follow_variant_resizing, path_map};
-use figcraft_doc::{Constraints, HConstraint, VConstraint};
 use super::{
     Affine, BTreeMap, BTreeSet, DocError, Document, MAX_DEPTH, Node, NodeId, NodeKind, SLOT, Sizing, Value, default_instance_name, default_props,
     holds_content, inside_instance, is_slot, owning_component, variant_set,
 };
+use figcraft_doc::{Constraints, HConstraint, VConstraint};
 
 /// `spare`: layers the outer rebuild didn't reuse that were below `inst` (a swapped nested
 /// instance): its layers the outer main doesn't have, matched here so they keep ids and overrides.

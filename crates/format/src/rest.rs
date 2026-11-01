@@ -1039,9 +1039,7 @@ impl<'a> Ctx<'a> {
         let size = j.get("outlineSize")?;
         let (w, h) = (num(size, "x")?, num(size, "y")?);
         let (path, winding) = self.geometry(j, "fillGeometry")?;
-        (w > 0.0 && h > 0.0 && w.is_finite() && h.is_finite()).then(|| {
-            figcraft_doc::StoredOutline::new(path, w, h, winding == WindingRule::EvenOdd)
-        })
+        (w > 0.0 && h > 0.0 && w.is_finite() && h.is_finite()).then(|| figcraft_doc::StoredOutline::new(path, w, h, winding == WindingRule::EvenOdd))
     }
 
     /// The paths of a `fillGeometry` / `strokeGeometry` list (node-local SVG path data).

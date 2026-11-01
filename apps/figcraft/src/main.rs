@@ -291,7 +291,8 @@ fn main() -> eframe::Result {
     }
     // Control-channel runs neither restore nor save the native window, so their screenshots start
     // from the same window every time.
-    let mut options = eframe::NativeOptions { viewport, renderer: eframe::Renderer::Wgpu, persist_window: explicit_port.is_none(), ..Default::default() };
+    let mut options =
+        eframe::NativeOptions { viewport, renderer: eframe::Renderer::Wgpu, persist_window: explicit_port.is_none(), ..Default::default() };
     let graphics = graphics::Plan::configure(&mut options.wgpu_options);
     // Counts the frames drawn, which tells a window that failed starting up from one that ran.
     let window = ctx_slot.clone();

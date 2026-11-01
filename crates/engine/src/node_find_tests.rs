@@ -227,8 +227,18 @@ fn node_find_matches_variant_properties_of_components_and_instances() {
     let mut s = Session::new();
     let page = s.page().unwrap();
     let set = add(&mut s, page, NodeKind::ComponentSet { description: String::new() }, "Button");
-    let d = add(&mut s, set, NodeKind::Component { description: String::new(), props: Default::default(), prop_order: Vec::new() }, "State=Default, Size=S");
-    let h = add(&mut s, set, NodeKind::Component { description: String::new(), props: Default::default(), prop_order: Vec::new() }, "State=Hover, Size=S");
+    let d = add(
+        &mut s,
+        set,
+        NodeKind::Component { description: String::new(), props: Default::default(), prop_order: Vec::new() },
+        "State=Default, Size=S",
+    );
+    let h = add(
+        &mut s,
+        set,
+        NodeKind::Component { description: String::new(), props: Default::default(), prop_order: Vec::new() },
+        "State=Hover, Size=S",
+    );
     found(&mut s, json!({"variant": {"State": "hover"}}), &[h]);
     found(&mut s, json!({"variant": {"Size": "S"}}), &[d, h]);
     found(&mut s, json!({"variant": {"Size": "L"}}), &[]);
