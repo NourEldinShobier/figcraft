@@ -1,7 +1,8 @@
 //! Project tasks: `cargo xtask <task>`.
 //!
 //! - `ci`      fmt check, clippy -D warnings, tests, the translation report, layers, assets, docs, wasm
-//!   check
+//!   check. On a pull request (or with `--changed [BASE]`, or `XTASK_BASE`) clippy, tests and wasm
+//!   cover only the changed packages and their dependents; `--all` forces everything
 //! - `test`    the workspace tests (nextest when installed) and doctests
 //! - `i18n-report` the UI strings, command labels and menu wordings each language lacks (never fails
 //!   on them: a missing translation reads English)
@@ -19,6 +20,7 @@
 //! - `bench`   release-build timings at 1k/10k/50k layers (`bench 1000,10000` for other sizes) and
 //!   with a synthetic design system used by 2,000 instances
 
+mod affected;
 mod docs_check;
 mod icon;
 mod layers;
@@ -42,7 +44,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let task = args.first().map(String::as_str).unwrap_or("help");
     let ok = match task {
-        "ci" => ci(),
+        "ci" => ci(&args),
         "test" => test(),
         "i18n-report" => i18n_report(),
         "layers" => layers::check(&root()),
@@ -62,10 +64,24 @@ fn main() -> ExitCode {
     if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE }
 }
 
-fn ci() -> bool {
+/// The full gate, or with a base to compare against (`--changed [BASE]`, `XTASK_BASE`, a pull
+/// request's target branch) only what the change reaches. `--all` forces the full gate.
+fn ci(args: &[String]) -> bool {
+    let base = if args.iter().any(|a| a == "--all") { None } else { affected::base(args) };
+    let Some(base) = base else { return ci_all() };
+    match affected::detect(&root(), &base) {
+        Some((a, m)) => ci_affected(&a, &m),
+        None => {
+            eprintln!("xtask: cannot narrow the change against {base} (or it touches the workspace as a whole): running everything");
+            ci_all()
+        }
+    }
+}
+
+fn ci_all() -> bool {
     run(cargo().args(["fmt", "--all", "--check"]))
         && run(cargo().args(["clippy", "--workspace", "--all-targets", "--keep-going", "--", "-D", "warnings"]))
-        && test()
+        && test_in(&[], &[])
         && i18n_report()
         && layers::check(&root())
         && assets()
@@ -73,24 +89,58 @@ fn ci() -> bool {
         && wasm()
 }
 
+/// The gate for the packages a change reaches; the cheap whole-repo checks always run.
+fn ci_affected(a: &affected::Affected, m: &affected::Members) -> bool {
+    let pkgs: Vec<String> = a.packages.iter().cloned().collect();
+    let libs: Vec<String> = pkgs.iter().filter(|p| m.libs.contains(*p)).cloned().collect();
+    eprintln!("xtask: {} affected package(s): {}", pkgs.len(), pkgs.join(", "));
+    let has = |name: &str| pkgs.iter().any(|p| p == name);
+    let wasm_hit = pkgs.iter().any(|p| affected::WASM_PACKAGES.contains(&p.as_str()));
+    let mut clippy = cargo();
+    clippy.args(["clippy", "--all-targets", "--keep-going"]).args(package_args(&pkgs)).args(["--", "-D", "warnings"]);
+    run(cargo().args(["fmt", "--all", "--check"]))
+        && (pkgs.is_empty() || (run(&mut clippy) && test_in(&pkgs, &libs)))
+        && (!has("figcraft-ui-egui") || i18n_report())
+        && layers::check(&root())
+        && assets()
+        && docs_check::check(&root())
+        && (!wasm_hit || wasm())
+        && (!a.plugins || wasm_hit || plugins())
+}
+
+/// `-p NAME` for each package, or the whole workspace when none are named.
+fn package_args(pkgs: &[String]) -> Vec<&str> {
+    if pkgs.is_empty() {
+        return vec!["--workspace"];
+    }
+    pkgs.iter().flat_map(|p| ["-p", p.as_str()]).collect()
+}
+
 /// Unit and integration tests with nextest when it is installed (`cargo install cargo-nextest`),
 /// else with `cargo test`; then the doctests, which nextest does not run. Examples are not built:
 /// clippy's `--all-targets` already checks them.
 fn test() -> bool {
-    let nextest = cargo().args(["nextest", "--version"]).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
-    let units = if nextest {
-        run(cargo().args(["nextest", "run", "--workspace", "--lib", "--bins", "--tests"]))
-    } else {
-        eprintln!("xtask: cargo-nextest not installed; running unit and integration tests with `cargo test`");
-        run(cargo().args(["test", "--workspace", "--lib", "--bins", "--tests"]))
-    };
-    units && run(cargo().args(["test", "--workspace", "--doc"]))
+    test_in(&[], &[])
 }
 
-/// Prints what each language's catalog lacks, from the test that lists it. `--workspace --lib`
-/// reuses the binaries `test` built.
+/// [`test`] for `pkgs` (the whole workspace when empty); the doctests of `libs`, the ones among
+/// them with a library target.
+fn test_in(pkgs: &[String], libs: &[String]) -> bool {
+    let nextest = cargo().args(["nextest", "--version"]).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
+    let units = if nextest {
+        run(cargo().args(["nextest", "run"]).args(package_args(pkgs)).args(["--lib", "--bins", "--tests"]))
+    } else {
+        eprintln!("xtask: cargo-nextest not installed; running unit and integration tests with `cargo test`");
+        run(cargo().arg("test").args(package_args(pkgs)).args(["--lib", "--bins", "--tests"]))
+    };
+    let docs = pkgs.is_empty() || !libs.is_empty();
+    units && (!docs || run(cargo().arg("test").args(package_args(if pkgs.is_empty() { pkgs } else { libs })).arg("--doc")))
+}
+
+/// Prints what each language's catalog lacks, from the test that lists it (it lives in the UI
+/// crate, whose test binary `test` built).
 fn i18n_report() -> bool {
-    run(cargo().args(["test", "-q", "--workspace", "--lib", "--", "--exact", "i18n::tests::missing_translations_report", "--nocapture"]))
+    run(cargo().args(["test", "-q", "-p", "figcraft-ui-egui", "--lib", "--", "--exact", "i18n::tests::missing_translations_report", "--nocapture"]))
 }
 
 fn wasm() -> bool {
