@@ -211,8 +211,8 @@ fn tools() -> Vec<Value> {
             obj(
                 json!({
                     "type": {"type": "string", "enum": ["frame", "rectangle", "ellipse", "polygon", "star", "line", "arrow", "text", "vector", "section", "component", "slice"], "description": "Layer type"},
-                    "x": num("Left, relative to the parent frame (default 0)"),
-                    "y": num("Top, relative to the parent frame (default 0)"),
+                    "x": num("Left, relative to the parent frame (default 0). For a vector with `path` or `points`, x/y move their own origin instead: data whose box starts at (30, 0) makes a layer whose left is x + 30. Start the path at 0,0 to place its left edge at x, or set x afterwards with set_properties (which moves the left edge)"),
+                    "y": num("Top, relative to the parent frame (default 0). For a vector with `path` or `points`, their own top is added, as for x"),
                     "width": num("Width (default 100; text hugs its content unless width is set, which makes it wrap; for a vector with path, width/height scale the path, one alone keeping its proportion, and without them the path's own box is used)"),
                     "height": num("Height (default 100; ignored for lines/arrows and auto-height text)"),
                     "parent": id_schema("Parent frame/group/component id (default: the current page)"),
@@ -220,7 +220,7 @@ fn tools() -> Vec<Value> {
                     "name": string("Layer name"),
                     "key": string("Stable key unique in the document (e.g. \"icon/folder\"); survives save, open, undo and .fig export. Any command taking a layer id also takes {\"key\": \"icon/folder\"} there. A duplicate key is an error that suggests a free one."),
                     "text": string("Characters, for type text"),
-                    "path": string("SVG path data, for type vector (e.g. \"M0 0 L100 0 L50 80 Z\")"),
+                    "path": string("SVG path data, for type vector (e.g. \"M0 0 L100 0 L50 80 Z\"); its coordinates are kept relative to x/y, so a path that doesn't start at 0,0 is offset by its own box"),
                     "absolute": boolean("In an auto-layout parent: place the layer outside the flow at x/y (absolute positioning)"),
                     "points": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}, "description": "For type vector, instead of path: the points [[x, y], ...]"},
                     "closed": boolean("For type vector: close the path"),

@@ -1,6 +1,6 @@
 //! `figcraft-cli`: FigCraft without a window. Inspect, export, convert and render documents, run
 //! command scripts, list commands, serve MCP on stdio, publish plugins to a server's plugin
-//! directory and measure performance.
+//! directory, publish code connect mappings to a design file and measure performance.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod args;
@@ -10,7 +10,7 @@ mod perf;
 use std::io::Write;
 use std::process::ExitCode;
 
-use args::{Cli, Command, PluginCommand, RootArgs};
+use args::{Cli, Command, ConnectCommand, PluginCommand, RootArgs};
 use serde_json::{Value, json};
 
 /// The automation roots a file subcommand was given, if any. Omitting both leaves the run
@@ -91,8 +91,9 @@ fn run(cli: Cli) -> CliResult<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         // `--attach` conflicts with the roots: the app runs the commands, only its own roots can confine them.
-        Command::Mcp(a) => mcp(a.attach.as_deref(), roots_of(&a.roots)?),
+        Command::Mcp(a) => mcp(a.attach.as_deref(), a.timeout, roots_of(&a.roots)?),
         Command::Plugin { command: PluginCommand::Publish(a) } => publish_plugin(&a.folder, &a.server),
+        Command::Connect { command: ConnectCommand::Publish(a) } => confined(&a.roots, || files::connect_publish(&a.file, &a.mappings, a.dry_run)),
         Command::Perf(a) => {
             let sizes: Vec<usize> = a.layers.into_iter().map(|n| n.clamp(10, 2_000_000)).collect();
             let instances: Vec<usize> = a.instances.into_iter().filter(|n| *n > 0).map(|n| n.min(100_000)).collect();
@@ -147,12 +148,15 @@ fn publish_plugin(folder: &str, server: &str) -> CliResult<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn mcp(attach: Option<&str>, roots: Option<figcraft_engine::file_access::Roots>) -> CliResult<ExitCode> {
+fn mcp(attach: Option<&str>, timeout: Option<u64>, roots: Option<figcraft_engine::file_access::Roots>) -> CliResult<ExitCode> {
     let backend: Box<dyn figcraft_mcp::Backend> = match attach {
         Some(addr) => {
-            let b = figcraft_mcp::Attached::connect(addr)
-                .map_err(|e| format!("can't reach the FigCraft app at {addr}: {e} (start it with `figcraft --control PORT`)"))?;
-            Box::new(b)
+            let no_app = |e: std::io::Error| format!("can't reach the FigCraft app at {addr}: {e} (start it with `figcraft --control PORT`)");
+            let b = figcraft_mcp::Attached::connect(addr).map_err(no_app)?;
+            match timeout {
+                Some(secs) => Box::new(b.with_timeout(std::time::Duration::from_secs(secs)).map_err(no_app)?),
+                None => Box::new(b),
+            }
         }
         // No flags: edit the open window when one listens on the default port, so every change shows
         // live and the window's auto-save applies; otherwise a headless copy.

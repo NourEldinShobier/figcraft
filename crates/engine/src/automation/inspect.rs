@@ -29,6 +29,7 @@ pub const NODE_KEYS: &[&str] = &[
     "constraints",
     "cornerRadius",
     "cornerSmoothing",
+    "dashCap",
     "dashes",
     "endCap",
     "description",
@@ -227,6 +228,9 @@ pub fn node_json_with_options(doc: &Document, id: NodeId, depth: usize, options:
             }
             if !n.stroke.dashes.is_empty() {
                 put!("dashes", json!(n.stroke.dashes));
+            }
+            if let Some(cap) = n.stroke.dash_cap {
+                put!("dashCap", json!(cap));
             }
             // Always reported (even the defaults), so a linter or agent can read back what `node.set` wrote.
             put!("strokeJoin", json!(n.stroke.join));

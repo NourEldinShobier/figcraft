@@ -134,6 +134,7 @@ impl Ctx<'_> {
 
     fn token(&self, c: &Collection, v: &Variable, mode: &Mode) -> Option<Value> {
         let val = v.values.get(&mode.id).or_else(|| c.default_mode().and_then(|d| v.values.get(d)))?;
+        let val = &self.doc.variables.flattened(v, &mode.id, val)?;
         let mut t = Map::new();
         let ty = match val {
             VariableValue::Alias(a) => {
@@ -161,6 +162,7 @@ impl Ctx<'_> {
                 t.insert("$value".into(), json!(b));
                 "boolean"
             }
+            VariableValue::ColorAlpha { .. } | VariableValue::ColorMix { .. } => return None,
         };
         t.insert("$type".into(), json!(ty));
         if !v.description.is_empty() {

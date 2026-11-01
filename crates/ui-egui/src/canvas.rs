@@ -31,6 +31,7 @@ use render::{JobKey, request_render, shows};
 pub use rulers::fmt;
 pub(crate) use rulers::{status_badge, status_label};
 pub mod board_bar;
+pub mod board_connect;
 pub mod board_facilitate;
 pub mod comments;
 pub mod cursors;
@@ -222,7 +223,10 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     } else {
         tr("Drop to import")
     };
-    crate::drop_overlay(&ctx, ctx.content_rect(), label);
+    match crate::colorpicker::image_drop_target(app, &ctx).filter(|_| !documents && app.ui.right_tab != crate::RightTab::Inspect) {
+        Some((rect, _)) => crate::drop_overlay(&ctx, rect, tr("Drop to use this image")),
+        None => crate::drop_overlay(&ctx, ctx.content_rect(), label),
+    }
     crate::guides::end_released(&ctx);
     crate::live::track_pointer(app, &ctx);
     app.sync_preedit();
@@ -299,6 +303,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     crate::board_facilitate::badges(app, &painter);
     crate::board_bar::stamp_author(app, &painter, ctx.input(|i| i.pointer.hover_pos()).filter(|p| rect.contains(*p)));
     crate::board_bar::show(app, &ctx);
+    crate::board_connect::show(app, &ctx);
     crate::board_facilitate::show(app, &ctx, rect);
     crate::widget_bar::show(app, &ctx);
     crate::selection_spacing::draw(app, &painter);
@@ -373,6 +378,9 @@ mod builder_poly_tests;
 
 #[cfg(test)]
 mod outline_tests;
+
+#[cfg(test)]
+mod panel_nodes_tests;
 
 #[cfg(test)]
 mod selection_cache_tests;
