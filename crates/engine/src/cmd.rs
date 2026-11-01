@@ -188,7 +188,7 @@ fn doc_needs_params(doc: &'static str) -> bool {
 /// the layers a command acts on (`params::targets` reads either).
 pub fn refuse_unknown_params(id: &str, params: &Value) -> Result<()> {
     let (Some(names), Some(given)) = (param_names(id), params.as_object()) else { return Ok(()) };
-    let taken = |k: &str| matches!(k, "ids" | "id") || names.contains(&k);
+    let taken = |k: &str| matches!(k, "ids" | "id") || names.contains(&k) || (k == "key" && keys::KEY_TARGETED.contains(&id));
     let unknown: Vec<String> = given.keys().filter(|k| !taken(k)).map(|k| format!("`{k}`")).collect();
     if unknown.is_empty() {
         return Ok(());

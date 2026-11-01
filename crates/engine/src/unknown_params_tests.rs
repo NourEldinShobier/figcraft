@@ -107,3 +107,12 @@ fn commands_that_cant_run_without_parameters_say_so() {
         assert!(s.execute(id, &json!({})).is_err(), "{id} ran without its parameters");
     }
 }
+
+/// A command that targets a layer by key takes the bare `key` even when its doc lists only `id`.
+#[test]
+fn a_key_targeted_command_takes_the_bare_key() {
+    let mut s = Session::new();
+    s.execute("node.create", &json!({"type": "frame", "key": "card", "width": 40, "height": 30})).unwrap();
+    assert_eq!(s.execute("node.get", &json!({"key": "card"})).unwrap()["width"], json!(40.0));
+    assert!(err(&mut s, "node.get", json!({"keyy": "card"})).contains("unknown parameter `keyy`"));
+}

@@ -15,7 +15,7 @@ use crate::{Result, bad, spec};
 const ID_PARAMS: [&str; 9] = ["id", "ids", "parent", "root", "target", "targets", "component", "from", "to"];
 
 /// Commands that take a bare top-level `"key": ".."` as their target layer (in place of `id`).
-const KEY_TARGETED: [&str; 10] = [
+pub(crate) const KEY_TARGETED: [&str; 10] = [
     "node.set",
     "node.get",
     "node.reorder",
