@@ -114,6 +114,7 @@ pub const NODE_KEYS: &[&str] = &[
     "visible",
     "width",
     "widthProfile",
+    "wrapStyle",
     "x",
     "y",
 ];
@@ -446,6 +447,9 @@ pub fn node_json_with_options(doc: &Document, id: NodeId, depth: usize, options:
             }
             if t.leading_trim != figcraft_doc::LeadingTrim::None {
                 put!("leadingTrim", json!(t.leading_trim));
+            }
+            if t.wrap_style != figcraft_doc::WrapStyle::Auto {
+                put!("wrapStyle", json!(t.wrap_style));
             }
             if !t.runs.is_empty() {
                 put!("styledRuns", serde_json::to_value(&t.runs).unwrap_or(Value::Null));
