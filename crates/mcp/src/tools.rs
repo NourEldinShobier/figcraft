@@ -68,17 +68,41 @@ fn fields_schema() -> Value {
     json!({"type": "array", "items": {"type": "string", "enum": figcraft_engine::inspect::NODE_KEYS},
         "description": "Exact, case-sensitive top-level node keys to include at every level, pages too (e.g. name, type, x, fills, characters, pluginData). Omit for all properties; [] keeps only ids and structure. id, children, childCount and the transport's truncated marker are always kept. Selecting visible emits an explicit boolean for every node. Unknown keys are an error."})
 }
+/// `fields` of `get_nodes`: [`fields_schema`] with a small default.
+fn nodes_fields_schema() -> Value {
+    let mut s = fields_schema();
+    s["description"] = json!(
+        "Exact, case-sensitive top-level node keys to include for every layer and child (default [\"name\", \"type\", \"x\", \"y\", \"width\", \"height\"]; any key of get_node, e.g. fills, characters, layout). id, children and childCount are always kept. [] keeps only those. Unknown keys are an error."
+    );
+    s
+}
 fn outline_schema() -> Value {
     boolean(
         "Compact tree: id, name, type, characters (first 120 characters, then ... only if longer), mainComponentName and explicit visible booleans, plus structure. Cannot combine true with fields; false permits fields.",
     )
 }
-/// `where` for `select` and `set_properties`: exactly the `node.find` filters.
+/// `where` for `select`, `set_properties`, `get_nodes`, `contact_sheet` and the generic `where` of
+/// every command: the `node.find` filters, without `details` (an output option of `find_nodes`).
 fn where_schema() -> Value {
+    let mut props = find_props();
+    if let Some(o) = props.as_object_mut() {
+        o.remove("details");
+    }
+    obj(props, &[])
+}
+
+/// Every `node.find` argument (`find_nodes` takes all, `where` all but `details`).
+fn find_props() -> Value {
     let range = |desc: &str| json!({"description": desc, "anyOf": [{"type": "number"}, obj(json!({"min": {"type": "number"}, "max": {"type": "number"}}), &[])]});
-    obj(
-        json!({
+    let gap = obj(json!({"edge": string("left | right | top | bottom"), "min": {"type": "number"}, "max": {"type": "number"}}), &[]);
+    json!({
             "root": id_schema("Search inside this layer's subtree (default: the current page)"),
+            "page": id_schema("Search this page (id or name) or \"all\" for every page (default: the current page)"),
+            "widthNot": range("Layers whose width is NOT this width or {min?, max?}"),
+            "heightNot": range("Layers whose height is NOT this height or {min?, max?}"),
+            "outsideParent": boolean("Only layers whose box reaches outside their parent's box"),
+            "edgeGap": {"description": "The gap between the layer's edge and its parent's same edge: {edge, min?, max?} or a list of them (all must hold)", "anyOf": [gap.clone(), {"type": "array", "items": gap}]},
+            "details": boolean("Also return `nodes`: [{id, name, type, parent, x, y, width, height}] for the matches (x/y relative to the parent)"),
             "name": string("Case-insensitive substring of the layer name"),
             "nameRegex": string("Case-insensitive regular expression, matched anywhere in the name"),
             "nameGlob": string("`*` and `?` against the whole name, case-insensitive"),
@@ -95,9 +119,27 @@ fn where_schema() -> Value {
             "key": string("The layer with exactly this key"),
             "keyGlob": string("Layers whose key matches this `*`/`?` pattern (case-sensitive)"),
             "limit": int("Most layers to take (default 100, up to 10000); a filter that matches more is an error: narrow it or raise the limit"),
+    })
+}
+
+/// `params` of `run_command` and of a `batch` step: any command key, and the generic parameters
+/// every command takes, listed so that they are documented (the engine checks the rest).
+fn command_params_schema() -> Value {
+    let mut w = where_schema();
+    w["description"] = json!("Act on the layers these node.find filters match instead of `ids`/the selection");
+    let mut s = obj(
+        json!({
+            "where": w,
+            "list": string("Act on the layers of this saved list (list.save / list.get) instead of `ids`/the selection"),
+            "dryRun": boolean("Change nothing; return {dryRun, wouldChange, created, deleted, count, result}"),
+            "keepSelection": boolean("Leave the user's selection and view as they are"),
         }),
         &[],
     )
+    .with_open_keys();
+    s["description"] =
+        json!("Command parameters (see list_commands). Every command also takes the generic `where`, `list`, `dryRun` and `keepSelection`");
+    s
 }
 
 fn obj(props: Value, required: &[&str]) -> Value {
@@ -141,6 +183,9 @@ pub const TOOL_NAMES: &[&str] = &[
     "get_node",
     "select",
     "get_selection",
+    "find_nodes",
+    "get_nodes",
+    "contact_sheet",
     "export",
     "export_many",
     "export_source",
@@ -175,6 +220,9 @@ const DOCUMENT_TOOLS: &[&str] = &[
     "inspect_document",
     "get_node",
     "select",
+    "find_nodes",
+    "get_nodes",
+    "contact_sheet",
     "export",
     "screenshot",
     "save_file",
@@ -211,9 +259,9 @@ fn tools() -> Vec<Value> {
         tool(
             "run_command",
             "Run command",
-            "Execute one FigCraft command by id with JSON params (ids and params from list_commands). Mutating commands are one undo step each; a failing command leaves the document unchanged. Examples: {\"command\":\"align.left\",\"params\":{\"ids\":[3,4]}}, {\"command\":\"layout.add\",\"params\":{\"ids\":[2],\"direction\":\"vertical\"}}, {\"command\":\"style.create\",\"params\":{\"type\":\"paint\",\"name\":\"Brand/Primary\",\"from\":5}}. Returns the command's result (creation commands return {\"id\"}). Programmatic calls never open dialogs.",
+            "Execute one FigCraft command by id with JSON params (ids and params from list_commands). Mutating commands are one undo step each; a failing command leaves the document unchanged. Examples: {\"command\":\"align.left\",\"params\":{\"ids\":[3,4]}}, {\"command\":\"layout.add\",\"params\":{\"ids\":[2],\"direction\":\"vertical\"}}, {\"command\":\"style.create\",\"params\":{\"type\":\"paint\",\"name\":\"Brand/Primary\",\"from\":5}}. Returns the command's result (creation commands return {\"id\"}). Every command also takes the generic params `where` (node.find filters: act on the matching layers), `list` (act on a saved list), `dryRun` (change nothing, return {dryRun, wouldChange, created, deleted, count, result}) and `keepSelection` (leave the user's selection and view alone); list.save / list.get / list.delete / list.all manage the lists. Programmatic calls never open dialogs.",
             obj(
-                json!({"command": string("Command id, e.g. node.create, align.left, component.create, file.export"), "params": {"type": "object", "description": "Command parameters (see list_commands)"}}),
+                json!({"command": string("Command id, e.g. node.create, align.left, component.create, file.export"), "params": command_params_schema()}),
                 &["command"],
             ),
             false,
@@ -224,7 +272,7 @@ fn tools() -> Vec<Value> {
             "Run several commands in order as ONE undo step (engine `command.batch`). By default (onError: \"abort\"), if any command fails, everything is rolled back and the error names the failing step; success returns an array of the results in order. With onError: \"continue\", a failed step is rolled back on its own, the later steps still run, the call is not an error, and the array instead holds one {step, command, ok, result} or {step, command, ok, error} object per step; a reference to a failed step fails that step too. A later step can use what an earlier step returned: name a step with \"as\": \"card\", then anywhere in a later step's params {\"$ref\": \"card\"} stands for the `id` in its result ({\"$step\": n} does the same by zero-based position). Add \"field\" for another part of the result: a key or a slash path, e.g. {\"$ref\": \"copy\", \"field\": \"ids/0\"} for the first id edit.duplicate returned (with \"map\": true it also returns `map`, each original id → its copy, so \"field\": \"map/3\" is the copy of layer 3). Any object with a `$ref` or `$step` key is a reference. Example: [{\"command\":\"node.create\",\"as\":\"card\",\"params\":{\"type\":\"frame\"}}, {\"command\":\"node.create\",\"params\":{\"type\":\"text\",\"text\":\"Hi\",\"parent\":{\"$ref\":\"card\"}}}] builds a frame and a text inside it in one call.",
             obj(
                 json!({
-                    "commands": {"type": "array", "minItems": 1, "description": "Steps to run", "items": obj(json!({"command": string("Command id"), "params": {"type": "object"}, "as": string("Name for this step, unique in the batch; later steps use its result with {\"$ref\": name}")}), &["command"])},
+                    "commands": {"type": "array", "minItems": 1, "description": "Steps to run", "items": obj(json!({"command": string("Command id"), "params": command_params_schema(), "as": string("Name for this step, unique in the batch; later steps use its result with {\"$ref\": name}")}), &["command"])},
                     "label": string("Undo history label (default \"Batch\")"),
                     "quiet": boolean("Terse result: {ok, count, failures?} with only the failed steps (use with onError continue); step results are left out"),
                     "onError": {"type": "string", "enum": ["abort", "continue"], "description": "abort (default) rolls back the whole batch on the first failure; continue rolls back only the failed step, runs the rest and returns one {step, command, ok, result|error} object per step"},
@@ -254,6 +302,8 @@ fn tools() -> Vec<Value> {
                     "points": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}, "description": "For type vector, instead of path: the points [[x, y], ...]"},
                     "closed": boolean("For type vector: close the path"),
                     "select": boolean("Select the new layer (default true)"),
+                    "dryRun": boolean("Create nothing; return {dryRun, wouldChange, created, deleted, count, result}"),
+                    "keepSelection": boolean("Leave the user's selection and view as they are (the new layer is not selected)"),
                     "props": {"type": "object", "description": "Any set_properties keys applied at creation (they may also be given beside `type`, like fill or layout), e.g. {\"fill\":\"#3366FF\",\"cornerRadius\":12,\"fontSize\":24,\"layout\":\"vertical\",\"gap\":8,\"padding\":16}"},
                 }),
                 &["type"],
@@ -264,13 +314,16 @@ fn tools() -> Vec<Value> {
         tool(
             "set_properties",
             "Set properties",
-            "Set properties on one or more layers as one undo step (engine `node.set`). Keys: name, visible, locked, opacity (0-1), blend, x, y (relative to the parent frame; groups don't count), width, height, rotation (degrees), fill (colour) / fills (array of paints: \"#hex\" or {\"type\":\"solid\",\"color\":\"#hex\"} or {\"type\":\"linearGradient\",\"stops\":[\"#hex\",\"#hex\"]} or stops [{\"position\":0..1,\"color\":\"#hex\"}], optional from/to handles in the unit box; radialGradient too), stroke / strokes, strokeWeight, strokeAlign (inside|center|outside), cornerRadius (n or [tl,tr,br,bl]), effects (array, e.g. {\"type\":\"dropShadow\",\"color\":\"#00000040\",\"offset\":[0,4],\"radius\":8}), clip, layout (null|horizontal|vertical|grid), gap, padding (n or [t,r,b,l]), mainAlign (min|center|max|spaceBetween|spaceAround|spaceEvenly), crossAlign, wrap, contentAlign (auto|spaceBetween: wrapped lines), sizingH / sizingV (fixed|hug|fill), constraints {horizontal, vertical}, characters, fontFamily, fontStyle, fontSize, lineHeight, letterSpacing, textAlign, textAutoResize. Auto layout keys (gap, padding, mainAlign, crossAlign, wrap, …) apply to frames, components and instances only: other layers among the ids are skipped and named in `warnings`, and with none that can take them the call is an error. A fontStyle draws in the family's nearest face; `warnings` says when that face has another weight or slant than the name asks for. Run list_commands with filter \"node.set\" for the full list. Unknown keys are an error. Returns the updated layers. Instead of `ids`, `where` (the node.find filters) picks the layers: they are found first, then changed together as one undo step, and the result carries `matched` and `ids`; no match is an error and nothing changes.",
+            "Set properties on one or more layers as one undo step (engine `node.set`). Keys: name, visible, locked, opacity (0-1), blend, x, y (relative to the parent frame; groups don't count), width, height, rotation (degrees), fill (colour) / fills (array of paints: \"#hex\" or {\"type\":\"solid\",\"color\":\"#hex\"} or {\"type\":\"linearGradient\",\"stops\":[\"#hex\",\"#hex\"]} or stops [{\"position\":0..1,\"color\":\"#hex\"}], optional from/to handles in the unit box; radialGradient too), stroke / strokes, strokeWeight, strokeAlign (inside|center|outside), cornerRadius (n or [tl,tr,br,bl]), effects (array, e.g. {\"type\":\"dropShadow\",\"color\":\"#00000040\",\"offset\":[0,4],\"radius\":8}), clip, layout (null|horizontal|vertical|grid), gap, padding (n or [t,r,b,l]), mainAlign (min|center|max|spaceBetween|spaceAround|spaceEvenly), crossAlign, wrap, contentAlign (auto|spaceBetween: wrapped lines), sizingH / sizingV (fixed|hug|fill), constraints {horizontal, vertical}, characters, fontFamily, fontStyle, fontSize, lineHeight, letterSpacing, textAlign, textAutoResize. Auto layout keys (gap, padding, mainAlign, crossAlign, wrap, …) apply to frames, components and instances only: other layers among the ids are skipped and named in `warnings`, and with none that can take them the call is an error. A fontStyle draws in the family's nearest face; `warnings` says when that face has another weight or slant than the name asks for. Run list_commands with filter \"node.set\" for the full list. Unknown keys are an error. Returns the updated layers. Instead of `ids`, `where` (the node.find filters) picks the layers: they are found first, then changed together as one undo step, and the result carries `matched` and `ids`; no match is an error and nothing changes. `list` names a saved list of layers (list.save) instead; `dryRun` returns what would change without changing anything; `keepSelection` leaves the user's selection and view alone.",
             obj(
                 json!({
                     "ids": ids_schema("Layer ids (default: the selection)"),
                     "where": where_schema(),
+                    "list": string("Instead of `ids`: the layers of this saved list (list.save)"),
                     "props": {"type": "object", "description": "Property values to set"},
                     "quiet": boolean("Return only {ok, ids, warnings?} instead of every updated layer (default true for more than one layer)"),
+                    "dryRun": boolean("Change nothing; return {dryRun, wouldChange, created, deleted, count, result}"),
+                    "keepSelection": boolean("Leave the user's selection and view as they are"),
                 }),
                 &["props"],
             ),
@@ -317,8 +370,17 @@ fn tools() -> Vec<Value> {
         tool(
             "select",
             "Select layers",
-            "Replace the selection with `ids` (switching to their page). An empty array deselects everything. Most commands act on the selection when no `ids` are passed. Instead of `ids`, `where` (the node.find filters, e.g. {\"type\": \"TEXT\", \"nameGlob\": \"Label*\"}) selects every match and returns `matched` and `ids`; when nothing matches the selection is left as it is.",
-            obj(json!({"ids": ids_schema("Layer ids to select"), "where": where_schema()}), &[]),
+            "Replace the selection with `ids` (switching to their page). An empty array deselects everything. Most commands act on the selection when no `ids` are passed. Instead of `ids`, `where` (the node.find filters, e.g. {\"type\": \"TEXT\", \"nameGlob\": \"Label*\"}) selects every match and returns `matched` and `ids`; when nothing matches the selection is left as it is. `list` selects a saved list of layers (list.save); with `dryRun` nothing is selected and the result only reports the matches. This replaces the user's selection: to act on layers without touching it, pass `where`, `list` or `ids` to the tool that does the work, with `keepSelection`.",
+            obj(
+                json!({
+                    "ids": ids_schema("Layer ids to select"),
+                    "where": where_schema(),
+                    "list": string("Instead of `ids`: select the layers of this saved list (list.save)"),
+                    "dryRun": boolean("Change nothing; the result lists the layers that would be selected as `wouldSelect`"),
+                    "keepSelection": boolean("Accepted for symmetry with the other tools; selecting always replaces the selection"),
+                }),
+                &[],
+            ),
             false,
         ),
         tool(
@@ -326,6 +388,47 @@ fn tools() -> Vec<Value> {
             "Get selection",
             "What the user has selected right now in the open document: {page: {id, name}, selection: [{id, name, type, parent, x, y, width, height}], count}. x/y are relative to the parent frame (groups don't count). An empty selection gives count 0. Call it first when the user says \"this\", \"it\" or \"the selected layer\".",
             empty(),
+            true,
+        ),
+        tool(
+            "find_nodes",
+            "Find layers",
+            "Search for layers with the node.find filters and return {ids, total} without selecting anything or changing the page, view or selection (read-only; safe on the user's open file). All filters are ANDed; text filters ignore case. `page` (an id, a name or \"all\") searches another page without switching to it. `details: true` adds `nodes`: [{id, name, type, parent, x, y, width, height}] (x/y relative to the parent), so one call finds and describes. At most `limit` layers are returned (default 100, up to 10000); `total` counts every match. Combine with get_nodes (outline), contact_sheet (pictures) or the `where`/`list` of the tools that change layers.",
+            obj(find_props(), &[]),
+            true,
+        ),
+        tool(
+            "get_nodes",
+            "Get many layers",
+            "A cheap outline of many layers in one call, without selecting them: for each layer the chosen `fields` plus `childCount`, and its children down to `depth` with the same fields. Name the layers with `ids`, `where` (the node.find filters) or `list` (a saved list), exactly one of them. Returns {count, nodes: [{id, ...fields, childCount, children?}], total?, truncated?}; at most `limit` layers (default and maximum 200) and a response that fits one message: `truncated` says what was left out. A layer that cannot be read is {id, error}. Use get_node for one layer in depth.",
+            obj(
+                json!({
+                    "ids": ids_schema("Layer ids"),
+                    "where": where_schema(),
+                    "list": string("A saved list of layers (list.save)"),
+                    "depth": json!({"type": "integer", "minimum": 0, "maximum": 6, "description": "Child levels below each layer (default 1, max 6; 0 = the layer and its childCount only)"}),
+                    "fields": nodes_fields_schema(),
+                    "limit": json!({"type": "integer", "minimum": 1, "maximum": 200, "description": "Most layers to read (default and maximum 200)"}),
+                }),
+                &[],
+            ),
+            true,
+        ),
+        tool(
+            "contact_sheet",
+            "Contact sheet",
+            "One PNG with many frames side by side to compare them at a glance: each layer rendered on its own, laid out in a grid on a dark background, with its index number (1, 2, 3 ...) in a box at its corner. Returns the image and a JSON legend {frames: [{index, id, name, width, height}], columns, scale, width, height, truncated?, failed?}. Name the layers with `ids`, `where` (the node.find filters) or `list` (a saved list), exactly one of them; at most 64 are drawn (`truncated` says how many were left out). Read-only: nothing is selected and the view does not move. Use screenshot for one layer at full size.",
+            obj(
+                json!({
+                    "ids": ids_schema("Layers to draw, in this order"),
+                    "where": where_schema(),
+                    "list": string("A saved list of layers (list.save)"),
+                    "scale": json!({"type": "number", "minimum": 0.02, "maximum": 1, "description": "Pixel scale of each frame (default 0.25); smaller when the sheet would pass maxSize"}),
+                    "columns": json!({"type": "integer", "minimum": 1, "maximum": 16, "description": "Frames per row (default 4)"}),
+                    "maxSize": json!({"type": "integer", "minimum": 64, "maximum": 8192, "description": "Longest side of the sheet in pixels (default 2400)"}),
+                }),
+                &[],
+            ),
             true,
         ),
         tool(
@@ -420,7 +523,7 @@ fn tools() -> Vec<Value> {
         tool(
             "save_file",
             "Save file",
-            "Save the active document as a .figcraft file. `path` is required the first time (an untitled document has no path); later saves reuse it. A `path` ending in .fig writes an experimental .fig export copy instead and leaves the document's own path and unsaved changes alone.",
+            "Save the active document as a .figcraft file. `path` is required the first time (an untitled document has no path); later saves reuse it. A `path` ending in .fig writes an experimental .fig export copy instead and leaves the document's own path and unsaved changes alone. With an attached app, a result with `\"unsavedBefore\": true` says the window had unsaved changes before the call (the person's too: they are written); `\"changedOnDisk\": true` says the file on disk differed from what the document last read or saved.",
             obj(json!({"path": string("Output .figcraft path, or a .fig path for an experimental export copy")}), &[]),
             false,
         ),
@@ -801,6 +904,7 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
         return ToolResult::error(e);
     }
     let mut targeted;
+    let doc_target = a.get("document").filter(|d| !d.is_null()).cloned();
     let b: &mut dyn Backend = match a.remove("document").filter(|d| !d.is_null()) {
         Some(document) => {
             targeted = InDocument { inner: b, document };
@@ -818,12 +922,15 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
         "get_node" => get_node(b, &a),
         "select" => select(b, &a),
         "get_selection" => get_selection(b),
+        "find_nodes" => find_nodes(b, &a),
+        "get_nodes" => get_nodes(b, &a),
+        "contact_sheet" => contact_sheet(b, &a),
         "export" => export(b, &a),
         "export_source" => export_source(b, &a),
         "export_many" => export_many(b, &a),
         "screenshot" => screenshot(b, &a),
         "open_file" => open_file(b, &a),
-        "save_file" => save_file(b, &a),
+        "save_file" => save_file(b, &a, doc_target.as_ref()),
         "undo" => exec(b, "edit.undo", json!({})).map(|v| ToolResult::json(&v)),
         "redo" => exec(b, "edit.redo", json!({})).map(|v| ToolResult::json(&v)),
         "pointer" => pointer(b, &a),
@@ -972,9 +1079,29 @@ fn create_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult
     {
         return Err("`props` must be an object".into());
     }
+    let dry = flag(a, "dryRun")?;
+    flag(a, "keepSelection")?;
     let mut params = Map::new();
-    const KNOWN: [&str; 16] =
-        ["type", "x", "y", "width", "height", "parent", "index", "name", "key", "text", "path", "points", "closed", "props", "select", "absolute"];
+    const KNOWN: [&str; 18] = [
+        "type",
+        "x",
+        "y",
+        "width",
+        "height",
+        "parent",
+        "index",
+        "name",
+        "key",
+        "text",
+        "path",
+        "points",
+        "closed",
+        "props",
+        "select",
+        "absolute",
+        "dryRun",
+        "keepSelection",
+    ];
     for k in KNOWN {
         if let Some(v) = a.get(k).filter(|v| !v.is_null()) {
             params.insert(k.into(), v.clone());
@@ -993,6 +1120,9 @@ fn create_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult
         params.insert("props".into(), Value::Object(props));
     }
     let r = exec(b, "node.create", Value::Object(params))?;
+    if dry {
+        return Ok(ToolResult::json(&r));
+    }
     let id = r.get("id").cloned().ok_or("node.create returned no id")?;
     let node = b.call("node.get", json!({"id": id, "depth": 0}))?;
     Ok(ToolResult::json(&json!({"id": id, "node": node})))
@@ -1006,7 +1136,13 @@ fn set_properties(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolRes
     let mut props = props;
     normalize_props(&mut props);
     let mut params = json!({"props": props});
-    let found = where_arg(b, a)?;
+    let (dry, keep) = (flag(a, "dryRun")?, flag(a, "keepSelection")?);
+    for (k, on) in [("dryRun", dry), ("keepSelection", keep)] {
+        if on {
+            params[k] = json!(true);
+        }
+    }
+    let found = named_layers(b, a)?;
     let matched = found.as_ref().map(|f| f.1);
     let ids = match found {
         Some((ids, _)) => Some(ids),
@@ -1014,12 +1150,21 @@ fn set_properties(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolRes
     };
     if let Some(ids) = &ids {
         if ids.is_empty() {
-            let why = if matched.is_some() { "no layer matches `where`: nothing changed" } else { "`ids` is empty" };
+            let why = if matched.is_some() { "no layer matches `where` or `list`: nothing changed" } else { "`ids` is empty" };
             return Err(why.into());
         }
         params["ids"] = json!(ids);
     }
-    let warnings = exec(b, "node.set", params)?.get("warnings").cloned();
+    let result = exec(b, "node.set", params)?;
+    if dry {
+        let mut out = if result.is_object() { result } else { json!({"dryRun": true, "result": result}) };
+        if let Some(m) = matched {
+            out["matched"] = json!(m);
+            out["ids"] = json!(ids);
+        }
+        return Ok(ToolResult::json(&out));
+    }
+    let warnings = result.get("warnings").cloned();
     let ids = match ids {
         Some(i) => i,
         None => b
@@ -1054,6 +1199,76 @@ fn set_properties(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolRes
 /// An error when `ids` is given too, when `where` filters nothing, or when more layers match than
 /// `where.limit` returns, so nothing is applied to part of a set.
 fn where_arg(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<Option<(Vec<u64>, u64)>, String> {
+    let Some((ids, total)) = where_find(b, a, None)? else { return Ok(None) };
+    if total > ids.len() as u64 {
+        return Err(format!(
+            "{total} layers match `where` but `where.limit` allows {}: narrow the filters or raise the limit (up to 10000)",
+            ids.len()
+        ));
+    }
+    Ok(Some((ids, total)))
+}
+
+/// A boolean argument, false when absent.
+fn flag(a: &Map<String, Value>, k: &str) -> Result<bool, String> {
+    match a.get(k) {
+        None | Some(Value::Null) => Ok(false),
+        Some(Value::Bool(x)) => Ok(*x),
+        Some(_) => Err(format!("`{k}` must be a boolean")),
+    }
+}
+
+/// The ids of the saved list `name` (`list.get`).
+fn list_ids(b: &mut dyn Backend, name: &str) -> Result<Vec<u64>, String> {
+    let r = exec(b, "list.get", json!({"name": name}))?;
+    let items = match &r {
+        Value::Array(items) => Some(items),
+        other => other.get("ids").or_else(|| other.get("nodes")).and_then(Value::as_array),
+    };
+    let items = items.ok_or_else(|| format!("list `{name}` has no layers in the engine's answer: {r}"))?;
+    Ok(items.iter().filter_map(|v| v.as_u64().or_else(|| v.get("id").and_then(Value::as_u64))).collect())
+}
+
+/// The layers `where` or `list` names, with how many there are; `None` with neither. `where` is as
+/// for [`where_arg`] (more matches than its limit is an error).
+fn named_layers(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<Option<(Vec<u64>, u64)>, String> {
+    let Some(name) = s_arg(a, "list")? else { return where_arg(b, a) };
+    if a.get("where").is_some_and(|v| !v.is_null()) {
+        return Err("pass `where` or `list`, not both".into());
+    }
+    if a.get("ids").is_some_and(|v| !v.is_null()) {
+        return Err("pass `ids` or `list`, not both".into());
+    }
+    let ids = list_ids(b, name)?;
+    let n = ids.len() as u64;
+    Ok(Some((ids, n)))
+}
+
+/// Layers named by `ids`, `where` or `list` (exactly one), cut at `cap`: the ids and how many
+/// there are in all. `where` takes `cap` as its default limit and is not an error when more match.
+fn targets(b: &mut dyn Backend, a: &Map<String, Value>, cap: usize) -> Result<(Vec<u64>, u64), String> {
+    let given = ["ids", "where", "list"].iter().filter(|k| a.get(**k).is_some_and(|v| !v.is_null())).count();
+    if given != 1 {
+        return Err("pass exactly one of `ids`, `where` and `list`".into());
+    }
+    let (mut ids, total) = if let Some(name) = s_arg(a, "list")? {
+        let ids = list_ids(b, name)?;
+        let n = ids.len() as u64;
+        (ids, n)
+    } else if let Some(found) = where_find(b, a, Some(cap))? {
+        found
+    } else {
+        let ids = ids_arg(a, "ids")?.unwrap_or_default();
+        let n = ids.len() as u64;
+        (ids, n)
+    };
+    ids.truncate(cap);
+    Ok((ids, total))
+}
+
+/// [`where_arg`] without the limit check: the ids found (at most `where.limit`, by default
+/// `default_limit`) and the number of matches.
+fn where_find(b: &mut dyn Backend, a: &Map<String, Value>, default_limit: Option<usize>) -> Result<Option<(Vec<u64>, u64)>, String> {
     let Some(w) = a.get("where").filter(|v| !v.is_null()) else { return Ok(None) };
     if a.get("ids").is_some_and(|v| !v.is_null()) {
         return Err("pass `ids` or `where`, not both".into());
@@ -1064,15 +1279,12 @@ fn where_arg(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<Option<(Vec<
     if filters.keys().all(|k| k == "limit") {
         return Err("`where` needs a filter besides `limit` (it would match every layer)".into());
     }
+    if let Some(l) = default_limit {
+        filters.entry("limit").or_insert(json!(l));
+    }
     let r = exec(b, "node.find", Value::Object(filters))?;
     let ids: Vec<u64> = r.get("ids").and_then(Value::as_array).map(|l| l.iter().filter_map(Value::as_u64).collect()).unwrap_or_default();
     let total = r.get("total").and_then(Value::as_u64).unwrap_or(ids.len() as u64);
-    if total > ids.len() as u64 {
-        return Err(format!(
-            "{total} layers match `where` but `where.limit` allows {}: narrow the filters or raise the limit (up to 10000)",
-            ids.len()
-        ));
-    }
     Ok(Some((ids, total)))
 }
 
@@ -1374,14 +1586,16 @@ fn with_marker(mut value: Value, cut: Cut, max_bytes: usize, over: bool, childre
 }
 
 fn select(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
-    let found = where_arg(b, a)?;
+    let found = named_layers(b, a)?;
     let ids = match &found {
         Some((ids, _)) => ids.clone(),
-        None => ids_arg(a, "ids")?.ok_or("`ids` or `where` is required (an empty `ids` array deselects)")?,
+        None => ids_arg(a, "ids")?.ok_or("`ids`, `where` or `list` is required (an empty `ids` array deselects)")?,
     };
+    let dry = flag(a, "dryRun")?;
+    flag(a, "keepSelection")?;
     // A `where` that finds nothing leaves the user's selection alone instead of clearing it.
     let nothing_found = found.is_some() && ids.is_empty();
-    if !nothing_found {
+    if !nothing_found && !dry {
         if ids.is_empty() {
             exec(b, "select.none", json!({}))?;
         } else {
@@ -1390,11 +1604,15 @@ fn select(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Str
     }
     let sel = b.call("document.inspect", json!({"depth": 0}))?.get("selection").cloned().unwrap_or(Value::Null);
     let mut out = json!({"selection": sel});
+    if dry {
+        out["dryRun"] = json!(true);
+        out["wouldSelect"] = json!(ids);
+    }
     if let Some((ids, matched)) = found {
         out["matched"] = json!(matched);
         out["ids"] = json!(ids);
         if nothing_found {
-            out["note"] = json!("nothing matched `where`; the selection is unchanged");
+            out["note"] = json!("nothing matched `where` or `list`; the selection is unchanged");
         }
     }
     Ok(ToolResult::json(&out))
@@ -1428,6 +1646,122 @@ fn get_selection(b: &mut dyn Backend) -> Result<ToolResult, String> {
 
 /// Most selected layers `get_selection` lists with their details.
 const MAX_SELECTION_LISTED: usize = 200;
+
+/// `node.find` as a tool: reads only (it never selects), whatever the filters.
+fn find_nodes(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let mut params = a.clone();
+    params.retain(|_, v| !v.is_null());
+    exec(b, "node.find", Value::Object(params)).map(|v| ToolResult::json(&v))
+}
+
+/// Most layers `get_nodes` reads in one call.
+const MAX_NODES_READ: usize = 200;
+
+/// What `get_nodes` reads of each layer unless `fields` says otherwise.
+const DEFAULT_NODE_FIELDS: [&str; 6] = ["name", "type", "x", "y", "width", "height"];
+
+/// A cheap outline of many layers: one `node.get` each (the fields asked for, children to `depth`).
+fn get_nodes(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let limit = n_arg(a, "limit")?.map_or(MAX_NODES_READ, |v| v.clamp(1.0, MAX_NODES_READ as f64) as usize);
+    let depth = n_arg(a, "depth")?.unwrap_or(1.0).clamp(0.0, 6.0) as u64;
+    let fields = match a.get("fields") {
+        None | Some(Value::Null) => json!(DEFAULT_NODE_FIELDS),
+        Some(f) => f.clone(),
+    };
+    figcraft_engine::inspect::InspectOptions::parse(&json!({"fields": fields}))?;
+    let (ids, total) = targets(b, a, limit)?;
+    let (_, budget) = budget(a)?;
+    let mut nodes: Vec<Value> = Vec::new();
+    let (mut used, mut too_big) = (0usize, false);
+    for id in &ids {
+        let mut n = read_node(b, *id, depth, &fields);
+        // Children listed in full carry no `childCount`: say it anyway, as the tool promises.
+        if let Some(count) = n.get("children").and_then(Value::as_array).map(Vec::len).filter(|_| n.get("childCount").is_none()) {
+            n["childCount"] = json!(count);
+        }
+        let mut size = wire_size(&n);
+        if size + MARKER_RESERVE > budget {
+            // One layer alone fills the message: its own fields and childCount, no children.
+            n = read_node(b, *id, 0, &fields);
+            size = wire_size(&n);
+            n["truncated"] = json!("children left out: the subtree is too large for one message; read it with get_node");
+        }
+        if !nodes.is_empty() && used + size + MARKER_RESERVE > budget {
+            too_big = true;
+            break;
+        }
+        used += size;
+        nodes.push(n);
+    }
+    let mut out = json!({"count": nodes.len(), "total": total, "nodes": nodes});
+    if (nodes.len() as u64) < total {
+        let reason = if too_big { "the response would pass what one message can carry" } else { "more layers than `limit` (at most 200)" };
+        out["truncated"] =
+            json!({"returned": nodes.len(), "total": total, "reason": reason, "hint": "narrow `where` or pass the rest of the ids in another call"});
+    }
+    Ok(ToolResult::json(&out))
+}
+
+/// `node.get` for `get_nodes`: the layer, or `{id, error}` when it can't be read.
+fn read_node(b: &mut dyn Backend, id: u64, depth: u64, fields: &Value) -> Value {
+    match b.call("node.get", json!({"id": id, "depth": depth, "fields": fields})) {
+        Ok(Value::Null) => json!({"id": id, "error": format!("no such layer {id}")}),
+        Ok(n) => n,
+        Err(e) => json!({"id": id, "error": e}),
+    }
+}
+
+/// Many layers on one PNG with their index numbers, and a legend that maps index to layer.
+fn contact_sheet(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let scale = n_arg(a, "scale")?.unwrap_or(0.25).clamp(0.02, 1.0);
+    let columns = n_arg(a, "columns")?.unwrap_or(4.0).clamp(1.0, 16.0) as usize;
+    let max_size = n_arg(a, "maxSize")?.unwrap_or(2400.0).clamp(64.0, 8192.0) as u32;
+    let (ids, total) = targets(b, a, crate::sheet::MAX_FRAMES)?;
+    if ids.is_empty() {
+        return Err("no layers to draw: `ids`, `where` or `list` named none".into());
+    }
+    let cols = columns.min(ids.len());
+    // A frame larger than its share of the sheet is rendered smaller at once, not rendered whole.
+    let cell = f64::from(max_size) / cols as f64;
+    let (mut frames, mut legend, mut failed) = (Vec::new(), Vec::new(), Vec::new());
+    for id in &ids {
+        match render_frame(b, *id, scale, cell) {
+            Ok((pix, entry)) => {
+                frames.push(pix);
+                legend.push(json!({"index": frames.len(), "id": id, "name": entry["name"], "width": entry["width"], "height": entry["height"]}));
+            }
+            Err(e) => failed.push(json!({"id": id, "error": e})),
+        }
+    }
+    if frames.is_empty() {
+        return Err(format!("no layer could be drawn: {}", Value::Array(failed)));
+    }
+    let bytes = figcraft_render::encode_png(&crate::sheet::compose(&frames, cols, max_size)?)?;
+    let (w, h) = png_info(&bytes);
+    let mut info = json!({"frames": legend, "columns": cols, "scale": scale, "width": w, "height": h});
+    if (ids.len() as u64) < total {
+        info["truncated"] = json!(format!("only the first {} of {total} layers are drawn", ids.len()));
+    }
+    if !failed.is_empty() {
+        info["failed"] = Value::Array(failed);
+    }
+    Ok(ToolResult::image(&bytes, "image/png", &info))
+}
+
+/// One layer rendered at `scale`, or smaller so that its longer side fits `cell` pixels; with its
+/// `{name, width, height}`.
+fn render_frame(b: &mut dyn Backend, id: u64, scale: f64, cell: f64) -> Result<(figcraft_render::Pixmap, Value), String> {
+    let n = b.call("node.get", json!({"id": id, "depth": 0, "fields": ["name", "width", "height", "absoluteBounds"]}))?;
+    if n.is_null() {
+        return Err(format!("no such layer {id}"));
+    }
+    let side = |k: &str| n.pointer(&format!("/absoluteBounds/{k}")).or_else(|| n.get(k)).and_then(Value::as_f64).unwrap_or(0.0);
+    let longer = side("width").max(side("height"));
+    let s = if longer > 0.0 { scale.min(cell / longer) } else { scale };
+    let png = b.render_png(&[id], s)?;
+    let pix = figcraft_render::images::decode(&png).ok_or("the rendered image can't be read")?;
+    Ok((pix, n))
+}
 
 /// Which backend answers, and what the engine says about each open file.
 fn diagnostics(b: &mut dyn Backend) -> Result<ToolResult, String> {
@@ -1671,12 +2005,49 @@ fn open_file(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, 
     Ok(ToolResult::json(&json!({"opened": r, "document": doc})))
 }
 
-fn save_file(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+fn save_file(b: &mut dyn Backend, a: &Map<String, Value>, document: Option<&Value>) -> Result<ToolResult, String> {
     let params = match s_arg(a, "path")? {
         Some(p) => json!({"path": p}),
         None => json!({}),
     };
-    exec(b, "file.save", params).map(|v| ToolResult::json(&v))
+    // The state before the save: in the app's window `dirty` means the person has unsaved changes
+    // that this save writes too, and `changedOnDisk` that the file on disk is not the one it read.
+    let before = status_row(b, document);
+    let mut out = exec(b, "file.save", params)?;
+    if let Some(row) = before {
+        let mut extra = Map::new();
+        if b.has_ui() && row.get("dirty") == Some(&Value::Bool(true)) {
+            extra.insert("unsavedBefore".into(), json!(true));
+            extra.insert("unsavedNote".into(), json!("the window had unsaved changes before this save: they are written too"));
+        }
+        if row.get("changedOnDisk") == Some(&Value::Bool(true)) {
+            extra.insert("changedOnDisk".into(), json!(true));
+        }
+        if !extra.is_empty() {
+            if !out.is_object() {
+                out = json!({"result": out});
+            }
+            if let Some(o) = out.as_object_mut() {
+                o.extend(extra);
+            }
+        }
+    }
+    Ok(ToolResult::json(&out))
+}
+
+/// The `doc.status` row of the document a tool acts on: the one `document` names (id, path or
+/// name), else the one in front. `None` when the status is unavailable.
+fn status_row(b: &mut dyn Backend, document: Option<&Value>) -> Option<Value> {
+    let rows = exec(b, "doc.status", json!({})).ok()?;
+    let rows = rows.as_array()?;
+    let named = |r: &&Value| match document {
+        None => r.get("active") == Some(&Value::Bool(true)),
+        Some(Value::String(s)) => {
+            r.get("path").and_then(Value::as_str) == Some(s.as_str()) || r.get("name").and_then(Value::as_str) == Some(s.as_str())
+        }
+        Some(d) => d.as_u64().is_some() && r.get("id").and_then(Value::as_u64) == d.as_u64(),
+    };
+    rows.iter().find(named).cloned()
 }
 
 fn mods(a: &Map<String, Value>, out: &mut Map<String, Value>) -> Result<(), String> {

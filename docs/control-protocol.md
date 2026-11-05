@@ -133,6 +133,19 @@ server does with its client's name: comments it makes are signed "<agent> (agent
 an empty name), marked `"agent": true`, and keep their own read state. Without it the command acts
 as the user (the name from Preferences).
 
+Four parameters work in the `params` of every command and need no entry in its doc: `where` (an
+object of `node.find` filters; the layers it finds become the command's `ids`, and the result gets
+`matched` and `ids`; no match skips the command with `{"matched": 0, "ids": [], "skipped": true}`,
+and a match count above `where.limit` is refused), `list` (the name of a list saved with
+`list.save`; same effect), `dryRun` (run the command, roll everything back like a failed batch and
+return `{dryRun: true, wouldChange, created, deleted, count, truncated, result}`; undoable commands
+only) and `keepSelection` (restore the selection and current page afterwards). `ids`, `where` and
+`list` exclude each other. See [MCP: Parameters every command
+takes](mcp.md#parameters-every-command-takes). `list.save`, `list.get`, `list.delete` and
+`list.all` keep named layer lists per file tab (in memory, not in the file), and `node.adjust` adds
+numbers to the layers' own values (`dx`, `dy`, `dw`, `dh`, `fontSize`, `cornerRadius`, `gap`,
+`padding`, `opacity`, `rotation`) in one undo step.
+
 ```json
 {"token":"<FIGCRAFT_CONTROL_TOKEN>", "id":1,"method":"engine.execute","params":{"command":"shape.rectangle","params":{"x":10,"y":10,"width":100,"height":50}}}
 {"id":1,"ok":true,"result":{"id":2}}

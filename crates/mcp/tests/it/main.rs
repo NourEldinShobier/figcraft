@@ -30,3 +30,5 @@ mod screenshot_pixel_limit;
 mod selection_tools;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod terse_results;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod wish_tools;

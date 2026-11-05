@@ -19,6 +19,7 @@ mod headless;
 mod prompts;
 mod resources;
 mod server;
+mod sheet;
 mod tools;
 
 #[cfg(test)]

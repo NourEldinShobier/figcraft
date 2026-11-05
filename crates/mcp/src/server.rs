@@ -39,7 +39,9 @@ and run them with run_command, or several as one undo step with batch. Commands 
 on the selection; new layers become the selection. Colours are \"#RRGGBB\" or \"#RRGGBBAA\". Verify your work: \
 inspect_document / get_node return the layer tree as JSON (check sizes, fills, layout, overrides), and \
 screenshot returns a PNG of the page or of given layers to look at. undo/redo step through history. \
-Comments: comment.list returns threads (text, anchor node id, frame, page, x/y, replies); fix open ones, \
+Cheap reads that touch neither the selection nor the view: find_nodes (search), get_nodes (an outline of many layers), \
+contact_sheet (many frames on one PNG), get_selection (what the user has selected) and diagnostics (backend and open files). \
+Every command also takes `where`, `list`, `dryRun` and `keepSelection`. Comments: comment.list returns threads (text, anchor node id, frame, page, x/y, replies); fix open ones, \
 reply with what changed, then resolve (a reply reopens a thread). To react to new feedback, call \
 wait_for_changes {after, timeoutMs} and pass the returned cursor back. \
 Resources: figcraft://document, figcraft://node/{id}, figcraft://command/{id}, figcraft://comments. \

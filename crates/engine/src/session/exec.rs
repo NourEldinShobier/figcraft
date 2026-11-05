@@ -70,6 +70,11 @@ impl Session {
     /// as it was.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
+        // `where`, `list`, `dryRun` and `keepSelection` work on every command: they are handled
+        // first and the command runs (through here again) without them.
+        if super::generic::has_generic(id, params) {
+            return self.execute_generic(id, params);
+        }
         crate::cmd::refuse_unknown_params(id, params)?;
         board::refuse_on_board(self, id)?;
         // Writing a file out would write the first page alone.

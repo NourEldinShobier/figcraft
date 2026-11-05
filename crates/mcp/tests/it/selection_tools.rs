@@ -148,14 +148,18 @@ fn where_lists_exactly_the_node_find_filters_and_the_docs_name_the_new_tools() {
             keys,
             [
                 "component",
+                "edgeGap",
                 "fill",
                 "height",
+                "heightNot",
                 "key",
                 "keyGlob",
                 "limit",
                 "name",
                 "nameGlob",
                 "nameRegex",
+                "outsideParent",
+                "page",
                 "parent",
                 "root",
                 "stroke",
@@ -163,7 +167,8 @@ fn where_lists_exactly_the_node_find_filters_and_the_docs_name_the_new_tools() {
                 "text",
                 "type",
                 "variant",
-                "width"
+                "width",
+                "widthNot"
             ],
             "{name}"
         );

@@ -223,6 +223,22 @@ fn a_tool_call_naming_its_document_edits_that_file_and_not_the_one_in_front() {
 }
 
 #[test]
+fn save_file_says_when_the_window_had_unsaved_changes() {
+    let port = fake_app();
+    let mut s = Server::new(Box::new(attach(port)));
+    let text = |r: &Value| -> Value { serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap() };
+    call(&mut s, "create_node", json!({"type": "frame", "name": "Hero"}));
+    let dir = std::env::temp_dir().join(format!("figcraft-mcp-unsaved-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("hero.figcraft");
+    let first = text(&call(&mut s, "save_file", json!({"path": path.to_string_lossy()})));
+    assert_eq!(first["unsavedBefore"], true, "{first}");
+    let again = text(&call(&mut s, "save_file", json!({})));
+    assert!(again.get("unsavedBefore").is_none() && again.get("changedOnDisk").is_none(), "{again}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn selection_and_diagnostics_tools_work_through_an_attached_app() {
     let port = fake_app();
     let mut s = Server::new(Box::new(attach(port)));

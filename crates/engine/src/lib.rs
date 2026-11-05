@@ -174,6 +174,8 @@ impl Default for Session {
 #[cfg(test)]
 mod a11y_keys_tests;
 #[cfg(test)]
+mod adjust_tests;
+#[cfg(test)]
 mod agent_presence_tests;
 #[cfg(test)]
 mod al_behaviour_tests;
@@ -312,6 +314,8 @@ mod effects_tests;
 #[cfg(test)]
 mod events_tests;
 #[cfg(test)]
+mod exec_params_tests;
+#[cfg(test)]
 mod export_behaviour_tests;
 #[cfg(test)]
 mod export_bench_tests;
@@ -337,6 +341,8 @@ mod fig_font_names_tests;
 mod fig_import_tests;
 #[cfg(test)]
 mod fill_none_tests;
+#[cfg(test)]
+mod find_structure_tests;
 #[cfg(test)]
 mod finite_geometry_tests;
 #[cfg(test)]
@@ -449,6 +455,8 @@ mod online_tests;
 mod open_issues_tests;
 #[cfg(test)]
 mod outline_options_tests;
+#[cfg(test)]
+mod overflow_tests;
 #[cfg(test)]
 mod page_clipboard_tests;
 #[cfg(test)]

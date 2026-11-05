@@ -124,6 +124,8 @@ pub struct DocState {
     /// Set while the tab shows only the first page of a large `.fig` file and the whole file is
     /// still being built ([`Session::poll_loading`] swaps it in). The tab is read-only until then.
     pub(crate) loading: Option<Loading>,
+    /// The named layer lists of this tab ([`cmd::idlists`]): session state, not saved in the file.
+    pub(crate) id_lists: std::collections::BTreeMap<String, Vec<NodeId>>,
 }
 
 /// The whole file on its way to a tab opened page-first (see [`cmd::file::preload_staged`]).
@@ -219,6 +221,7 @@ impl DocState {
             on_disk: None,
             on_disk_hash: None,
             loading: None,
+            id_lists: Default::default(),
         };
         st.zoom_to_fit();
         st
@@ -239,6 +242,7 @@ impl DocState {
         whole.view_from_prefs = self.view_from_prefs;
         whole.on_disk = self.on_disk.clone();
         whole.on_disk_hash = self.on_disk_hash;
+        whole.id_lists = std::mem::take(&mut self.id_lists);
         if let Some(p) = page.and_then(|i| whole.doc.pages.get(i)) {
             whole.page = *p;
         }

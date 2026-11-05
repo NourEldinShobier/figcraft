@@ -14,8 +14,10 @@ use crate::params::{
 use crate::{BatchStep, EngineError, Result, Session, bad, spec};
 
 mod clipboard;
+mod overflow;
 mod props;
 mod select;
+mod structure_find;
 
 pub use clipboard::{CLIP_CLOSE, CLIP_OPEN, copy_to_clipboard, design_clipboard_buffer, paste_into};
 use clipboard::{copy, copy_props, copy_props_of, cut, paste, paste_design_layers, paste_over, paste_props, paste_replace};
@@ -99,6 +101,8 @@ struct Extra {
     /// `key`: the layer with exactly this key. `keyGlob`: keys matching a `*`/`?` pattern (case-sensitive).
     key: Option<String>,
     key_glob: Option<Vec<char>>,
+    /// `widthNot`, `heightNot`, `outsideParent`, `edgeGap`.
+    structure: structure_find::Structure,
 }
 
 impl Extra {
@@ -141,6 +145,7 @@ impl Extra {
             key_glob: get(p, "keyGlob")
                 .map(|v| v.as_str().map(|s| s.chars().collect()).ok_or_else(|| bad(cmd, "`keyGlob` must be a string")))
                 .transpose()?,
+            structure: structure_find::Structure::parse(cmd, p)?,
         })
     }
 
@@ -154,6 +159,7 @@ impl Extra {
             || !within(self.width, n.width)
             || !within(self.height, n.height)
             || self.parent.is_some_and(|p| n.parent != Some(p))
+            || !self.structure.matches(doc, n)
             || self.key.as_ref().is_some_and(|k| n.key() != Some(k.as_str()))
             || self.key_glob.as_ref().is_some_and(|g| !n.key().is_some_and(|k| glob_match(g, &k.chars().collect::<Vec<_>>())))
         {
@@ -194,33 +200,47 @@ fn node_find(s: &mut Session, p: &Value) -> Result<Value> {
         None => 100,
         Some(v) => v.as_u64().filter(|n| *n <= 10000).ok_or_else(|| bad(cmd, "`limit` must be an integer from 0 to 10000"))? as usize,
     };
-    let root = opt_id(cmd, p, "root")?.map_or_else(|| s.page(), Ok)?;
+    let details = structure_find::flag(cmd, p, "details")?.unwrap_or(false);
+    // `root` wins over `page`; either way the open page and the selection stay as they are.
+    let roots = match opt_id(cmd, p, "root")? {
+        Some(root) => vec![root],
+        None => structure_find::pages(s, cmd, p)?,
+    };
     let doc = s.doc()?;
-    // Keep one child iterator per ancestor, not a materialised subtree or all pending siblings.
-    let mut stack = vec![doc.get(root)?.children.iter()];
     let mut ids = Vec::new();
+    let mut nodes = Vec::new();
     let mut total = 0usize;
-    while let Some(children) = stack.last_mut() {
-        let Some(&id) = children.next() else {
-            stack.pop();
-            continue;
-        };
-        let n = doc.get(id)?;
-        stack.push(n.children.iter());
-        if !extra.matches(doc, n)
-            || name.as_ref().is_some_and(|q| !fold(&n.name).contains(q))
-            || kind.as_ref().is_some_and(|q| !n.kind.type_name().eq_ignore_ascii_case(q))
-            || text.as_ref().is_some_and(|q| !matches!(&n.kind, NodeKind::Text(t) if fold(&t.characters).contains(q)))
-            || component.as_ref().is_some_and(
-                |q| !matches!(&n.kind, NodeKind::Instance { component, .. } if doc.node(*component).is_some_and(|c| fold(&c.name).contains(q))),
-            )
-        {
-            continue;
+    for root in roots {
+        // Keep one child iterator per ancestor, not a materialised subtree or all pending siblings.
+        let mut stack = vec![doc.get(root)?.children.iter()];
+        while let Some(children) = stack.last_mut() {
+            let Some(&id) = children.next() else {
+                stack.pop();
+                continue;
+            };
+            let n = doc.get(id)?;
+            stack.push(n.children.iter());
+            if !extra.matches(doc, n)
+                || name.as_ref().is_some_and(|q| !fold(&n.name).contains(q))
+                || kind.as_ref().is_some_and(|q| !n.kind.type_name().eq_ignore_ascii_case(q))
+                || text.as_ref().is_some_and(|q| !matches!(&n.kind, NodeKind::Text(t) if fold(&t.characters).contains(q)))
+                || component.as_ref().is_some_and(
+                    |q| !matches!(&n.kind, NodeKind::Instance { component, .. } if doc.node(*component).is_some_and(|c| fold(&c.name).contains(q))),
+                )
+            {
+                continue;
+            }
+            total += 1;
+            if ids.len() < limit {
+                ids.push(id);
+                if details {
+                    nodes.push(structure_find::detail(doc, n));
+                }
+            }
         }
-        total += 1;
-        if ids.len() < limit {
-            ids.push(id);
-        }
+    }
+    if details {
+        return Ok(json!({"ids": ids, "total": total, "nodes": nodes}));
     }
     Ok(json!({"ids": ids, "total": total}))
 }
@@ -442,9 +462,16 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "node.find",
             "Find layers",
-            "{root? (strict descendants; default current page), name?, type? (canonical layer type), text?, component? (main component name), nameRegex? (case-insensitive regular expression), nameGlob? (`*` and `?`, whole name, case-insensitive), fill? / stroke? (colour of a visible solid paint, e.g. \"#111111\"), strokeWeight? / width? / height? (a number, or {min?, max?} inclusive), parent? (direct parent id), variant? ({Property: \"Value\"} on a variant component or an instance of one), key? (exact layer key) / keyGlob? (`*` and `?`, case-sensitive), limit? (0-10000; default 100)}: every filter must match; name, text and component are case-insensitive substrings, type is exact (any case); returns {ids, total} and does not select",
+            "{root? (strict descendants; default current page), name?, type? (canonical layer type), text?, component? (main component name), nameRegex? (case-insensitive regular expression), nameGlob? (`*` and `?`, whole name, case-insensitive), fill? / stroke? (colour of a visible solid paint, e.g. \"#111111\"), strokeWeight? / width? / height? (a number, or {min?, max?} inclusive), parent? (direct parent id), variant? ({Property: \"Value\"} on a variant component or an instance of one), key? (exact layer key) / keyGlob? (`*` and `?`, case-sensitive), page? (page id, page name or \"all\"; default the current page; searched without switching to it, `root` wins), widthNot? / heightNot? (a number or a list of numbers: layers whose width / height differs from every one, within 0.01), outsideParent? (bool: true keeps layers whose box reaches more than 0.5 past the box of their parent frame, section or component, false the others; groups don't count as parents), edgeGap? ({edge: top|bottom|left|right, min?, max?} or a list of them, all must match: the gap between the layer's edge and the same edge of its parent frame, inclusive; bottom is parent height - (y + height), x and y as in `details`), details? (bool: also return `nodes`), limit? (0-10000; default 100)}: every filter must match; name, text and component are case-insensitive substrings, type is exact (any case); returns {ids, total} and does not select; with details also nodes: [{id, name, type, parent, x, y, width, height}] in the order of ids (x and y relative to the parent frame, groups don't count)",
             false,
             node_find
+        ),
+        spec!(
+            "inspect.overflow",
+            "Find overflowing layers",
+            "{root? (strict descendants; default the current page), page? (page id, page name or \"all\"; default the current page; searched without switching to it, `root` wins), limit? (0-10000; default 200)}  visible layers that stick out of their parent frame, section or component (groups don't count as parents) or whose text doesn't fit; hidden layers are skipped; does not select → {items: [{id, name, parent, parentName, kind, detail}], total, truncated}; kind: outside-parent-clipped (the box passes a parent that clips content: that part is cut), effect-clipped (the box fits a clipping parent but its shadow, blur or outside stroke is cut), outside-parent (the box passes a parent that doesn't clip), text-overflow (a fixed-size text layer whose laid-out text is taller or wider than its box); detail says by how much (px)",
+            false,
+            overflow::overflow
         ),
         spec!(
             "node.reparent",
