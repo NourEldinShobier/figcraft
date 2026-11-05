@@ -79,6 +79,7 @@ pub const NODE_KEYS: &[&str] = &[
     "overflow",
     "operandOperation",
     "overrides",
+    "parent",
     "paragraphIndent",
     "paragraphSpacing",
     "pluginData",
@@ -188,6 +189,13 @@ pub fn node_json_with_options(doc: &Document, id: NodeId, depth: usize, options:
     }
     put!("name", json!(n.name));
     put!("type", json!(n.kind.type_name()));
+    // Only on request (`fields`): the id of the layer's parent, for tools that say where a layer sits.
+    if options.explicit("parent")
+        && !n.is_page()
+        && let Some(parent) = n.parent
+    {
+        o.insert("parent".into(), json!(parent));
+    }
     if options.explicit("visible") || (!n.is_page() && !n.visible) {
         put!("visible", json!(n.visible));
     }

@@ -63,6 +63,8 @@ thiserror = "2"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["float_roundtrip", "unbounded_depth"] }
+# `figcraft-cli mcp` parent-process watchdog (MIT, native only).
+sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 regex = "1.13"
 log = "0.4"
 same-file = "1.0.6"

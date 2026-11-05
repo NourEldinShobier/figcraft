@@ -73,6 +73,33 @@ fn outline_schema() -> Value {
         "Compact tree: id, name, type, characters (first 120 characters, then ... only if longer), mainComponentName and explicit visible booleans, plus structure. Cannot combine true with fields; false permits fields.",
     )
 }
+/// `where` for `select` and `set_properties`: exactly the `node.find` filters.
+fn where_schema() -> Value {
+    let range = |desc: &str| json!({"description": desc, "anyOf": [{"type": "number"}, obj(json!({"min": {"type": "number"}, "max": {"type": "number"}}), &[])]});
+    obj(
+        json!({
+            "root": id_schema("Search inside this layer's subtree (default: the current page)"),
+            "name": string("Case-insensitive substring of the layer name"),
+            "nameRegex": string("Case-insensitive regular expression, matched anywhere in the name"),
+            "nameGlob": string("`*` and `?` against the whole name, case-insensitive"),
+            "type": string("Layer type: PAGE, FRAME, GROUP, SECTION, RECTANGLE, ELLIPSE, POLYGON, STAR, LINE, VECTOR, TEXT, BOOLEAN_OPERATION, COMPONENT, COMPONENT_SET, INSTANCE or SLICE (case-insensitive)"),
+            "text": string("Case-insensitive substring of a text layer's characters"),
+            "component": string("Case-insensitive substring of the main component's name, for instances"),
+            "fill": string("A colour like \"#111111\": layers with a visible solid fill of it"),
+            "stroke": string("A colour like \"#111111\": layers with a visible solid stroke of it"),
+            "strokeWeight": range("A stroke weight, or {min?, max?} (inclusive)"),
+            "width": range("A width, or {min?, max?} (inclusive)"),
+            "height": range("A height, or {min?, max?} (inclusive)"),
+            "parent": id_schema("Only the direct children of this layer"),
+            "variant": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Variant properties, e.g. {\"State\": \"Hover\"}: variant components or their instances"},
+            "key": string("The layer with exactly this key"),
+            "keyGlob": string("Layers whose key matches this `*`/`?` pattern (case-sensitive)"),
+            "limit": int("Most layers to take (default 100, up to 10000); a filter that matches more is an error: narrow it or raise the limit"),
+        }),
+        &[],
+    )
+}
+
 fn obj(props: Value, required: &[&str]) -> Value {
     let mut o = json!({"type": "object", "properties": props});
     if !required.is_empty() {
@@ -113,6 +140,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "inspect_document",
     "get_node",
     "select",
+    "get_selection",
     "export",
     "export_many",
     "export_source",
@@ -135,6 +163,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "history",
     "auto_name_layers",
     "wait_for_changes",
+    "diagnostics",
 ];
 
 /// The tools that take `document`: they act on the file it names instead of the one in front.
@@ -235,9 +264,14 @@ fn tools() -> Vec<Value> {
         tool(
             "set_properties",
             "Set properties",
-            "Set properties on one or more layers as one undo step (engine `node.set`). Keys: name, visible, locked, opacity (0-1), blend, x, y (relative to the parent frame; groups don't count), width, height, rotation (degrees), fill (colour) / fills (array of paints: \"#hex\" or {\"type\":\"solid\",\"color\":\"#hex\"} or {\"type\":\"linearGradient\",\"stops\":[\"#hex\",\"#hex\"]} or stops [{\"position\":0..1,\"color\":\"#hex\"}], optional from/to handles in the unit box; radialGradient too), stroke / strokes, strokeWeight, strokeAlign (inside|center|outside), cornerRadius (n or [tl,tr,br,bl]), effects (array, e.g. {\"type\":\"dropShadow\",\"color\":\"#00000040\",\"offset\":[0,4],\"radius\":8}), clip, layout (null|horizontal|vertical|grid), gap, padding (n or [t,r,b,l]), mainAlign (min|center|max|spaceBetween|spaceAround|spaceEvenly), crossAlign, wrap, contentAlign (auto|spaceBetween: wrapped lines), sizingH / sizingV (fixed|hug|fill), constraints {horizontal, vertical}, characters, fontFamily, fontStyle, fontSize, lineHeight, letterSpacing, textAlign, textAutoResize. Auto layout keys (gap, padding, mainAlign, crossAlign, wrap, …) apply to frames, components and instances only: other layers among the ids are skipped and named in `warnings`, and with none that can take them the call is an error. A fontStyle draws in the family's nearest face; `warnings` says when that face has another weight or slant than the name asks for. Run list_commands with filter \"node.set\" for the full list. Unknown keys are an error. Returns the updated layers.",
+            "Set properties on one or more layers as one undo step (engine `node.set`). Keys: name, visible, locked, opacity (0-1), blend, x, y (relative to the parent frame; groups don't count), width, height, rotation (degrees), fill (colour) / fills (array of paints: \"#hex\" or {\"type\":\"solid\",\"color\":\"#hex\"} or {\"type\":\"linearGradient\",\"stops\":[\"#hex\",\"#hex\"]} or stops [{\"position\":0..1,\"color\":\"#hex\"}], optional from/to handles in the unit box; radialGradient too), stroke / strokes, strokeWeight, strokeAlign (inside|center|outside), cornerRadius (n or [tl,tr,br,bl]), effects (array, e.g. {\"type\":\"dropShadow\",\"color\":\"#00000040\",\"offset\":[0,4],\"radius\":8}), clip, layout (null|horizontal|vertical|grid), gap, padding (n or [t,r,b,l]), mainAlign (min|center|max|spaceBetween|spaceAround|spaceEvenly), crossAlign, wrap, contentAlign (auto|spaceBetween: wrapped lines), sizingH / sizingV (fixed|hug|fill), constraints {horizontal, vertical}, characters, fontFamily, fontStyle, fontSize, lineHeight, letterSpacing, textAlign, textAutoResize. Auto layout keys (gap, padding, mainAlign, crossAlign, wrap, …) apply to frames, components and instances only: other layers among the ids are skipped and named in `warnings`, and with none that can take them the call is an error. A fontStyle draws in the family's nearest face; `warnings` says when that face has another weight or slant than the name asks for. Run list_commands with filter \"node.set\" for the full list. Unknown keys are an error. Returns the updated layers. Instead of `ids`, `where` (the node.find filters) picks the layers: they are found first, then changed together as one undo step, and the result carries `matched` and `ids`; no match is an error and nothing changes.",
             obj(
-                json!({"ids": ids_schema("Layer ids (default: the selection)"), "props": {"type": "object", "description": "Property values to set"}, "quiet": boolean("Return only {ok, ids, warnings?} instead of every updated layer (default true for more than one layer)")}),
+                json!({
+                    "ids": ids_schema("Layer ids (default: the selection)"),
+                    "where": where_schema(),
+                    "props": {"type": "object", "description": "Property values to set"},
+                    "quiet": boolean("Return only {ok, ids, warnings?} instead of every updated layer (default true for more than one layer)"),
+                }),
                 &["props"],
             ),
             false,
@@ -283,9 +317,16 @@ fn tools() -> Vec<Value> {
         tool(
             "select",
             "Select layers",
-            "Replace the selection with `ids` (switching to their page). An empty array deselects everything. Most commands act on the selection when no `ids` are passed.",
-            obj(json!({"ids": ids_schema("Layer ids to select")}), &["ids"]),
+            "Replace the selection with `ids` (switching to their page). An empty array deselects everything. Most commands act on the selection when no `ids` are passed. Instead of `ids`, `where` (the node.find filters, e.g. {\"type\": \"TEXT\", \"nameGlob\": \"Label*\"}) selects every match and returns `matched` and `ids`; when nothing matches the selection is left as it is.",
+            obj(json!({"ids": ids_schema("Layer ids to select"), "where": where_schema()}), &[]),
             false,
+        ),
+        tool(
+            "get_selection",
+            "Get selection",
+            "What the user has selected right now in the open document: {page: {id, name}, selection: [{id, name, type, parent, x, y, width, height}], count}. x/y are relative to the parent frame (groups don't count). An empty selection gives count 0. Call it first when the user says \"this\", \"it\" or \"the selected layer\".",
+            empty(),
+            true,
         ),
         tool(
             "export",
@@ -576,6 +617,13 @@ fn tools() -> Vec<Value> {
             ),
             true,
         ),
+        tool(
+            "diagnostics",
+            "Diagnostics",
+            "Which backend this server talks to and what it has open: {backend, attached, mcpServer: {pid}, documents: [{index, id, name, path, dirty, changedOnDisk, lastSaved, active}]}. `attached` is true when the FigCraft app is driven (edits show in its window), false for a detached headless copy. `changedOnDisk`: the file changed on disk since the document was read or saved. `lastSaved` is the file's modification time (ISO 8601 UTC), null without a file. `path` is null for an untitled document and for AI agents (the app keeps file locations from them). Use it when edits do not show up or a save is refused.",
+            empty(),
+            true,
+        ),
     ]
 }
 
@@ -769,6 +817,7 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
         "inspect_document" => inspect_document(b, &a),
         "get_node" => get_node(b, &a),
         "select" => select(b, &a),
+        "get_selection" => get_selection(b),
         "export" => export(b, &a),
         "export_source" => export_source(b, &a),
         "export_many" => export_many(b, &a),
@@ -803,6 +852,7 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
         "history" => history(b, &a),
         "auto_name_layers" => auto_name_layers(b, &a),
         "wait_for_changes" => wait_for_changes(b, &a),
+        "diagnostics" => diagnostics(b),
         other => Err(format!("unknown tool `{other}` (tools/list has: {})", TOOL_NAMES.join(", "))),
     };
     let mut r = r.unwrap_or_else(ToolResult::error);
@@ -956,10 +1006,16 @@ fn set_properties(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolRes
     let mut props = props;
     normalize_props(&mut props);
     let mut params = json!({"props": props});
-    let ids = ids_arg(a, "ids")?;
+    let found = where_arg(b, a)?;
+    let matched = found.as_ref().map(|f| f.1);
+    let ids = match found {
+        Some((ids, _)) => Some(ids),
+        None => ids_arg(a, "ids")?,
+    };
     if let Some(ids) = &ids {
         if ids.is_empty() {
-            return Err("`ids` is empty".into());
+            let why = if matched.is_some() { "no layer matches `where`: nothing changed" } else { "`ids` is empty" };
+            return Err(why.into());
         }
         params["ids"] = json!(ids);
     }
@@ -984,10 +1040,40 @@ fn set_properties(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolRes
         let nodes: Vec<Value> = ids.iter().take(20).filter_map(|i| b.call("node.get", json!({"id": i, "depth": 0})).ok()).collect();
         json!({"ok": true, "nodes": nodes})
     };
+    if let Some(m) = matched {
+        out["matched"] = json!(m);
+        out["ids"] = json!(ids);
+    }
     if let Some(w) = warnings {
         out["warnings"] = w;
     }
     Ok(ToolResult::json(&out))
+}
+
+/// The layers `where` (the `node.find` filters) names, with how many matched; `None` without it.
+/// An error when `ids` is given too, when `where` filters nothing, or when more layers match than
+/// `where.limit` returns, so nothing is applied to part of a set.
+fn where_arg(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<Option<(Vec<u64>, u64)>, String> {
+    let Some(w) = a.get("where").filter(|v| !v.is_null()) else { return Ok(None) };
+    if a.get("ids").is_some_and(|v| !v.is_null()) {
+        return Err("pass `ids` or `where`, not both".into());
+    }
+    let Value::Object(filters) = w else { return Err("`where` must be an object of node.find filters".into()) };
+    let mut filters = filters.clone();
+    filters.retain(|_, v| !v.is_null());
+    if filters.keys().all(|k| k == "limit") {
+        return Err("`where` needs a filter besides `limit` (it would match every layer)".into());
+    }
+    let r = exec(b, "node.find", Value::Object(filters))?;
+    let ids: Vec<u64> = r.get("ids").and_then(Value::as_array).map(|l| l.iter().filter_map(Value::as_u64).collect()).unwrap_or_default();
+    let total = r.get("total").and_then(Value::as_u64).unwrap_or(ids.len() as u64);
+    if total > ids.len() as u64 {
+        return Err(format!(
+            "{total} layers match `where` but `where.limit` allows {}: narrow the filters or raise the limit (up to 10000)",
+            ids.len()
+        ));
+    }
+    Ok(Some((ids, total)))
 }
 
 /// What one tool result may take on the wire. MCP stdio is newline-delimited JSON, so a result is
@@ -1288,14 +1374,88 @@ fn with_marker(mut value: Value, cut: Cut, max_bytes: usize, over: bool, childre
 }
 
 fn select(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
-    let ids = ids_arg(a, "ids")?.ok_or("`ids` is required (an empty array deselects)")?;
-    if ids.is_empty() {
-        exec(b, "select.none", json!({}))?;
-    } else {
-        exec(b, "select.set", json!({"ids": ids}))?;
+    let found = where_arg(b, a)?;
+    let ids = match &found {
+        Some((ids, _)) => ids.clone(),
+        None => ids_arg(a, "ids")?.ok_or("`ids` or `where` is required (an empty `ids` array deselects)")?,
+    };
+    // A `where` that finds nothing leaves the user's selection alone instead of clearing it.
+    let nothing_found = found.is_some() && ids.is_empty();
+    if !nothing_found {
+        if ids.is_empty() {
+            exec(b, "select.none", json!({}))?;
+        } else {
+            exec(b, "select.set", json!({"ids": ids}))?;
+        }
     }
     let sel = b.call("document.inspect", json!({"depth": 0}))?.get("selection").cloned().unwrap_or(Value::Null);
-    Ok(ToolResult::json(&json!({"selection": sel})))
+    let mut out = json!({"selection": sel});
+    if let Some((ids, matched)) = found {
+        out["matched"] = json!(matched);
+        out["ids"] = json!(ids);
+        if nothing_found {
+            out["note"] = json!("nothing matched `where`; the selection is unchanged");
+        }
+    }
+    Ok(ToolResult::json(&out))
+}
+
+/// What is selected now: one `document.inspect` for the page and the selected ids, one `node.get`
+/// each (a selection is cut at [`MAX_SELECTION_LISTED`] layers).
+fn get_selection(b: &mut dyn Backend) -> Result<ToolResult, String> {
+    let doc = b.call("document.inspect", json!({"depth": 0, "fields": ["name"]}))?;
+    let ids: Vec<u64> = doc.get("selection").and_then(Value::as_array).map(|l| l.iter().filter_map(Value::as_u64).collect()).unwrap_or_default();
+    let current = doc.get("currentPage").cloned().unwrap_or(Value::Null);
+    let name = doc
+        .get("pages")
+        .and_then(Value::as_array)
+        .and_then(|p| p.iter().find(|p| p.get("id") == Some(&current)))
+        .and_then(|p| p.get("name"))
+        .cloned();
+    let fields = ["id", "name", "type", "parent", "x", "y", "width", "height"];
+    let mut listed = Vec::new();
+    for id in ids.iter().take(MAX_SELECTION_LISTED) {
+        let n = b.call("node.get", json!({"id": id, "depth": 0, "fields": fields}))?;
+        // Keep the listed keys only (a node.get at depth 0 also reports `childCount`).
+        listed.push(Value::Object(fields.iter().filter_map(|k| n.get(*k).map(|v| ((*k).to_string(), v.clone()))).collect()));
+    }
+    let mut out = json!({"page": {"id": current, "name": name}, "selection": listed, "count": ids.len()});
+    if ids.len() > MAX_SELECTION_LISTED {
+        out["truncated"] = json!(format!("only the first {MAX_SELECTION_LISTED} of {} selected layers are listed", ids.len()));
+    }
+    Ok(ToolResult::json(&out))
+}
+
+/// Most selected layers `get_selection` lists with their details.
+const MAX_SELECTION_LISTED: usize = 200;
+
+/// Which backend answers, and what the engine says about each open file.
+fn diagnostics(b: &mut dyn Backend) -> Result<ToolResult, String> {
+    let status = exec(b, "doc.status", json!({}))?;
+    let documents: Vec<Value> = status
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .map(|d| {
+            let g = |k: &str| d.get(k).cloned().unwrap_or(Value::Null);
+            let saved = d
+                .get("lastSavedMs")
+                .and_then(Value::as_i64)
+                .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
+                .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+            json!({
+                "index": g("index"), "id": g("id"), "name": g("name"), "path": g("path"),
+                "dirty": g("dirty"), "changedOnDisk": g("changedOnDisk"), "lastSaved": saved, "active": g("active"),
+            })
+        })
+        .collect();
+    Ok(ToolResult::json(&json!({
+        "backend": b.describe(),
+        "attached": b.has_ui(),
+        "mcpServer": {"pid": std::process::id()},
+        "documents": documents,
+    })))
 }
 
 fn lint_icons(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {

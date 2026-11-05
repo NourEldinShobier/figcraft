@@ -20,8 +20,8 @@ mod select;
 pub use clipboard::{CLIP_CLOSE, CLIP_OPEN, copy_to_clipboard, design_clipboard_buffer, paste_into};
 use clipboard::{copy, copy_props, copy_props_of, cut, paste, paste_design_layers, paste_over, paste_props, paste_replace};
 use props::{
-    batch_rename, effect_add, effect_copy, effect_paste, find_replace, paint_copy, paint_list, paint_paste, paint_set, pattern_fill, reparent, set,
-    stroke_brush, width_profile,
+    batch_rename, effect_add, effect_copy, effect_paste, find_replace, paint_copy, paint_list, paint_paste, paint_set, pattern_fill, reparent,
+    replace_color, set, stroke_brush, width_profile,
 };
 pub use select::opacity_from_digits;
 use select::{
@@ -263,6 +263,13 @@ pub fn specs() -> Vec<CommandSpec> {
             "{find, replace? (text layers), layerNames? (bool), select? (default true)}",
             true,
             find_replace
+        ),
+        spec!(
+            "edit.replaceColor",
+            "Replace colour",
+            "{from, to (colours like \"#RRGGBB\" or \"#RRGGBBAA\"), scope? (selection|page|file; default page; selection takes ids or the selection), fills? (bool, default true), strokes? (bool, default true), tolerance? (0-1 per-channel distance; default 0: exact match)}  recolours every visible solid fill and stroke equal to `from`, keeping its opacity and blend (an alpha in `to` sets the opacity); gradients, images and paints bound to a colour variable are left alone → {changed: [ids], paints: N, skippedBound: [ids of layers with a matching variable-bound paint]}",
+            true,
+            replace_color
         ),
         spec!("edit.setDefaultProperties", "Set default properties", "{id?}", false, |s, p| {
             let id = targets(s, p).first().copied().ok_or_else(|| bad("edit.setDefaultProperties", "select a layer"))?;

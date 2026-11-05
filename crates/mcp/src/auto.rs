@@ -31,8 +31,9 @@ impl Default for Auto {
 }
 
 impl Auto {
+    /// Attaches on the default control port, or on `FIGCRAFT_MCP_PORT` (1-65535) when it is set.
     pub fn new() -> Self {
-        Self::with_port(DEFAULT_CONTROL_PORT)
+        Self::with_port(port_from_env(std::env::var("FIGCRAFT_MCP_PORT").ok().as_deref()))
     }
 
     pub fn with_port(port: u16) -> Self {
@@ -60,6 +61,11 @@ impl Auto {
             None => &mut self.headless,
         }
     }
+}
+
+/// The port `FIGCRAFT_MCP_PORT` names; the default when it is unset, not a number or 0.
+fn port_from_env(value: Option<&str>) -> u16 {
+    value.and_then(|v| v.trim().parse::<u16>().ok()).filter(|p| *p != 0).unwrap_or(DEFAULT_CONTROL_PORT)
 }
 
 /// Whether something accepts connections on the control port.

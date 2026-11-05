@@ -53,3 +53,13 @@ fn inspect_ui_names_the_server() {
     assert_eq!(v["mcpServer"]["pid"], json!(std::process::id()));
     assert!(v["mcpServer"]["backend"].as_str().unwrap_or("").starts_with("headless"));
 }
+
+#[test]
+fn the_port_variable_picks_the_control_port() {
+    assert_eq!(port_from_env(None), 7979);
+    assert_eq!(port_from_env(Some("8123")), 8123);
+    assert_eq!(port_from_env(Some(" 65535 ")), 65535);
+    for bad in ["", "0", "65536", "-1", "seven", "80.5"] {
+        assert_eq!(port_from_env(Some(bad)), 7979, "{bad:?}");
+    }
+}

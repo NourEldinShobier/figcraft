@@ -221,3 +221,22 @@ fn a_tool_call_naming_its_document_edits_that_file_and_not_the_one_in_front() {
     assert_eq!(e["isError"], true);
     assert_eq!(call(&mut s, "pointer", json!({"x": 0, "y": 0, "document": back}))["isError"], true, "pointer takes no `document`");
 }
+
+#[test]
+fn selection_and_diagnostics_tools_work_through_an_attached_app() {
+    let port = fake_app();
+    let mut s = Server::new(Box::new(attach(port)));
+    let text = |r: &Value| -> Value { serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap() };
+    let made = text(&call(&mut s, "create_node", json!({"type": "frame", "name": "Hero", "width": 80, "height": 40})));
+    let selected = text(&call(&mut s, "get_selection", json!({})));
+    assert_eq!(
+        (selected["count"].clone(), selected["selection"][0]["id"].clone(), selected["selection"][0]["name"].clone()),
+        (json!(1), made["id"].clone(), json!("Hero"))
+    );
+    let picked = text(&call(&mut s, "select", json!({"where": {"name": "hero"}})));
+    assert_eq!((picked["matched"].clone(), picked["ids"].clone()), (json!(1), json!([made["id"].clone()])));
+    let d = text(&call(&mut s, "diagnostics", json!({})));
+    assert_eq!(d["attached"], true);
+    assert!(d["backend"].as_str().unwrap().contains(&port.to_string()), "{d}");
+    assert_eq!((d["documents"].as_array().unwrap().len(), d["documents"][0]["dirty"].clone()), (1, json!(true)));
+}

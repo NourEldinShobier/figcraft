@@ -5,6 +5,7 @@
 
 mod args;
 mod files;
+mod parent_watch;
 mod perf;
 
 use std::io::Write;
@@ -168,6 +169,7 @@ fn mcp(attach: Option<&str>, timeout: Option<u64>, roots: Option<figcraft_engine
     if let Some(r) = &roots {
         eprintln!("file access confined to {}", r.to_json());
     }
+    parent_watch::start();
     let mut server = figcraft_mcp::Server::new(backend).with_roots(roots);
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();

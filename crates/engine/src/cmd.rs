@@ -5,6 +5,7 @@ pub mod arrange;
 pub mod comment;
 pub mod component;
 pub mod create;
+pub mod docstatus;
 pub mod edit;
 pub mod facilitate;
 pub mod file;
@@ -90,6 +91,7 @@ fn registry() -> &'static Registry {
         list.extend(layout::specs());
         list.extend(file::specs());
         list.extend(file::source_specs());
+        list.extend(docstatus::specs());
         list.extend(page::specs());
         list.extend(view::specs());
         list.extend(text::specs());

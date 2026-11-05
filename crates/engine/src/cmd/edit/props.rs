@@ -89,6 +89,89 @@ pub(super) fn find_replace(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"matches": hits}))
 }
 
+/// `edit.replaceColor`: every visible solid fill and stroke equal to `from` (per-channel within
+/// `tolerance`) takes the colour `to`. A paint bound to a colour variable keeps its colour and its
+/// layer is reported in `skippedBound`. Text runs keep their own fills (only the layer's paints change).
+pub(super) fn replace_color(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "edit.replaceColor";
+    let colour = |key: &str| color(p, key).ok_or_else(|| bad(CMD, format!("`{key}` must be a colour like \"#RRGGBB\"")));
+    let (from, to) = (colour("from")?, colour("to")?);
+    let tolerance = match get(p, "tolerance") {
+        None | Some(Value::Null) => 0.0,
+        Some(v) => f64_of(v).filter(|t| (0.0..=1.0).contains(t)).ok_or_else(|| bad(CMD, "`tolerance` must be a number from 0 to 1"))?,
+    };
+    let (fills, strokes) = (boolean(p, "fills").unwrap_or(true), boolean(p, "strokes").unwrap_or(true));
+    let starts = match string(p, "scope").as_deref().unwrap_or("page") {
+        "selection" => req_targets(CMD, s, p)?,
+        "page" => vec![s.page()?],
+        "file" => s.doc()?.pages.clone(),
+        _ => return Err(bad(CMD, "`scope` must be selection, page or file")),
+    };
+    // Compared as 8-bit channels, like `node.find`; the alpha only counts when `from` has one.
+    let want = from.to_rgba8();
+    let near = |a: u8, b: u8| f64::from(a.abs_diff(b)) / 255.0 <= tolerance + 1e-9;
+    let is_target = |paint: &figcraft_color::Paint| match (&paint.kind, paint.solid_color()) {
+        (figcraft_color::PaintKind::Solid { color: c }, Some(effective)) if paint.visible => {
+            c.to_rgba8().iter().zip(&want).take(3).all(|(a, b)| near(*a, *b)) && (from.a >= 1.0 || near(effective.to_rgba8()[3], want[3]))
+        }
+        _ => false,
+    };
+    let doc = s.doc_mut()?;
+    let mut seen = std::collections::BTreeSet::new();
+    let ids: Vec<NodeId> = starts.into_iter().flat_map(|r| doc.subtree(r)).filter(|i| seen.insert(*i)).collect();
+    let (mut changed, mut skipped, mut paints) = (Vec::new(), Vec::new(), 0usize);
+    for id in ids {
+        let Some(n) = doc.node(id) else { continue };
+        let hits = target_paints(n, fills, strokes, &is_target);
+        if hits.is_empty() {
+            continue;
+        }
+        if hits.iter().any(|h| h.2) {
+            skipped.push(id);
+        }
+        let n = doc.get_mut(id)?;
+        let done = hits.iter().filter(|h| !h.2 && recolour_paint(n, h.0, h.1, to)).count();
+        paints += done;
+        if done > 0 {
+            changed.push(id);
+        }
+    }
+    Ok(json!({"changed": changed, "paints": paints, "skippedBound": skipped}))
+}
+
+/// The paints of `n` that `is_target` picks, as (is a fill, index, bound to a colour variable).
+fn target_paints(n: &Node, fills: bool, strokes: bool, is_target: &dyn Fn(&figcraft_color::Paint) -> bool) -> Vec<(bool, usize, bool)> {
+    let mut hits = Vec::new();
+    for (is_fill, on) in [(true, fills), (false, strokes)] {
+        let list = if is_fill { &n.fills } else { &n.strokes };
+        for (i, paint) in list.iter().enumerate().filter(|_| on) {
+            if is_target(paint) {
+                hits.push((is_fill, i, crate::cmd::lists::paint_binding_key(n, is_fill, i).is_some()));
+            }
+        }
+    }
+    hits
+}
+
+/// Make paint `index` of `n`'s fills (or strokes) the solid colour `to`, keeping its opacity (an
+/// alpha in `to` sets it). False when there is no such paint.
+fn recolour_paint(n: &mut Node, is_fill: bool, index: usize, to: figcraft_color::Color) -> bool {
+    let list = if is_fill { &mut n.fills } else { &mut n.strokes };
+    let Some(paint) = list.get_mut(index) else { return false };
+    paint.kind = figcraft_color::PaintKind::Solid { color: to.with_alpha(1.0) };
+    if to.a < 1.0 {
+        paint.opacity = to.a;
+        paint.color_alpha = to.a;
+    }
+    // The edit no longer matches the shared style that defined the list.
+    if is_fill {
+        n.styles.fill = None;
+    } else {
+        n.styles.stroke = None;
+    }
+    true
+}
+
 /// Keys only some layer types take, the test for those layers, and why the others skip them.
 type TypedKeys<'a> = (&'a [&'a str], &'a dyn Fn(&Node) -> bool, &'a str);
 
