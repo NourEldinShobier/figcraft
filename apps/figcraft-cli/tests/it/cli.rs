@@ -391,3 +391,22 @@ fn an_unconfined_write_follows_a_symbolic_link() {
     assert!(written.starts_with(b"\x89PNG"), "the target holds the render, not the placeholder");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// The MCP server ends with its client: closing its stdin (the client quit or died) exits it.
+#[test]
+fn the_mcp_server_exits_when_its_client_closes_stdin() {
+    let root = tmp("mcp-exit");
+    let mut child =
+        bin().args(["mcp", "--automation-read-root"]).arg(&root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    child.stdin.as_mut().unwrap().write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\n").unwrap();
+    drop(child.stdin.take());
+    let start = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(start.elapsed() < std::time::Duration::from_secs(20), "still running 20 s after its stdin closed");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    assert!(status.success(), "{status}");
+}

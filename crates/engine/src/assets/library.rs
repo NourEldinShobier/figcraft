@@ -589,6 +589,29 @@ pub(crate) fn stat(_path: &str) -> std::result::Result<Stamp, String> {
     Err(NO_FILES.into())
 }
 
+/// A hash of the file's bytes, to tell a file that was only touched (git rewrites files it did not
+/// change) from one that changed. `None`: unreadable, or no files here.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn content_hash(path: &str) -> Option<u64> {
+    use std::hash::Hasher;
+    use std::io::Read;
+    let mut file = crate::file_access::open(path).ok()?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut chunk = vec![0u8; 1 << 16];
+    loop {
+        let n = file.read(&mut chunk).ok()?;
+        if n == 0 {
+            return Some(hasher.finish());
+        }
+        hasher.write(chunk.get(..n)?);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn content_hash(_path: &str) -> Option<u64> {
+    None
+}
+
 /// A library read from a file or a server, with the modes chosen inside its instances marked when
 /// it was published before they were overrides ([`crate::components::mark_layer_modes`]).
 pub(crate) fn settled(mut lib: PublishedLibrary) -> PublishedLibrary {

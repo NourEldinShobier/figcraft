@@ -237,6 +237,11 @@ impl Headless {
 }
 
 impl Headless {
+    /// Whether any open document holds edits that are not saved.
+    pub fn has_unsaved(&self) -> bool {
+        self.session.docs.iter().any(figcraft_engine::DocState::is_dirty)
+    }
+
     fn dispatch(&mut self, method: &str, p: Value) -> Result<Value, String> {
         match method {
             "engine.execute" => {

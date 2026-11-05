@@ -13,6 +13,7 @@
 //! Entry points: [`Server::serve`] (stdio loop) and [`Server::handle_line`] (one message).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod auto;
 mod backend;
 mod headless;
 mod prompts;
@@ -23,6 +24,7 @@ mod tools;
 #[cfg(test)]
 mod gradient_tests;
 
+pub use auto::Auto;
 pub use backend::{Attached, Backend, decode_data, page_children};
 pub use headless::Headless;
 pub use prompts::{PROMPTS, PromptArg, PromptDef};

@@ -602,6 +602,10 @@ impl Backend for InDocument<'_> {
     fn describe(&self) -> String {
         self.inner.describe()
     }
+
+    fn detached(&mut self) -> Option<String> {
+        self.inner.detached()
+    }
 }
 
 fn exec(b: &mut dyn Backend, cmd: &str, params: Value) -> Result<Value, String> {
@@ -776,7 +780,13 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
         "pointer" => pointer(b, &a),
         "key" => key(b, &a),
         "type_text" => type_text(b, &a),
-        "inspect_ui" => b.call("ui.inspect", json!({})).map(|v| ToolResult::json(&v)),
+        "inspect_ui" => b.call("ui.inspect", json!({})).map(|mut v| {
+            // Which server answers: with several running, the way to tell them apart.
+            if let Some(o) = v.as_object_mut() {
+                o.insert("mcpServer".into(), json!({"pid": std::process::id(), "backend": b.describe()}));
+            }
+            ToolResult::json(&v)
+        }),
         "get_metadata" => read_command(b, "inspect.metadata", &a).map(|v| match v.get("xml").and_then(Value::as_str) {
             Some(xml) if v["truncated"] == true => {
                 ToolResult::text(format!("{xml}<!-- truncated: raise depth or maxNodes, or ask for a child's nodeId -->\n"))
@@ -795,7 +805,14 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
         "wait_for_changes" => wait_for_changes(b, &a),
         other => Err(format!("unknown tool `{other}` (tools/list has: {})", TOOL_NAMES.join(", "))),
     };
-    r.unwrap_or_else(ToolResult::error)
+    let mut r = r.unwrap_or_else(ToolResult::error);
+    // A detached copy beside an open app: the result carries the warning, not only the tool list.
+    if name != "list_commands"
+        && let Some(note) = b.detached()
+    {
+        r.content.push(json!({"type": "text", "text": note}));
+    }
+    r
 }
 
 fn list_commands(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {

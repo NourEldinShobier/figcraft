@@ -129,13 +129,14 @@ fn refuse_dropping_images(ds: &DocState, path: &str) -> Result<()> {
 
 /// Saving over the tab's own file would lose what another app wrote to it since (#1330).
 fn refuse_overwriting_changes(ds: &DocState, path: &str) -> Result<()> {
-    match (&ds.on_disk, crate::library::stat(path)) {
-        (Some(was), Ok(now)) if now != *was => Err(EngineError::Other(format!(
+    // Only changed bytes refuse: a file that was merely touched (a git rebase rewrote it) saves.
+    if ds.changed_on_disk() {
+        return Err(EngineError::Other(format!(
             "{} wasn't saved: the file changed on disk since it was opened or saved here (another app or figcraft-cli wrote to it), and saving would replace those changes. Revert to saved to load them, or Save as to keep this version as well.",
             file_stem(path)
-        ))),
-        _ => Ok(()),
+        )));
     }
+    Ok(())
 }
 
 /// The branch tabs of the file in tab `uid` were saved with it.

@@ -130,3 +130,45 @@ fn a_saved_file_is_reported_changed_only_after_another_writer_saved_it() {
     let ds = app.ds().unwrap();
     assert_eq!(ds.doc.node(ds.page).unwrap().name, "AGENT");
 }
+
+/// A file whose bytes did not change but whose modification time did (git rewrites files in a
+/// rebase or checkout) is not a change by another app: the save goes through.
+#[test]
+fn a_touched_file_saves_but_a_changed_one_is_refused() {
+    let path = temp_file("touched");
+    let mut app = Session::new();
+    app.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap();
+    app.execute("file.save", &json!({"path": path})).unwrap();
+    app.execute("shape.rectangle", &json!({"x": 20, "y": 0, "width": 10, "height": 10})).unwrap();
+    let touch = || {
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(30);
+        std::fs::File::options().write(true).open(&path).unwrap().set_modified(later).unwrap();
+    };
+    touch();
+    assert!(!app.ds().unwrap().changed_on_disk(), "touched only");
+    app.execute("file.save", &json!({})).unwrap();
+    app.execute("shape.rectangle", &json!({"x": 40, "y": 0, "width": 10, "height": 10})).unwrap();
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes.push(b' ');
+    std::fs::write(&path, bytes).unwrap();
+    touch();
+    assert!(app.ds().unwrap().changed_on_disk(), "other bytes");
+    let e = app.execute("file.save", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("changed on disk"), "{e}");
+}
+
+/// Reading the file again keeps the zoom and scroll position the user has.
+#[test]
+fn reloading_from_disk_keeps_the_view() {
+    let path = temp_file("view");
+    let mut app = Session::new();
+    app.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap();
+    app.execute("file.save", &json!({"path": path})).unwrap();
+    {
+        let view = &mut app.ds_mut().unwrap().view;
+        (view.zoom, view.cx, view.cy) = (3.5, 1200.0, -340.0);
+    }
+    app.execute("file.revert", &json!({})).unwrap();
+    let view = &app.ds().unwrap().view;
+    assert_eq!((view.zoom, view.cx, view.cy), (3.5, 1200.0, -340.0));
+}

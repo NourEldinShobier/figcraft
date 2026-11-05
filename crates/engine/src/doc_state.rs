@@ -118,6 +118,9 @@ pub struct DocState {
     /// The file on disk as this tab last read or wrote it: a save refuses to replace what another
     /// app (figcraft-cli, say) wrote to it since (#1330).
     pub(crate) on_disk: Option<library::Stamp>,
+    /// The hash of those bytes: a file whose stamp changed but whose bytes did not (a git
+    /// checkout or rebase rewrote it) is not a change.
+    on_disk_hash: Option<u64>,
     /// Set while the tab shows only the first page of a large `.fig` file and the whole file is
     /// still being built ([`Session::poll_loading`] swaps it in). The tab is read-only until then.
     pub(crate) loading: Option<Loading>,
@@ -214,6 +217,7 @@ impl DocState {
             last_duplicate: None,
             images_left_in_file: None,
             on_disk: None,
+            on_disk_hash: None,
             loading: None,
         };
         st.zoom_to_fit();
@@ -234,6 +238,7 @@ impl DocState {
         whole.view = self.view.clone();
         whole.view_from_prefs = self.view_from_prefs;
         whole.on_disk = self.on_disk.clone();
+        whole.on_disk_hash = self.on_disk_hash;
         if let Some(p) = page.and_then(|i| whole.doc.pages.get(i)) {
             whole.page = *p;
         }
@@ -248,14 +253,32 @@ impl DocState {
     /// The file changed on disk since this tab read or wrote it (another app, figcraft-cli or an agent saved it).
     pub fn changed_on_disk(&self) -> bool {
         match (&self.on_disk, self.path.as_deref()) {
-            (Some(read), Some(p)) => library::stat(p).ok().as_ref().is_some_and(|now| now != read),
+            (Some(read), Some(p)) => {
+                // Touched is not changed: the bytes decide when the stamp differs.
+                library::stat(p).ok().as_ref().is_some_and(|now| now != read)
+                    && (self.on_disk_hash.is_none() || library::content_hash(p) != self.on_disk_hash)
+            }
             _ => false,
         }
     }
 
     /// The tab's file now holds what this tab read or wrote.
     pub(crate) fn note_on_disk(&mut self) {
-        self.on_disk = self.path.as_deref().and_then(|p| library::stat(p).ok());
+        let stamp = self.path.as_deref().and_then(|p| library::stat(p).ok());
+        self.set_on_disk(stamp);
+    }
+
+    /// Remember `stamp` (taken before the file was read) as the file's state, with its bytes' hash
+    /// when the file did not change while hashing.
+    pub(crate) fn set_on_disk(&mut self, stamp: Option<library::Stamp>) {
+        self.on_disk_hash = None;
+        if let (Some(stamp), Some(p)) = (&stamp, self.path.as_deref()) {
+            let hash = library::content_hash(p);
+            if library::stat(p).ok().as_ref() == Some(stamp) {
+                self.on_disk_hash = hash;
+            }
+        }
+        self.on_disk = stamp;
     }
 
     pub fn images_lost_saving_to(&self, path: &str) -> Option<usize> {

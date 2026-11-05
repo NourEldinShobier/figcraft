@@ -159,11 +159,9 @@ fn mcp(attach: Option<&str>, timeout: Option<u64>, roots: Option<figcraft_engine
             }
         }
         // No flags: edit the open window when one listens on the default port, so every change shows
-        // live and the window's auto-save applies; otherwise a headless copy.
-        None if roots.is_none() => match figcraft_mcp::Attached::default_app() {
-            Ok(b) => Box::new(b),
-            Err(_) => Box::new(figcraft_mcp::Headless::new()),
-        },
+        // live and the window's auto-save applies; otherwise a headless copy that attaches by
+        // itself when the app opens (or restarts) later.
+        None if roots.is_none() => Box::new(figcraft_mcp::Auto::new()),
         None => Box::new(figcraft_mcp::Headless::new()),
     };
     eprintln!("figcraft MCP server ({}) on stdio", backend.describe());

@@ -139,7 +139,7 @@ pub(super) fn open(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(i) = s.docs.iter().position(|d| d.path.as_deref() == Some(path.as_str())) {
         s.active = i;
         remember(s, &path);
-        let stale = s.ds()?.on_disk.as_ref().is_some_and(|read| crate::library::stat(&path).ok().as_ref() != Some(read));
+        let stale = s.ds()?.changed_on_disk();
         if !boolean(p, "reload").unwrap_or(false) {
             return Ok(if stale { json!({"index": i, "stale": true}) } else { json!({"index": i}) });
         }
@@ -186,7 +186,7 @@ pub(super) fn open(s: &mut Session, p: &Value) -> Result<Value> {
         .with_versions(loaded.versions)
         .with_branches(loaded.branches)
         .with_images_left_in_file(&path, images_left_out);
-    ds.on_disk = on_disk.filter(|_| native);
+    ds.set_on_disk(on_disk.filter(|_| native));
     let loading = later.is_some();
     ds.loading = later.map(Loading::new);
     s.docs.push(ds);
@@ -210,11 +210,15 @@ pub(super) fn revert(s: &mut Session) -> Result<()> {
     let i = s.active;
     let uid = s.ds()?.uid;
     if let Some(slot) = s.docs.get_mut(i) {
+        // Reloading keeps what the user is looking at: the zoom, the scroll position and the View toggles.
+        let (view, view_from_prefs) = (slot.view.clone(), slot.view_from_prefs);
         *slot = DocState::new(loaded.doc, Some(path.clone()))
             .with_versions(loaded.versions)
             .with_branches(loaded.branches)
             .with_images_left_in_file(&path, loaded.images_past_budget);
-        slot.on_disk = on_disk;
+        slot.view = view;
+        slot.view_from_prefs = view_from_prefs;
+        slot.set_on_disk(on_disk);
     }
     // Edits on its branch tabs are reverted too.
     crate::branches::close_tabs(s, uid, None);

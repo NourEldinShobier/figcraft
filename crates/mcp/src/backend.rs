@@ -21,6 +21,12 @@ pub trait Backend {
     /// Short human description ("headless", "attached to 127.0.0.1:7979").
     fn describe(&self) -> String;
 
+    /// A warning to put in every tool result while this backend works on a detached copy although
+    /// a FigCraft app is open: the app's window does not show these edits.
+    fn detached(&mut self) -> Option<String> {
+        None
+    }
+
     /// PNG bytes of the document: `ids` (in page coordinates, their union) or, when empty, the
     /// current page's content. The default goes through `ui.render`, the PNG coming back as data.
     fn render_png(&mut self, ids: &[u64], scale: f64) -> Result<Vec<u8>, String> {
@@ -204,6 +210,16 @@ impl Backend for Attached {
         }
         let line = line.to_string();
         if self.conn.is_none() || self.stale() {
+            // The app makes a new token at every start: one that restarted needs the new one.
+            if let Some(token) = self
+                .addr
+                .rsplit(':')
+                .next()
+                .and_then(|p| p.parse::<u16>().ok())
+                .and_then(|p| figcraft_collab_net::control_auth::ControlToken::for_client(p).ok())
+            {
+                self.token = token;
+            }
             self.reconnect().map_err(|e| {
                 format!("FigCraft app at {} is not reachable: {e} (request was not sent; start it with `figcraft --control PORT`)", self.addr)
             })?;
