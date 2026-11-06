@@ -258,6 +258,25 @@ fn scroll_offsets_fixed_and_sticky() {
     assert_eq!(y(&out, sticky), 0.0);
 }
 
+#[test]
+fn a_sticky_layer_scrolls_until_it_reaches_the_top_edge() {
+    // 100 tall frame, 300 tall content, a 20 tall sticky layer at y = 40.
+    let mut d = Document::new("t");
+    let page = d.add_page("Page 1");
+    let a = d.create(page, NodeKind::Frame, "A", 0.0, 0.0, 200.0, 100.0).unwrap();
+    d.get_mut(a).unwrap().overflow = Overflow::Vertical;
+    d.create(a, NodeKind::Rectangle, "Content", 0.0, 0.0, 200.0, 300.0).unwrap();
+    let sticky = d.create(a, NodeKind::Rectangle, "Header", 0.0, 40.0, 200.0, 20.0).unwrap();
+    d.get_mut(sticky).unwrap().scroll_position = ScrollPosition::Sticky;
+    let y_at = |scrolled: f64| {
+        let out = apply_scroll(&d, &HashMap::from([(a, (0.0, scrolled))]));
+        out.world_bounds(sticky).unwrap().y0
+    };
+    assert_eq!(y_at(20.0), 20.0, "still scrolling with the content");
+    assert_eq!(y_at(40.0), 0.0, "reaches the top edge");
+    assert_eq!(y_at(60.0), 0.0, "and stays there");
+}
+
 /// A page presented on an iPhone 16 (393×852): a tall screen A that scrolls vertically, with a
 /// tab bar fixed to its bottom, a nested scrolling list and a layer at its end; screen B.
 fn device_doc() -> (Document, NodeId, NodeId, NodeId, NodeId, NodeId) {

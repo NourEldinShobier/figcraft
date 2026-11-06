@@ -433,7 +433,12 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, _| ui_scale_step(s, -1)
         ),
         spec!("pref.uiScaleReset", "Default interface size", "{}  back to the system's own size (1) → {scale}", false, |s, _| ui_scale_step(s, 0)),
-        spec!("pref.autoSave", "Save files automatically", "{on?}", false, |s, p| pref(s, p, |x| &mut x.auto_save)),
+        spec!("pref.autoSave", "Save files automatically", "{on? (omit: just read it)} → {on}", false, |s, p| {
+            if let Some(on) = boolean(p, "on") {
+                s.prefs.auto_save = on;
+            }
+            Ok(json!({"on": s.prefs.auto_save}))
+        }),
         spec!("pref.startOnHome", "Start on the Home screen", "{on?}", false, |s, p| pref(s, p, |x| &mut x.start_on_home)),
         spec!("pref.nudge", "Nudge amount", "{small?, big?}", false, |s, p| {
             s.prefs.nudge_small = num(p, "small").unwrap_or(s.prefs.nudge_small).clamp(0.01, 1000.0);

@@ -44,6 +44,92 @@ fn frames_become_nested_html_with_flexbox_and_absolute_children() {
 }
 
 #[test]
+fn grid_frames_are_css_grids_with_tracks_gaps_and_spans() {
+    let mut s = Session::new();
+    let g = id(s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 400, "height": 200, "name": "Grid"})).unwrap());
+    s.execute("layout.add", &json!({"ids": [g]})).unwrap();
+    let props = json!({"layout": "grid", "columnTracks": [100, "1fr", "2fr"], "rowTracks": ["auto", 50], "gap": 8, "crossGap": 12, "padding": 0});
+    s.execute("node.set", &json!({"id": g, "props": props})).unwrap();
+    let r = id(s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 40, "height": 20, "parent": g})).unwrap());
+    s.execute("node.set", &json!({"id": r, "props": {"gridColumn": 1, "gridColumnSpan": 2, "gridRow": 0}})).unwrap();
+
+    let css = css_of(&mut s, g);
+    for want in [
+        "display: grid;",
+        "grid-template-columns: 100px 1fr 2fr;",
+        "grid-template-rows: auto 50px;",
+        "column-gap: 8px;",
+        "row-gap: 12px;",
+        "box-sizing: border-box;",
+        "justify-items: start;",
+    ] {
+        assert!(css.contains(want), "{want} in {css}");
+    }
+    assert!(!css.contains("display: flex") && !css.contains("flex-direction"), "{css}");
+    let item = css_of(&mut s, r);
+    assert!(item.contains("grid-column: 2 / span 2;\ngrid-row: 1;"), "{item}");
+    // The HTML puts the same rules in the stylesheet.
+    let html = code_for(s.doc().unwrap(), g, CodeLang::Html);
+    assert!(html.contains("  display: grid;\n  grid-template-columns: 100px 1fr 2fr;"), "{html}");
+}
+
+fn css_of(s: &mut Session, id: figcraft_doc::NodeId) -> String {
+    s.execute("inspect.code", &json!({"id": id, "language": "css"})).unwrap()["code"].as_str().unwrap().to_string()
+}
+
+#[test]
+fn flex_children_say_how_they_share_the_line() {
+    let mut s = Session::new();
+    let props = json!({"layout": "horizontal", "wrap": true, "padding": 0, "gap": 10, "crossGap": 5});
+    let f = id(s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 300, "height": 100, "props": props})).unwrap());
+    let a = id(s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 40, "height": 20, "parent": f})).unwrap());
+    let b = id(s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 40, "height": 20, "parent": f})).unwrap());
+    s.execute("node.set", &json!({"id": a, "props": {"sizingH": "fill", "minWidth": 200, "maxWidth": 400}})).unwrap();
+    s.execute("node.set", &json!({"id": b, "props": {"sizingV": "fill"}})).unwrap();
+
+    let frame = css_of(&mut s, f);
+    for want in ["flex-wrap: wrap;", "column-gap: 10px;", "row-gap: 5px;", "align-content: flex-start;", "box-sizing: border-box;"] {
+        assert!(frame.contains(want), "{want} in {frame}");
+    }
+    assert!(!frame.contains("\ngap:"), "wrapped frames name both gaps: {frame}");
+    let fill = css_of(&mut s, a);
+    assert!(fill.contains("flex: 1 1 0;") && fill.contains("min-width: 200px;\nmax-width: 400px;"), "{fill}");
+    assert!(!fill.contains("min-width: 0;") && !fill.contains("\nwidth:"), "an explicit minimum stays; the size is the flex's: {fill}");
+    let stretch = css_of(&mut s, b);
+    assert!(stretch.contains("align-self: stretch;\n") && stretch.contains("flex-shrink: 0;") && !stretch.contains("\nheight:"), "{stretch}");
+
+    // An auto gap is the free space: no gap value.
+    s.execute("node.set", &json!({"id": f, "props": {"wrap": false, "mainAlign": "spaceBetween"}})).unwrap();
+    let frame = css_of(&mut s, f);
+    assert!(frame.contains("justify-content: space-between;") && !frame.contains("gap:"), "{frame}");
+}
+
+#[test]
+fn ignore_auto_layout_children_are_absolute_against_their_parent() {
+    let mut s = Session::new();
+    let props = json!({"layout": "horizontal", "padding": 0, "sizingH": "fixed", "sizingV": "fixed"});
+    let f = id(s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 200, "height": 100, "props": props})).unwrap());
+    let r = id(s.execute("shape.rectangle", &json!({"x": 20, "y": 10, "width": 50, "height": 20, "parent": f})).unwrap());
+    s.execute("node.set", &json!({"id": r, "props": {"absolute": true, "constraints": {"horizontal": "right"}}})).unwrap();
+    s.execute("node.set", &json!({"id": r, "props": {"x": 20, "y": 10}})).unwrap();
+
+    let child = css_of(&mut s, r);
+    assert!(child.contains("position: absolute;\nright: 130px;\ntop: 10px;\n"), "{child}");
+    assert!(css_of(&mut s, f).contains("position: relative;"), "the parent is the containing block");
+    let html = code_for(s.doc().unwrap(), f, CodeLang::Html);
+    assert!(html.contains("  position: absolute;\n  right: 130px;\n  top: 10px;\n"), "{html}");
+}
+
+#[test]
+fn locked_proportions_are_an_aspect_ratio() {
+    let mut s = Session::new();
+    let r = id(s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 200, "height": 100})).unwrap());
+    assert!(!css_of(&mut s, r).contains("aspect-ratio"));
+    s.execute("node.set", &json!({"id": r, "props": {"constrainProportions": true}})).unwrap();
+    assert!(css_of(&mut s, r).contains("aspect-ratio: 2;"), "{}", css_of(&mut s, r));
+}
+
+#[test]
 fn class_names_are_valid_and_deep_trees_are_bounded() {
     let mut s = Session::new();
     let mut parent = id(s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 100, "height": 100})).unwrap());

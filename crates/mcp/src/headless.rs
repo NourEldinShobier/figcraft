@@ -11,6 +11,8 @@ use crate::backend::Backend;
 /// Headless backend: a [`Session`] with one untitled document.
 pub struct Headless {
     pub session: Session,
+    /// [`Backend::target`].
+    target: Option<Value>,
 }
 
 impl Default for Headless {
@@ -51,7 +53,7 @@ impl Headless {
         if !session.live.available() {
             session.live.install(Box::new(figcraft_collab_net::NetLink::new(std::sync::Arc::new(|| {}))));
         }
-        Self { session }
+        Self { session, target: None }
     }
 
     fn execute(&mut self, cmd: &str, params: &Value) -> Result<Value, String> {
@@ -320,6 +322,14 @@ impl Backend for Headless {
 
     fn has_ui(&self) -> bool {
         false
+    }
+
+    fn target(&self) -> Option<Value> {
+        self.target.clone()
+    }
+
+    fn set_target(&mut self, doc: Option<Value>) {
+        self.target = doc;
     }
 
     fn describe(&self) -> String {

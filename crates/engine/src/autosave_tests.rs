@@ -94,6 +94,26 @@ fn files_that_save_themselves_still_get_checkpoints() {
 }
 
 #[test]
+fn auto_save_is_on_unless_the_user_turned_it_off() {
+    use crate::Prefs;
+    assert!(Prefs::default().auto_save);
+    let missing: Prefs = serde_json::from_value(json!({"nudge_small": 2})).unwrap();
+    assert!(missing.auto_save, "a settings file that never mentioned it");
+    let off: Prefs = serde_json::from_value(json!({"auto_save": false})).unwrap();
+    assert!(!off.auto_save, "a stored choice stays");
+    assert!(Session::new().prefs.auto_save);
+}
+
+#[test]
+fn pref_auto_save_without_on_only_reads_it() {
+    let mut s = Session::new();
+    assert_eq!(s.execute("pref.autoSave", &json!({})).unwrap(), json!({"on": true}));
+    assert_eq!(s.execute("pref.autoSave", &json!({"on": false})).unwrap(), json!({"on": false}));
+    assert_eq!(s.execute("pref.autoSave", &json!({})).unwrap(), json!({"on": false}));
+    assert_eq!(s.execute("pref.autoSave", &json!({"on": true})).unwrap(), json!({"on": true}));
+}
+
+#[test]
 fn a_file_encoded_elsewhere_is_saved_as_of_its_snapshot() {
     use crate::cmd::file::FileSnapshot;
     let dir = std::env::temp_dir().join(format!("figcraft-snapshot-{}", std::process::id()));

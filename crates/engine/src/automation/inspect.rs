@@ -12,6 +12,7 @@ pub const NODE_KEYS: &[&str] = &[
     "annotations",
     "key",
     "arc",
+    "aspectRatio",
     "background",
     "blend",
     "board",
@@ -310,6 +311,9 @@ pub fn node_json_with_options(doc: &Document, id: NodeId, depth: usize, options:
         }
         if n.constrain_proportions {
             put!("constrainProportions", json!(true));
+            if let Some(r) = n.aspect_ratio {
+                put!("aspectRatio", json!(r));
+            }
         }
         if n.overflow != Default::default() {
             put!("overflow", json!(n.overflow));

@@ -1,7 +1,7 @@
 //! Saving never silently replaces what another app wrote to the open file since it was opened or
 //! saved here (#1330): Save and auto-save refuse, `overwrite` and Revert to saved settle it.
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::Session;
 use crate::cmd::file::FileSnapshot;
@@ -92,16 +92,16 @@ fn opening_an_open_file_says_it_is_stale_and_reloads_on_request() {
     let mut app = Session::new();
     let index = app.execute("file.open", &json!({"path": path})).unwrap()["index"].clone();
     let before = page_in_tab(&app);
-    assert_eq!(app.execute("file.open", &json!({"path": path})).unwrap(), json!({"index": index}), "unchanged: not stale");
+    assert_eq!(no_id(app.execute("file.open", &json!({"path": path})).unwrap()), json!({"index": index}), "unchanged: not stale");
     let mut cli = Session::new();
     cli.execute("file.open", &json!({"path": path})).unwrap();
     cli.execute("page.rename", &json!({"name": "Renamed on disk by the CLI"})).unwrap();
     cli.execute("file.save", &json!({})).unwrap();
-    assert_eq!(app.execute("file.open", &json!({"path": path})).unwrap(), json!({"index": index, "stale": true}));
+    assert_eq!(no_id(app.execute("file.open", &json!({"path": path})).unwrap()), json!({"index": index, "stale": true}));
     assert_eq!(page_in_tab(&app), before, "without reload the tab keeps what it read");
-    assert_eq!(app.execute("file.open", &json!({"path": path, "reload": true})).unwrap(), json!({"index": index, "reloaded": true}));
+    assert_eq!(no_id(app.execute("file.open", &json!({"path": path, "reload": true})).unwrap()), json!({"index": index, "reloaded": true}));
     assert_eq!(page_in_tab(&app), "Renamed on disk by the CLI");
-    assert_eq!(app.execute("file.open", &json!({"path": path})).unwrap(), json!({"index": index}), "read again: no longer stale");
+    assert_eq!(no_id(app.execute("file.open", &json!({"path": path})).unwrap()), json!({"index": index}), "read again: no longer stale");
     app.execute("shape.rectangle", &json!({"x": 20, "y": 0, "width": 10, "height": 10})).unwrap();
     let e = app.execute("file.open", &json!({"path": path, "reload": true})).unwrap_err().to_string();
     assert!(e.contains("unsaved changes"), "{e}");
@@ -171,4 +171,12 @@ fn reloading_from_disk_keeps_the_view() {
     app.execute("file.revert", &json!({})).unwrap();
     let view = &app.ds().unwrap().view;
     assert_eq!((view.zoom, view.cx, view.cy), (3.5, 1200.0, -340.0));
+}
+
+/// `file.open` also reports the tab's `id`, which changes whenever a tab is re-read.
+fn no_id(mut v: Value) -> Value {
+    if let Some(o) = v.as_object_mut() {
+        o.remove("id");
+    }
+    v
 }

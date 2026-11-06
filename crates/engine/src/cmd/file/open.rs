@@ -125,35 +125,29 @@ pub(super) fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let variables = variables_param("file.open", p)?;
     // Consumed by this call, used or not.
     let pre = s.preloaded.take();
+    // false: the tab the person is looking at stays the active one. Without `activate`, a person's
+    // call switches to the file and an AI agent's call leaves the tab in front alone.
+    let activate = boolean(p, "activate").unwrap_or(!s.is_agent_call());
     if string(p, "path").is_none()
         && let Some(d) = string(p, "data")
     {
         let name = req_string("file.open", p, "name")?;
         let mut pre = pre.filter(|x| x.key == data_key(&name));
         let later = pre.as_mut().and_then(|x| x.later.take());
-        return open_data(s, &d, &name, variables.as_ref(), pre.map(|x| x.result), later);
+        return open_data(s, &d, &name, variables.as_ref(), pre.map(|x| x.result), later, activate);
     }
     let path = req_string("file.open", p, "path")?;
     // Already open: switch to it, and say when the file changed on disk since this tab read or
     // saved it (`stale`), or read it again (`reload`).
     if let Some(i) = s.docs.iter().position(|d| d.path.as_deref() == Some(path.as_str())) {
+        let previous = s.ds().ok().map(|d| d.uid);
+        // The checks and `revert` work on the active tab: it is this one while they run.
         s.active = i;
-        remember(s, &path);
-        let stale = s.ds()?.changed_on_disk();
-        if !boolean(p, "reload").unwrap_or(false) {
-            return Ok(if stale { json!({"index": i, "stale": true}) } else { json!({"index": i}) });
+        let out = reopen(s, p, &path, i);
+        if !activate && let Some(back) = previous.and_then(|u| s.docs.iter().position(|d| d.uid == u)) {
+            s.active = back;
         }
-        if s.ds()?.is_dirty() {
-            return Err(EngineError::Disabled(
-                "file.open".into(),
-                "the open copy has unsaved changes: save them, or Revert to saved to drop them".into(),
-            ));
-        }
-        if s.live().doc_uid.is_some() {
-            return Err(EngineError::Disabled("file.open".into(), "leave the live session before reading the file again".into()));
-        }
-        revert(s)?;
-        return Ok(json!({"index": i, "reloaded": true}));
+        return out;
     }
     let mut later = None;
     let (loaded, rest, on_disk) = match pre.filter(|x| x.key == format!("path:{path}")) {
@@ -189,9 +183,8 @@ pub(super) fn open(s: &mut Session, p: &Value) -> Result<Value> {
     ds.set_on_disk(on_disk.filter(|_| native));
     let loading = later.is_some();
     ds.loading = later.map(Loading::new);
-    s.docs.push(ds);
-    s.active = s.docs.len() - 1;
-    let mut out = json!({"index": s.active, "summary": summary});
+    let mut out = push_tab(s, ds, activate);
+    out["summary"] = summary;
     if loading {
         // The notes and counts are those of the whole file, which comes later ([`Session::poll_loading`]).
         out["loading"] = json!(true);
@@ -199,6 +192,41 @@ pub(super) fn open(s: &mut Session, p: &Value) -> Result<Value> {
         out[if warnings { "warnings" } else { "repairs" }] = json!(loaded.issues);
     }
     Ok(out)
+}
+
+/// `file.open` for a file that is open in tab `i` (the active tab): `stale`, or read it again.
+fn reopen(s: &mut Session, p: &Value, path: &str, i: usize) -> Result<Value> {
+    remember(s, path);
+    let id = s.ds()?.uid;
+    let stale = s.ds()?.changed_on_disk();
+    if !boolean(p, "reload").unwrap_or(false) {
+        return Ok(if stale { json!({"index": i, "id": id, "stale": true}) } else { json!({"index": i, "id": id}) });
+    }
+    if s.ds()?.is_dirty() {
+        return Err(EngineError::Disabled(
+            "file.open".into(),
+            "the open copy has unsaved changes: save them, or Revert to saved to drop them".into(),
+        ));
+    }
+    if s.live().doc_uid.is_some() {
+        return Err(EngineError::Disabled("file.open".into(), "leave the live session before reading the file again".into()));
+    }
+    revert(s)?;
+    // The reloaded tab is a new document: it has a new id.
+    Ok(json!({"index": i, "id": s.ds()?.uid, "reloaded": true}))
+}
+
+/// Add `ds` as the last tab; it becomes the active one unless `activate` is false and another tab
+/// is open. Returns {index, id}.
+fn push_tab(s: &mut Session, ds: DocState, activate: bool) -> Value {
+    let id = ds.uid;
+    let first = s.docs.is_empty();
+    s.docs.push(ds);
+    let index = s.docs.len() - 1;
+    if activate || first {
+        s.active = index;
+    }
+    json!({"index": index, "id": id})
 }
 
 /// Replace the active tab's document with its file as saved (`file.revert`, `file.open {reload}`).
@@ -234,6 +262,7 @@ fn open_data(
     variables: Option<&Value>,
     pre: Option<Result<(figcraft_format::Loaded, bool, Option<crate::library::Stamp>)>>,
     later: Option<std::sync::mpsc::Receiver<Preloaded>>,
+    activate: bool,
 ) -> Result<Value> {
     let (loaded, rest) = match pre {
         Some(pre) => pre.map(|(l, rest, _)| (l, rest))?,
@@ -244,9 +273,8 @@ fn open_data(
     let loading = later.is_some();
     let mut ds = DocState::new(loaded.doc, None).with_versions(loaded.versions).with_branches(loaded.branches);
     ds.loading = later.map(Loading::new);
-    s.docs.push(ds);
-    s.active = s.docs.len() - 1;
-    let mut out = json!({"index": s.active, "summary": summary});
+    let mut out = push_tab(s, ds, activate);
+    out["summary"] = summary;
     if loading {
         out["loading"] = json!(true);
     } else {
@@ -288,7 +316,7 @@ impl Session {
                     let summary = import_summary(&loaded.doc);
                     let issues = json!(loaded.issues);
                     self.docs[i].finish_loading(loaded);
-                    let mut result = json!({"index": i, "summary": summary});
+                    let mut result = json!({"index": i, "id": uid, "summary": summary});
                     result[if rest { "warnings" } else { "repairs" }] = issues;
                     done.push(LoadingDone { uid, result: Ok(result) });
                 }

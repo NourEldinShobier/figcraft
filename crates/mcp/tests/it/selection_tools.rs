@@ -177,9 +177,12 @@ fn where_lists_exactly_the_node_find_filters_and_the_docs_name_the_new_tools() {
         }
     }
     let docs = include_str!("../../../../docs/mcp.md");
-    for row in
-        ["| `get_selection {}` |", "| `diagnostics {}` |", r"| `select {ids \| where}` |", r"| `set_properties {ids \| where, props, quiet?}` |"]
-    {
+    for row in [
+        "| `get_selection {}` |",
+        "| `diagnostics {}` |",
+        r"| `select {ids \| where}` |",
+        r"| `set_properties {ids \| where, props, quiet?, documents?}` |",
+    ] {
         assert!(docs.contains(row), "docs/mcp.md has no row {row}");
     }
 }

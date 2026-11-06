@@ -188,6 +188,8 @@ mod al_keys_tests;
 #[cfg(test)]
 mod al_nesting_tests;
 #[cfg(test)]
+mod al_rules_tests;
+#[cfg(test)]
 mod annotation_categories_tests;
 #[cfg(test)]
 mod annotations_tests;
@@ -195,6 +197,8 @@ mod annotations_tests;
 mod arc_fields_tests;
 #[cfg(test)]
 mod arc_handles_tests;
+#[cfg(test)]
+mod aspect_lock_tests;
 #[cfg(test)]
 mod auto_layout_move_tests;
 #[cfg(test)]
@@ -237,6 +241,8 @@ mod branch_live_tests;
 mod branch_tests;
 #[cfg(test)]
 mod branch_versions_tests;
+#[cfg(test)]
+mod breakpoint_modes_tests;
 #[cfg(test)]
 mod brush_tests;
 #[cfg(test)]
@@ -404,6 +410,8 @@ mod jam_open_tests;
 #[cfg(test)]
 mod keymap_tests;
 #[cfg(test)]
+mod layout_preview_tests;
+#[cfg(test)]
 mod library_beacon_tests;
 #[cfg(test)]
 mod library_path_tests;
@@ -451,6 +459,8 @@ mod node_set_refusals_tests;
 mod normalize_guard_tests;
 #[cfg(test)]
 mod online_tests;
+#[cfg(test)]
+mod open_background_tests;
 #[cfg(test)]
 mod open_issues_tests;
 #[cfg(test)]

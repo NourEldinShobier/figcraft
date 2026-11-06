@@ -3,6 +3,9 @@
 //! Usage: `figcraft [--control <port>] [files…] [figcraft://join?…]` (an invite link joins that
 //! live session; the app registers itself as the opener of such links: `collab.registerLinks`).
 //!
+//! Files and invite links given while a window already listens on the default control port go to that
+//! window (a tab, the Join dialog) and the new process exits without a window (`forward`).
+//!
 //! `--control <port>` (or `FIGCRAFT_CONTROL_PORT`) starts a token-authenticated localhost JSON-lines control server. The token is `FIGCRAFT_CONTROL_TOKEN` when set, else a random one written to the per-user file `figcraft/control-token-<port>` (docs/control-protocol.md):
 //! `{"id":1,"method":"engine.execute","params":{"command":"shape.rectangle","params":{"x":0,"y":0,"width":100,"height":100}},"token":"<FIGCRAFT_CONTROL_TOKEN>"}`
 //! → `{"id":1,"ok":true,"result":{…}}`. Methods: `figcraft_ui_egui::control`.
@@ -24,6 +27,7 @@ compile_error!("Windows GNU builds must set windows_slim_errors to keep UI Autom
 mod apple_events;
 mod args;
 mod control_server;
+mod forward;
 mod gamepad;
 mod graphics;
 mod recovery;
@@ -34,6 +38,8 @@ mod startup;
 mod apple_events_tests;
 #[cfg(test)]
 mod args_tests;
+#[cfg(test)]
+mod forward_tests;
 #[cfg(test)]
 mod graphics_tests;
 #[cfg(test)]
@@ -155,7 +161,7 @@ fn main() -> eframe::Result {
         );
         return Ok(());
     }
-    let args = args::parse(&args);
+    let mut args = args::parse(&args);
     if let Some(flag) = args.unknown.first() {
         eprintln!(
             "FigCraft: unknown option {flag}\nUsage: figcraft [--control PORT] [--automation-read-root DIR]... [--automation-write-root DIR]... [FILE | figcraft://join?...]..."
@@ -174,6 +180,12 @@ fn main() -> eframe::Result {
         }
     };
     let explicit_port = args.control.or_else(|| std::env::var("FIGCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok()));
+    // Files or an invite link given while a window already runs go to that window as tabs (and the
+    // window comes to the front); this launch then ends without a window. Whatever the running
+    // window doesn't take stays in `args` and opens here as usual.
+    if explicit_port.is_none() && forward::forward_to_running(&mut args) {
+        std::process::exit(0);
+    }
     // Without `--control` the window still listens on the default port when it is free, so an agent
     // edits this window and its auto-save applies; the window otherwise starts as usual (`explicit_port`).
     let port = explicit_port.or_else(default_control_port);

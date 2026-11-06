@@ -130,6 +130,55 @@ fn declarations_map_to_idiomatic_utilities() {
 }
 
 #[test]
+fn grid_and_sizing_declarations_map_to_utilities() {
+    let got: Vec<String> = classes(
+        "display: grid;\ngrid-template-columns: 100px 1fr 2fr;\ngrid-template-rows: auto 50px;\ncolumn-gap: 8px;\nrow-gap: 12px;\nbox-sizing: border-box;\njustify-items: start;\ngrid-column: 2 / span 2;\ngrid-row: span 3;\nmin-width: 200px;\nmax-width: 400px;\nmax-height: 300px;\nflex: 1 1 0;\nmin-width: 0;\nflex-shrink: 0;\nposition: absolute;\nright: 130px;\naspect-ratio: 200 / 100;\n",
+    )
+    .into_iter()
+    .map(|(_, c)| c)
+    .collect();
+    let want = [
+        "grid",
+        "grid-cols-[100px_1fr_2fr]",
+        "grid-rows-[auto_50px]",
+        "gap-x-2",
+        "gap-y-3",
+        "justify-items-start",
+        "col-[2_/_span_2]",
+        "row-span-3",
+        "min-w-[200px]",
+        "max-w-[400px]",
+        "max-h-[300px]",
+        "flex-1",
+        "min-w-0",
+        "shrink-0",
+        "absolute",
+        "right-[130px]",
+        "aspect-[200_/_100]",
+    ];
+    assert_eq!(got, want);
+}
+
+#[test]
+fn a_grid_frame_is_a_tailwind_grid_without_flex_or_box_sizing() {
+    let mut s = Session::new();
+    let g = idv(&ex(&mut s, "frame.create", json!({"x": 0, "y": 0, "width": 400, "height": 200, "name": "Grid"})));
+    ex(&mut s, "layout.add", json!({"ids": [g]}));
+    ex(&mut s, "node.set", json!({"id": g, "props": {"layout": "grid", "columnTracks": [100, "1fr", "2fr"], "gap": 8, "padding": 0}}));
+    let out = code(&mut s, g, json!({}));
+    assert!(out.contains("grid-cols-[100px_1fr_2fr]") && out.contains("gap-x-2"), "{out}");
+    assert!(!out.contains("flex") && !out.contains("box-sizing"), "{out}");
+}
+
+#[test]
+fn fill_children_share_the_line_and_may_be_narrower_than_their_content() {
+    let mut s = Session::new();
+    let (p, _) = page(&mut s, "Landing", 1440.0, "horizontal");
+    let out = code(&mut s, p, json!({}));
+    assert!(out.contains("flex-1 min-w-0"), "{out}");
+}
+
+#[test]
 fn variables_export_with_units_and_as_a_tailwind_theme() {
     let mut s = Session::new();
     brand(&mut s);

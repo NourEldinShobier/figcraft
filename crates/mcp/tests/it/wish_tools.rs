@@ -269,7 +269,7 @@ fn headless_save_file_adds_no_unsaved_flags() {
 #[test]
 fn the_new_tools_are_registered_read_only_and_documented() {
     let mut c = Client::new();
-    assert_eq!(TOOL_NAMES.len(), 35);
+    assert_eq!(TOOL_NAMES.len(), 41);
     let tools = c.rpc("tools/list", json!({}))["result"]["tools"].clone();
     let tools = tools.as_array().unwrap();
     let tool = |name: &str| tools.iter().find(|t| t["name"] == name).unwrap_or_else(|| panic!("no tool {name}"));
@@ -286,7 +286,10 @@ fn the_new_tools_are_registered_read_only_and_documented() {
     let mut want = keys(&tool("select")["inputSchema"]["properties"]["where"]["properties"]);
     want.push("details".into());
     want.sort_unstable();
-    assert_eq!(keys(&tool("find_nodes")["inputSchema"]["properties"]).into_iter().filter(|k| k != "document").collect::<Vec<_>>(), want);
+    assert_eq!(
+        keys(&tool("find_nodes")["inputSchema"]["properties"]).into_iter().filter(|k| k != "document" && k != "documents").collect::<Vec<_>>(),
+        want
+    );
     for name in ["select", "set_properties", "get_nodes", "contact_sheet"] {
         assert!(tool(name)["inputSchema"]["properties"]["where"]["properties"]["edgeGap"].is_object(), "{name}");
     }
@@ -301,7 +304,7 @@ fn the_new_tools_are_registered_read_only_and_documented() {
     }
     for row in [
         "| `find_nodes {",
-        r"| `get_nodes {ids \| where \| list, depth?, fields?, limit?}` |",
+        r"| `get_nodes {ids \| where \| list, depth?, fields?, limit?, documents?}` |",
         r"| `contact_sheet {ids \| where \| list, scale?, columns?, maxSize?}` |",
     ] {
         assert!(docs.contains(row), "docs/mcp.md has no row {row}");

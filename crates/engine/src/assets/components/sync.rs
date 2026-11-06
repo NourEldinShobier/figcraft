@@ -358,6 +358,7 @@ fn fresh_root(doc: &Document, root: &mut Node, comp: &Node, inst: NodeId, compon
     fresh.dev_changed = root.dev_changed;
     fresh.dev_note = root.dev_note.clone();
     fresh.constrain_proportions = root.constrain_proportions;
+    fresh.aspect_ratio = root.aspect_ratio;
     // How the instance combines in a boolean group it sits in is its own.
     fresh.bool_op = root.bool_op;
     // A swapped nested instance keeps the name its layer was given in the outer main.

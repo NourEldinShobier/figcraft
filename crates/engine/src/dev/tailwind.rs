@@ -234,6 +234,18 @@ fn border(side: &str, value: &str) -> Vec<(String, String)> {
     out
 }
 
+/// A grid line utility for `axis` ("col" or "row"): `span 2` → `col-span-2`, `3` → `col-start-3`,
+/// anything else (`2 / span 3`) an arbitrary value.
+fn grid_line(axis: &str, v: &str) -> String {
+    if let Some(n) = v.strip_prefix("span ").and_then(|n| n.trim().parse::<u32>().ok()) {
+        return format!("{axis}-span-{n}");
+    }
+    match v.trim().parse::<u32>() {
+        Ok(n) => format!("{axis}-start-{n}"),
+        Err(_) => format!("{axis}-{}", arb(v)),
+    }
+}
+
 /// One CSS declaration as utilities, keyed by the property they set (so responsive code can tell
 /// which mobile class a desktop class replaces).
 fn decl(key: &str, value: &str) -> Vec<(String, String)> {
@@ -241,7 +253,23 @@ fn decl(key: &str, value: &str) -> Vec<(String, String)> {
     let kw = |c: &str| vec![(key.to_string(), c.to_string())];
     match (key, value) {
         ("display", "flex") => kw("flex"),
+        ("display", "grid") => kw("grid"),
         ("display", "block") => kw("block"),
+        // Tailwind's preflight sets `box-sizing: border-box` on every element.
+        ("box-sizing", _) => Vec::new(),
+        ("flex-shrink", "0") => kw("shrink-0"),
+        ("grid-template-columns", v) => one(format!("grid-cols-{}", arb(v))),
+        ("grid-template-rows", v) => one(format!("grid-rows-{}", arb(v))),
+        ("grid-column", v) => one(grid_line("col", v)),
+        ("grid-row", v) => one(grid_line("row", v)),
+        ("column-gap", v) => one(spacing("gap-x", v)),
+        ("row-gap", v) => one(spacing("gap-y", v)),
+        ("justify-items", v) => one(format!("justify-items-{v}")),
+        ("justify-self", v) => one(format!("justify-self-{v}")),
+        ("aspect-ratio", v) => one(format!("aspect-{}", arb(v))),
+        ("min-width", "0") => kw("min-w-0"),
+        ("min-width", v) => one(format!("min-w-{}", arb(v))),
+        ("max-height", v) => one(format!("max-h-{}", arb(v))),
         ("flex-direction", "column") => kw("flex-col"),
         ("flex-direction", _) => kw("flex-row"),
         ("flex-wrap", "wrap") => kw("flex-wrap"),
@@ -250,7 +278,7 @@ fn decl(key: &str, value: &str) -> Vec<(String, String)> {
         ("justify-content", v) => one(format!("justify-{}", v.trim_start_matches("flex-").trim_start_matches("space-"))),
         ("align-items", v) => one(format!("items-{}", v.trim_start_matches("flex-"))),
         ("align-content", v) => one(format!("content-{}", v.trim_start_matches("flex-").trim_start_matches("space-"))),
-        ("align-self", "stretch") => kw("self-stretch"),
+        ("align-self", v) => one(format!("self-{v}")),
         ("flex", "1 1 0") => kw("flex-1"),
         ("position", v) => one(v.to_string()),
         ("left" | "top" | "right" | "bottom", v) => one(spacing(key, v)),
@@ -345,6 +373,18 @@ fn reset(key: &str) -> Option<String> {
         "width" => "w-auto",
         "height" => "h-auto",
         "max-width" => "max-w-none",
+        "min-width" => "min-w-auto",
+        "max-height" => "max-h-none",
+        "flex-shrink" => "shrink",
+        "grid-template-columns" => "grid-cols-none",
+        "grid-template-rows" => "grid-rows-none",
+        "grid-column" => "col-auto",
+        "grid-row" => "row-auto",
+        "column-gap" => "gap-x-0",
+        "row-gap" => "gap-y-0",
+        "justify-items" => "justify-items-stretch",
+        "justify-self" => "justify-self-auto",
+        "aspect-ratio" => "aspect-auto",
         "min-height" => "min-h-0",
         "text-align" => "text-left",
         "justify-content" => "justify-start",

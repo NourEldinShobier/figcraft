@@ -1309,6 +1309,8 @@ fn scroll_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId],
         return;
     }
     widgets::section_header(ui, tr("Scroll behavior"), &[], false);
+    // Fixed and sticky need a layer that ignores auto layout (the engine refuses them otherwise).
+    let in_flow = !node.child_layout.absolute && node.parent.and_then(|p| doc.node(p)).is_some_and(|p| p.layout.is_some());
     if in_frame {
         row(ui, 32.0, |ui| {
             widgets::label(ui, tr("Position"), t.text_secondary);
@@ -1320,7 +1322,7 @@ fn scroll_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId],
             let resp = widgets::dropdown(ui, cur, ui.available_width(), None);
             menu_popup(&resp).show(|ui| {
                 for (l, v) in [(tr("Scroll with parent"), "scrolls"), (tr("Fixed"), "fixed"), (tr("Sticky"), "sticky")] {
-                    if menu_item(ui, l, "") {
+                    if (v == "scrolls" || !in_flow) && menu_item(ui, l, "") {
                         app.set_props(sel, json!({"scrollPosition": v}));
                         ui.close();
                     }

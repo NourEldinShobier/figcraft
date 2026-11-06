@@ -66,6 +66,13 @@ impl Session {
         r
     }
 
+    /// Whether the running command was started by an AI agent ([`Session::execute_as`] with a name,
+    /// which the MCP server and `engine.execute {agent}` give). An agent's command must not take
+    /// the person's tab or window focus (`file.open` leaves the tab in front alone).
+    pub fn is_agent_call(&self) -> bool {
+        self.agent.is_some()
+    }
+
     /// Run a command by id. Mutations become one undo step; a failure or panic leaves the document
     /// as it was.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {

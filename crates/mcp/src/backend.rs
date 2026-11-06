@@ -27,6 +27,21 @@ pub trait Backend {
         None
     }
 
+    /// The document this session's tool calls act on when a call names none (an `id` from
+    /// `doc.list`); `None`: whichever tab is in front.
+    fn target(&self) -> Option<Value> {
+        None
+    }
+
+    /// Set (or, with `None`, clear) the [`Backend::target`]. Backends that cannot keep one ignore it.
+    fn set_target(&mut self, _doc: Option<Value>) {}
+
+    /// A one-line note for the next tool result, given once (e.g. that the server switched the
+    /// app's auto-save on).
+    fn notice(&mut self) -> Option<String> {
+        None
+    }
+
     /// PNG bytes of the document: `ids` (in page coordinates, their union) or, when empty, the
     /// current page's content. The default goes through `ui.render`, the PNG coming back as data.
     fn render_png(&mut self, ids: &[u64], scale: f64) -> Result<Vec<u8>, String> {
@@ -96,6 +111,8 @@ pub struct Attached {
     max_reply: usize,
     /// How long the app is asked to wait for each request; `None`: its own 60 s.
     timeout: Option<Duration>,
+    /// [`Backend::target`].
+    target: Option<Value>,
 }
 
 impl Attached {
@@ -111,7 +128,7 @@ impl Attached {
 
     /// Connect with an explicit validated token.
     pub fn connect_with_token(addr: &str, token: figcraft_collab_net::control_auth::ControlToken) -> std::io::Result<Self> {
-        let mut r = Self { addr: addr.to_string(), token, conn: None, next_id: 1, max_reply: MAX_REPLY, timeout: None };
+        let mut r = Self { addr: addr.to_string(), token, conn: None, next_id: 1, max_reply: MAX_REPLY, timeout: None, target: None };
         r.reconnect()?;
         Ok(r)
     }
@@ -242,6 +259,14 @@ impl Backend for Attached {
 
     fn has_ui(&self) -> bool {
         true
+    }
+
+    fn target(&self) -> Option<Value> {
+        self.target.clone()
+    }
+
+    fn set_target(&mut self, doc: Option<Value>) {
+        self.target = doc;
     }
 
     fn describe(&self) -> String {

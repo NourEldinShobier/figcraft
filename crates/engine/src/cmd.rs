@@ -16,6 +16,7 @@ pub mod image;
 pub mod keys;
 pub mod layername;
 pub mod layout;
+pub mod layout_preview;
 pub mod library;
 pub mod lists;
 pub mod page;
@@ -93,6 +94,7 @@ fn registry() -> &'static Registry {
         list.extend(structure::specs());
         list.extend(section::specs());
         list.extend(layout::specs());
+        list.extend(layout_preview::specs());
         list.extend(file::specs());
         list.extend(file::source_specs());
         list.extend(docstatus::specs());

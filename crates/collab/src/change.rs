@@ -170,6 +170,7 @@ node_props! {
     VarModes => var_modes,
     BoolOp => bool_op,
     ConstrainProportions => constrain_proportions,
+    AspectRatio => aspect_ratio,
     Source => source,
     Exposed => exposed,
     DevStatus => dev_status,

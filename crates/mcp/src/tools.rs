@@ -209,6 +209,34 @@ pub const TOOL_NAMES: &[&str] = &[
     "auto_name_layers",
     "wait_for_changes",
     "diagnostics",
+    "use_document",
+    "copy_between_documents",
+    "checkpoint",
+    "list_versions",
+    "restore_version",
+    "compare_version",
+];
+
+/// The tools that take `documents`: one call per file (`"all"` or a list of ids), at most
+/// [`MAX_DOCUMENTS`] files.
+const MULTI_DOCUMENT_TOOLS: &[&str] = &["find_nodes", "set_properties", "run_command", "get_nodes"];
+
+/// Most files one `documents` call works on.
+const MAX_DOCUMENTS: usize = 100;
+
+/// The tools that ignore the target document: they name their files themselves, or are not about
+/// a document (`pointer`, `key` and `type_text` drive the tab in front, as the user would).
+const UNTARGETED: &[&str] = &[
+    "list_commands",
+    "open_file",
+    "use_document",
+    "copy_between_documents",
+    "diagnostics",
+    "inspect_ui",
+    "wait_for_changes",
+    "pointer",
+    "key",
+    "type_text",
 ];
 
 /// The tools that take `document`: they act on the file it names instead of the one in front.
@@ -228,19 +256,30 @@ const DOCUMENT_TOOLS: &[&str] = &[
     "save_file",
     "undo",
     "redo",
+    "checkpoint",
+    "list_versions",
+    "restore_version",
+    "compare_version",
 ];
 
 /// All tools, in `tools/list` order.
 pub fn tool_definitions() -> Vec<Value> {
     let mut tools = tools();
     let document = id_schema(
-        "The open file to act on: its `id` (from run_command doc.list, or the `document` open_file and inspect_document return) or its path. Default: the file in front. The tab in front stays in front; with an attached app, a screenshot of the window needs the file in front",
+        "The open file to act on: its `id` (from run_command doc.list, or the `document` open_file and inspect_document return) or its path. Default: the target document (open_file, use_document), else the file in front. The tab in front stays in front; with an attached app, a screenshot of the window needs the file in front",
     );
+    let documents = json!({
+        "description": "Run this call once in each of these files and return {documents: [{document, name, ok, result | error}], totalMatched?} (find_nodes also `total`): \"all\" (every open file) or a list of document ids (from doc.list), at most 100. A file where the call fails does not stop the others; for set_properties a file where `where` matches nothing reports matched 0. With `where` this changes or finds the same element in every screen file at once. Not together with `document`",
+        "anyOf": [{"type": "string", "enum": ["all"]}, {"type": "array", "maxItems": MAX_DOCUMENTS, "items": {"anyOf": [{"type": "integer"}, {"type": "string"}]}}],
+    });
     for t in &mut tools {
-        if t.get("name").and_then(Value::as_str).is_some_and(|n| DOCUMENT_TOOLS.contains(&n))
-            && let Some(props) = t.pointer_mut("/inputSchema/properties").and_then(Value::as_object_mut)
-        {
+        let Some(name) = t.get("name").and_then(Value::as_str).map(str::to_string) else { continue };
+        let Some(props) = t.pointer_mut("/inputSchema/properties").and_then(Value::as_object_mut) else { continue };
+        if DOCUMENT_TOOLS.contains(&name.as_str()) {
             props.insert("document".into(), document.clone());
+        }
+        if MULTI_DOCUMENT_TOOLS.contains(&name.as_str()) {
+            props.insert("documents".into(), documents.clone());
         }
     }
     tools
@@ -509,10 +548,11 @@ fn tools() -> Vec<Value> {
         tool(
             "open_file",
             "Open file",
-            "Open a .figcraft or .json document (FigCraft or REST API file JSON), a .fig or .sketch file (best effort, with `warnings` for what wasn't imported; .sketch from Sketch 48 or newer), an .svg (becomes vectors) or an image (becomes an image layer) as the active document. Returns the new document's summary.",
+            "Open a .figcraft or .json document (FigCraft or REST API file JSON), a .fig or .sketch file (best effort, with `warnings` for what wasn't imported; .sketch from Sketch 48 or newer), an .svg (becomes vectors) or an image (becomes an image layer). Headless, the file becomes the active document. With an attached app it opens in a background tab and the user's tab and view stay as they are: the file becomes the target document (later calls act on it; use_document or `document` name another); `focus: true` also switches the user's window to it. Returns the new document's summary and its `document` id.",
             obj(
                 json!({
                     "path": string("File path"),
+                    "focus": boolean("Attached app: switch the user's window to the opened file (default false: it opens in the background)"),
                     "variables": {"description": "REST API file JSON only: the local variables JSON (`GET /v1/files/:key/variables/local`) as a path or the JSON object. Default: `<name>.variables.json` or `variables.json` next to the file."},
                     "reload": boolean("A file that is already open: read it again from disk into its tab (refused while the tab has unsaved changes). Without it, the result says `stale: true` when the file changed on disk since the tab read or saved it"),
                 }),
@@ -723,8 +763,70 @@ fn tools() -> Vec<Value> {
         tool(
             "diagnostics",
             "Diagnostics",
-            "Which backend this server talks to and what it has open: {backend, attached, mcpServer: {pid}, documents: [{index, id, name, path, dirty, changedOnDisk, lastSaved, active}]}. `attached` is true when the FigCraft app is driven (edits show in its window), false for a detached headless copy. `changedOnDisk`: the file changed on disk since the document was read or saved. `lastSaved` is the file's modification time (ISO 8601 UTC), null without a file. `path` is null for an untitled document and for AI agents (the app keeps file locations from them). Use it when edits do not show up or a save is refused.",
+            "Which backend this server talks to and what it has open: {backend, attached, mcpServer: {pid}, documents: [{index, id, name, path, dirty, changedOnDisk, lastSaved, active}]}. `attached` is true when the FigCraft app is driven (edits show in its window), false for a detached headless copy. `changedOnDisk`: the file changed on disk since the document was read or saved. `lastSaved` is the file's modification time (ISO 8601 UTC), null without a file. `path` is null for an untitled document and for AI agents (the app keeps file locations from them). `target` is the document later calls act on (see use_document; null: the file in front) and `autoSave` whether the app saves files by itself. Use it when edits do not show up or a save is refused.",
             empty(),
+            true,
+        ),
+        tool(
+            "use_document",
+            "Use document",
+            "Set the target document: the file every later call without `document` acts on, so an agent keeps working on its own file while the user clicks through other tabs (open_file with an attached app sets it to the file it opened). `document` is an id (from doc.list), a path or a name; null clears the target and calls act on the file in front again. Returns {target, documents: [{index, id, name, dirty, active}]}. The target is kept by this server only; `pointer`, `key` and `type_text` always drive the file in front.",
+            obj(
+                json!({"document": {"description": "The open file to work on: its id, path or name; null for the file in front", "anyOf": [{"type": "integer"}, {"type": "string"}, {"type": "null"}]}}),
+                &["document"],
+            ),
+            false,
+        ),
+        tool(
+            "copy_between_documents",
+            "Copy layers between files",
+            "Copy layers from one open file into another (engine `edit.copy` in `from`, `edit.paste` in `to`) without switching either tab or changing either selection. Name the layers with `ids` or `where` (the node.find filters, run in `from`), exactly one of them. They are pasted at the top level of the page `to` shows, or into `parent` (a layer of `to`), in place or with their top-left at page coordinates `x`, `y` (both). Returns {copied, newIds, from, to}. The copy is not a move: the originals stay.",
+            obj(
+                json!({
+                    "from": id_schema("The file to copy from: its id (doc.list) or path"),
+                    "to": id_schema("The file to paste into: its id (doc.list) or path"),
+                    "ids": ids_schema("Layers of `from` to copy"),
+                    "where": where_schema(),
+                    "parent": id_schema("A frame, group or section of `to` to paste into (default: its current page)"),
+                    "x": num("Page x of the pasted layers' top-left in `to` (with y; default: where they were)"),
+                    "y": num("Page y of the pasted layers' top-left in `to` (with x)"),
+                }),
+                &["from", "to"],
+            ),
+            false,
+        ),
+        tool(
+            "checkpoint",
+            "Save a checkpoint",
+            "Save a named version of the document as it is now (engine `file.saveVersion`), a point in its history to come back to with restore_version; do it before a big change. It does not save the file to disk. Returns {id, name, time}. Without `name` the version is named by the engine.",
+            obj(json!({"name": string("Version name"), "description": string("What state this is")}), &[]),
+            false,
+        ),
+        tool(
+            "list_versions",
+            "List versions",
+            "The document's saved versions, newest last (engine `version.list`): {total, versions: [{id, index, name, description, time (Unix seconds), auto?, previewing?}]}; `auto` marks the automatic checkpoints (named Autosave). Use an `id` with restore_version or compare_version.",
+            obj(json!({"limit": int("Most versions to return, the newest ones (default 30, up to 100)")}), &[]),
+            true,
+        ),
+        tool(
+            "restore_version",
+            "Restore a version",
+            "Replace the document with a saved version (engine `version.restore`) as one undo step (undo brings the current state back). The engine first keeps the state being replaced as an Autosave version, unless a version of it was just saved or restored, so nothing is lost. Refused unless `confirm` is true.",
+            obj(
+                json!({"id": string("The version's id (list_versions)"), "confirm": boolean("Must be true: the document is replaced")}),
+                &["id"],
+            ),
+            false,
+        ),
+        tool(
+            "compare_version",
+            "Compare with a version",
+            "What changed since a saved version (engine `dev.compare` with `version`): for the top-level frame or section `node`, or without it for every top-level frame and section of the current page, the added, removed and changed layers with their property changes {id, name, type, change, properties: [{property, before, after}]}. Frames and sections deleted since the version are not listed (run_command version.preview shows a version). Read-only.",
+            obj(
+                json!({"id": string("The version's id (list_versions)"), "node": id_schema("A top-level frame or section (default: all of the current page)")}),
+                &["id"],
+            ),
             true,
         ),
     ]
@@ -756,6 +858,18 @@ impl Backend for InDocument<'_> {
 
     fn detached(&mut self) -> Option<String> {
         self.inner.detached()
+    }
+
+    fn target(&self) -> Option<Value> {
+        self.inner.target()
+    }
+
+    fn set_target(&mut self, doc: Option<Value>) {
+        self.inner.set_target(doc);
+    }
+
+    fn notice(&mut self) -> Option<String> {
+        self.inner.notice()
     }
 }
 
@@ -903,39 +1017,138 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
     {
         return ToolResult::error(e);
     }
-    let mut targeted;
-    let doc_target = a.get("document").filter(|d| !d.is_null()).cloned();
-    let b: &mut dyn Backend = match a.remove("document").filter(|d| !d.is_null()) {
-        Some(document) => {
-            targeted = InDocument { inner: b, document };
-            &mut targeted
+    let mut r = dispatch(b, name, &mut a).unwrap_or_else(ToolResult::error);
+    // A detached copy beside an open app: the result carries the warning, not only the tool list.
+    if name != "list_commands"
+        && let Some(note) = b.detached()
+    {
+        r.content.push(json!({"type": "text", "text": note}));
+    }
+    if let Some(note) = b.notice() {
+        r.content.push(json!({"type": "text", "text": note}));
+    }
+    r
+}
+
+/// Whether `d` can name an open file: an id, or a path or name.
+fn valid_document(d: &Value) -> bool {
+    d.is_u64() || d.as_str().is_some_and(|s| !s.is_empty())
+}
+
+/// Pick the file(s) a tool call acts on: `documents` (one call per file), else `document`, else
+/// the session's target document, else the file in front.
+fn dispatch(b: &mut dyn Backend, name: &str, a: &mut Map<String, Value>) -> Result<ToolResult, String> {
+    let documents = a.remove("documents").filter(|d| !d.is_null());
+    // `use_document` reads its own `document`.
+    let explicit = if name == "use_document" { None } else { a.remove("document").filter(|d| !d.is_null()) };
+    if let Some(documents) = documents {
+        if explicit.is_some() {
+            return Err("pass `document` or `documents`, not both".into());
         }
-        None => b,
+        return across_documents(b, name, a, &documents);
+    }
+    // A capture of the app window shows the file in front, whatever the target is.
+    let window_shot = name == "screenshot" && a.get("window").is_some_and(|w| !w.is_null() && *w != Value::Bool(false));
+    let by_target = explicit.is_none() && !window_shot && !UNTARGETED.contains(&name);
+    let Some(document) = explicit.or_else(|| if by_target { b.target() } else { None }) else {
+        return run_tool(b, name, a, None);
     };
-    let r = match name {
-        "list_commands" => list_commands(b, &a),
-        "run_command" => run_command(b, &a),
-        "batch" => batch(b, &a),
-        "create_node" => create_node(b, &a),
-        "set_properties" => set_properties(b, &a),
-        "inspect_document" => inspect_document(b, &a),
-        "get_node" => get_node(b, &a),
-        "select" => select(b, &a),
+    let r = run_tool(&mut InDocument { inner: &mut *b, document: document.clone() }, name, a, Some(&document));
+    // A target whose tab was closed would fail every call: say so and go back to the tab in front.
+    if r.is_err() && by_target && status_row(b, Some(&document)).is_none() {
+        b.set_target(None);
+        return Err(format!(
+            "the target document {document} is no longer open; the target is cleared, so calls act on the file in front again (use_document sets another)"
+        ));
+    }
+    r
+}
+
+/// `documents`: the tool once in each file, collected as `{documents: [{document, name, ok, result
+/// | error}], totalMatched?}`; a file where it fails does not stop the others.
+fn across_documents(b: &mut dyn Backend, tool: &str, a: &Map<String, Value>, documents: &Value) -> Result<ToolResult, String> {
+    let rows = exec(b, "doc.list", json!({}))?;
+    let rows = rows.as_array().map(Vec::as_slice).unwrap_or_default();
+    let name_of = |id: &Value| rows.iter().find(|r| r.get("id") == Some(id)).and_then(|r| r.get("name")).cloned().unwrap_or(Value::Null);
+    let wanted: Vec<Value> = match documents {
+        Value::String(s) if s == "all" => rows.iter().filter_map(|r| r.get("id").cloned()).collect(),
+        Value::Array(list) if list.iter().all(valid_document) => list.clone(),
+        _ => return Err("`documents` must be \"all\" or a list of document ids (doc.list)".into()),
+    };
+    if wanted.is_empty() {
+        return Err("`documents` names no open document".into());
+    }
+    if wanted.len() > MAX_DOCUMENTS {
+        return Err(format!("{} documents: at most {MAX_DOCUMENTS} per call", wanted.len()));
+    }
+    // find_nodes counts `total`, the layer tools `matched`.
+    let count_key = if tool == "find_nodes" { "total" } else { "matched" };
+    let (mut results, mut succeeded, mut sum, mut counted) = (Vec::new(), 0usize, 0u64, false);
+    for document in &wanted {
+        let outcome = run_tool(&mut InDocument { inner: &mut *b, document: document.clone() }, tool, a, Some(document));
+        let mut entry = json!({"document": document, "name": name_of(document)});
+        let outcome = match outcome {
+            Ok(r) if !r.is_error => Ok(serde_json::from_str::<Value>(r.first_text()).unwrap_or_else(|_| json!(r.first_text()))),
+            Ok(r) => Err(r.first_text().to_string()),
+            // Nothing to change in a file that lacks the element is not a failure of the call.
+            Err(e) if tool == "set_properties" && e.starts_with("no layer matches") => Ok(json!({"matched": 0, "ids": [], "note": e})),
+            Err(e) => Err(e),
+        };
+        match outcome {
+            Ok(v) => {
+                succeeded += 1;
+                if let Some(n) = v.get(count_key).and_then(Value::as_u64) {
+                    sum += n;
+                    counted = true;
+                }
+                entry["ok"] = json!(true);
+                entry["result"] = v;
+            }
+            Err(e) => {
+                entry["ok"] = json!(false);
+                entry["error"] = json!(e);
+            }
+        }
+        results.push(entry);
+    }
+    let mut out = json!({"documents": results});
+    if counted {
+        out["totalMatched"] = json!(sum);
+        if tool == "find_nodes" {
+            out["total"] = json!(sum);
+        }
+    }
+    let mut r = ToolResult::json(&out);
+    r.is_error = succeeded == 0;
+    Ok(r)
+}
+
+/// One tool in the file `b` addresses. `document` is that file as the caller named it, if any.
+fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, doc_target: Option<&Value>) -> Result<ToolResult, String> {
+    match name {
+        "list_commands" => list_commands(b, a),
+        "run_command" => run_command(b, a),
+        "batch" => batch(b, a),
+        "create_node" => create_node(b, a),
+        "set_properties" => set_properties(b, a),
+        "inspect_document" => inspect_document(b, a),
+        "get_node" => get_node(b, a),
+        "select" => select(b, a),
         "get_selection" => get_selection(b),
-        "find_nodes" => find_nodes(b, &a),
-        "get_nodes" => get_nodes(b, &a),
-        "contact_sheet" => contact_sheet(b, &a),
-        "export" => export(b, &a),
-        "export_source" => export_source(b, &a),
-        "export_many" => export_many(b, &a),
-        "screenshot" => screenshot(b, &a),
-        "open_file" => open_file(b, &a),
-        "save_file" => save_file(b, &a, doc_target.as_ref()),
+        "find_nodes" => find_nodes(b, a),
+        "get_nodes" => get_nodes(b, a),
+        "contact_sheet" => contact_sheet(b, a),
+        "export" => export(b, a),
+        "export_source" => export_source(b, a),
+        "export_many" => export_many(b, a),
+        "screenshot" => screenshot(b, a),
+        "open_file" => open_file(b, a),
+        "save_file" => save_file(b, a, doc_target),
         "undo" => exec(b, "edit.undo", json!({})).map(|v| ToolResult::json(&v)),
         "redo" => exec(b, "edit.redo", json!({})).map(|v| ToolResult::json(&v)),
-        "pointer" => pointer(b, &a),
-        "key" => key(b, &a),
-        "type_text" => type_text(b, &a),
+        "pointer" => pointer(b, a),
+        "key" => key(b, a),
+        "type_text" => type_text(b, a),
         "inspect_ui" => b.call("ui.inspect", json!({})).map(|mut v| {
             // Which server answers: with several running, the way to tell them apart.
             if let Some(o) = v.as_object_mut() {
@@ -943,33 +1156,31 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
             }
             ToolResult::json(&v)
         }),
-        "get_metadata" => read_command(b, "inspect.metadata", &a).map(|v| match v.get("xml").and_then(Value::as_str) {
+        "get_metadata" => read_command(b, "inspect.metadata", a).map(|v| match v.get("xml").and_then(Value::as_str) {
             Some(xml) if v["truncated"] == true => {
                 ToolResult::text(format!("{xml}<!-- truncated: raise depth or maxNodes, or ask for a child's nodeId -->\n"))
             }
             Some(xml) => ToolResult::text(xml),
             None => ToolResult::json(&v),
         }),
-        "get_variable_defs" => read_command(b, "inspect.variableDefs", &a).map(|v| ToolResult::json(&v["variables"])),
-        "get_design_context" => read_command(b, "inspect.designContext", &a).map(|v| ToolResult::json(&v)),
-        "search_design_system" => read_command(b, "inspect.searchDesignSystem", &a).map(|v| ToolResult::json(&v)),
-        "lint_icons" => lint_icons(b, &a),
-        "export_tokens" => export_tokens(b, &a),
-        "check_contrast" => check_contrast(b, &a),
-        "history" => history(b, &a),
-        "auto_name_layers" => auto_name_layers(b, &a),
-        "wait_for_changes" => wait_for_changes(b, &a),
+        "get_variable_defs" => read_command(b, "inspect.variableDefs", a).map(|v| ToolResult::json(&v["variables"])),
+        "get_design_context" => read_command(b, "inspect.designContext", a).map(|v| ToolResult::json(&v)),
+        "search_design_system" => read_command(b, "inspect.searchDesignSystem", a).map(|v| ToolResult::json(&v)),
+        "lint_icons" => lint_icons(b, a),
+        "export_tokens" => export_tokens(b, a),
+        "check_contrast" => check_contrast(b, a),
+        "history" => history(b, a),
+        "auto_name_layers" => auto_name_layers(b, a),
+        "wait_for_changes" => wait_for_changes(b, a),
         "diagnostics" => diagnostics(b),
+        "use_document" => use_document(b, a),
+        "copy_between_documents" => copy_between_documents(b, a),
+        "checkpoint" => checkpoint(b, a),
+        "list_versions" => list_versions(b, a),
+        "restore_version" => restore_version(b, a),
+        "compare_version" => compare_version(b, a),
         other => Err(format!("unknown tool `{other}` (tools/list has: {})", TOOL_NAMES.join(", "))),
-    };
-    let mut r = r.unwrap_or_else(ToolResult::error);
-    // A detached copy beside an open app: the result carries the warning, not only the tool list.
-    if name != "list_commands"
-        && let Some(note) = b.detached()
-    {
-        r.content.push(json!({"type": "text", "text": note}));
     }
-    r
 }
 
 fn list_commands(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
@@ -1784,13 +1995,154 @@ fn diagnostics(b: &mut dyn Backend) -> Result<ToolResult, String> {
             })
         })
         .collect();
+    let auto_save = exec(b, "pref.autoSave", json!({})).ok().and_then(|v| v.get("on").and_then(Value::as_bool));
     Ok(ToolResult::json(&json!({
         "backend": b.describe(),
         "attached": b.has_ui(),
         "mcpServer": {"pid": std::process::id()},
+        "target": b.target(),
+        "autoSave": auto_save,
         "documents": documents,
     })))
 }
+
+/// `use_document`: the file later calls act on when they name none (`null`: the one in front).
+fn use_document(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let target = match a.get("document") {
+        None => return Err("`document` is required: an id, a path or a name, or null for the file in front".into()),
+        Some(Value::Null) => None,
+        Some(d) if valid_document(d) => {
+            let row = status_row(b, Some(d)).ok_or_else(|| format!("no open document matches {d} (the ids are in doc.list)"))?;
+            row.get("id").cloned()
+        }
+        Some(_) => return Err("`document` must be an id, a path or a name, or null".into()),
+    };
+    b.set_target(target.clone());
+    let documents = exec(b, "doc.list", json!({}))?;
+    Ok(ToolResult::json(&json!({"target": target, "documents": documents})))
+}
+
+/// `copy_between_documents`: `edit.copy` in `from`, `edit.paste` in `to`; neither tab changes.
+fn copy_between_documents(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let doc_of = |k: &str| match a.get(k) {
+        Some(d) if valid_document(d) => Ok(d.clone()),
+        _ => Err(format!("`{k}` is required: a document id (doc.list) or path")),
+    };
+    let (from, to) = (doc_of("from")?, doc_of("to")?);
+    let at = match (n_arg(a, "x")?, n_arg(a, "y")?) {
+        (Some(x), Some(y)) => Some((x, y)),
+        (None, None) => None,
+        _ => return Err("pass `x` and `y` together".into()),
+    };
+    let mut source = InDocument { inner: &mut *b, document: from.clone() };
+    let (ids, total) = targets(&mut source, a, MAX_NODES_READ)?;
+    if ids.is_empty() {
+        return Err("nothing to copy: `ids` or `where` named no layer".into());
+    }
+    if total > ids.len() as u64 {
+        return Err(format!("{total} layers match `where`, at most {} are copied at once: narrow the filters", ids.len()));
+    }
+    // In place unless told where: the paste would otherwise centre them or follow `to`'s selection.
+    let at = at.or_else(|| bounds_of(&mut source, &ids).map(|(x, y, _, _)| (x, y)));
+    let copied = exec(&mut source, "edit.copy", json!({"ids": ids}))?;
+    let mut dest = InDocument { inner: &mut *b, document: to.clone() };
+    let parent = match a.get("parent").filter(|p| !p.is_null()) {
+        Some(p) => p.clone(),
+        None => dest.call("document.inspect", json!({"depth": 0}))?.get("currentPage").cloned().ok_or("the document `to` reports no current page")?,
+    };
+    let mut paste = json!({"keepSelection": true, "parent": parent});
+    if let Some((x, y)) = at {
+        paste["x"] = json!(x);
+        paste["y"] = json!(y);
+    }
+    let pasted = exec(&mut dest, "edit.paste", paste)?;
+    let new_ids = pasted.get("ids").cloned().unwrap_or_else(|| json!([]));
+    let count = copied.get("copied").and_then(Value::as_u64).unwrap_or(ids.len() as u64);
+    Ok(ToolResult::json(&json!({"copied": count, "newIds": new_ids, "from": from, "to": to})))
+}
+
+/// `checkpoint`: a named version of the document as it is now.
+fn checkpoint(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let mut params = json!({});
+    for k in ["name", "description"] {
+        if let Some(s) = s_arg(a, k)? {
+            params[k] = json!(s);
+        }
+    }
+    exec(b, "file.saveVersion", params).map(|v| ToolResult::json(&v))
+}
+
+/// Most versions `list_versions` returns (a file keeps at most 100).
+const MAX_VERSIONS_LISTED: usize = 100;
+
+/// `list_versions`: the newest `limit` versions, oldest first.
+fn list_versions(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let limit = n_arg(a, "limit")?.map_or(30, |v| v.clamp(1.0, MAX_VERSIONS_LISTED as f64) as usize);
+    let all = exec(b, "version.list", json!({}))?;
+    let all = all.as_array().map(Vec::as_slice).unwrap_or_default();
+    let shown = all.get(all.len().saturating_sub(limit)..).unwrap_or_default();
+    Ok(ToolResult::json(&json!({"total": all.len(), "versions": shown})))
+}
+
+/// `restore_version`: replaces the document with a version; `confirm: true` is required.
+fn restore_version(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let id = req_s(a, "id")?;
+    if !flag(a, "confirm")? {
+        return Err(format!(
+            "restore_version replaces the document with version `{id}`: pass `confirm: true`. The engine first keeps the current state as an Autosave version (unless a version of it was just saved or restored), and the restore is one undo step"
+        ));
+    }
+    exec(b, "version.restore", json!({"id": id})).map(|v| ToolResult::json(&v))
+}
+
+/// `compare_version`: what changed since a version, in one top-level frame or section or in all
+/// of the current page's.
+fn compare_version(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let version = req_s(a, "id")?;
+    if let Some(node) = a.get("node").filter(|n| !n.is_null()) {
+        let id = id_arg(node)?;
+        return exec(b, "dev.compare", json!({"id": id, "version": version})).map(|v| ToolResult::json(&v));
+    }
+    let doc = b.call("document.inspect", json!({"depth": 1, "fields": ["type"]}))?;
+    let current = doc.get("currentPage").cloned().unwrap_or(Value::Null);
+    let pages = doc.get("pages").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+    let page = pages.iter().find(|p| p.get("id") == Some(&current)).or(pages.first());
+    let frames: Vec<u64> = page
+        .and_then(|p| p.get("children"))
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter(|c| matches!(c.get("type").and_then(Value::as_str), Some("FRAME" | "SECTION")))
+        .filter_map(|c| c.get("id").and_then(Value::as_u64))
+        .take(MAX_COMPARED)
+        .collect();
+    let (mut changed, mut unchanged, mut failed, mut against) = (Vec::new(), Vec::new(), Vec::new(), Value::Null);
+    for id in &frames {
+        match exec(b, "dev.compare", json!({"id": id, "version": version})) {
+            Ok(mut r) => {
+                against = r.get("version").cloned().unwrap_or(Value::Null);
+                if r.get("changes").and_then(Value::as_array).is_some_and(|c| !c.is_empty()) {
+                    changed.push(r);
+                } else {
+                    unchanged.push(r.get_mut("id").map(Value::take).unwrap_or(Value::Null));
+                }
+            }
+            Err(e) => failed.push(json!({"id": id, "error": e})),
+        }
+    }
+    let mut out = json!({"version": against, "frames": frames.len(), "changed": changed, "unchanged": unchanged});
+    if !failed.is_empty() {
+        out["failed"] = json!(failed);
+    }
+    if failed.len() == frames.len() && !frames.is_empty() {
+        return Err(format!("dev.compare failed for every frame: {}", failed.first().map(|f| f["error"].to_string()).unwrap_or_default()));
+    }
+    Ok(ToolResult::json(&out))
+}
+
+/// Most top-level frames `compare_version` compares at once.
+const MAX_COMPARED: usize = 50;
 
 fn lint_icons(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
     let mut params = a.clone();
@@ -2000,9 +2352,25 @@ fn open_file(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, 
     if let Some(reload) = a.get("reload").filter(|v| !v.is_null()) {
         params["reload"] = reload.clone();
     }
+    // With a window the file opens behind the user's tab, which stays where it is, unless `focus`.
+    let focus = flag(a, "focus")?;
+    if b.has_ui() && !focus {
+        params["activate"] = json!(false);
+    }
     let r = exec(b, "file.open", params)?;
-    let doc = b.call("document.inspect", json!({"depth": 1}))?;
-    Ok(ToolResult::json(&json!({"opened": r, "document": doc})))
+    let id = r.get("id").filter(|i| valid_document(i)).cloned().filter(|_| b.has_ui());
+    // The agent keeps working on what it opened, wherever the user clicks next.
+    b.set_target(id.clone());
+    let Some(id) = id else {
+        let doc = b.call("document.inspect", json!({"depth": 1}))?;
+        return Ok(ToolResult::json(&json!({"opened": r, "document": doc})));
+    };
+    let doc = InDocument { inner: &mut *b, document: id.clone() }.call("document.inspect", json!({"depth": 1}))?;
+    let mut out = json!({"opened": r, "document": doc});
+    if !focus {
+        out["note"] = json!(format!("opened in the background as document {id}; later calls act on it (pass `document` to act on another tab)"));
+    }
+    Ok(ToolResult::json(&out))
 }
 
 fn save_file(b: &mut dyn Backend, a: &Map<String, Value>, document: Option<&Value>) -> Result<ToolResult, String> {

@@ -490,6 +490,11 @@ fn fills_available_space(doc: &Document, id: NodeId, is_w: bool) -> bool {
     available > 0.0 && (size - available).abs() < 0.01
 }
 
+/// Whether `id` sits in an auto layout frame and takes part in its flow (does not ignore it).
+fn in_auto_layout_flow(doc: &Document, id: NodeId) -> bool {
+    doc.node(id).is_some_and(|n| !n.child_layout.absolute && n.parent.and_then(|p| doc.node(p)).is_some_and(|p| p.layout.is_some()))
+}
+
 /// The `geometry` properties of `apply`; `false` when `k` is not one of them.
 fn apply_geometry(
     cmd: &str,
@@ -548,6 +553,14 @@ fn apply_geometry(
                 }
             };
             resize_node(doc, id, nw, nh)?;
+            // A locked node keeps the ratio of the size the panel gave it (both sides typed at
+            // once change it); the layout pass derives a Fill axis from this ratio.
+            if let Some(n) = doc.node_mut(id).filter(|n| n.constrain_proportions)
+                && nh > 1e-9
+                && nw > 1e-9
+            {
+                n.aspect_ratio = Some(nw / nh);
+            }
             // Explicit size makes text fixed in that dimension.
             if let Some(t) = doc.get_mut(id)?.kind.text_mut() {
                 t.fix_size(is_w, !is_w);
@@ -898,7 +911,13 @@ fn apply_meta(cmd: &str, doc: &mut Document, id: NodeId, k: &str, v: &Value) -> 
         "interactions" => doc.get_mut(id)?.interactions = serde_json::from_value(v.clone()).map_err(|e| bad(cmd, format!("interactions: {e}")))?,
         "overflow" => doc.get_mut(id)?.overflow = enum_of(v).ok_or_else(|| bad(cmd, "overflow: none|horizontal|vertical|both"))?,
         "scrollPosition" => doc.get_mut(id)?.scroll_position = enum_of(v).ok_or_else(|| bad(cmd, "scrollPosition: scrolls|fixed|sticky"))?,
-        "constrainProportions" => doc.get_mut(id)?.constrain_proportions = v.as_bool().ok_or_else(|| bad(cmd, format!("`{k}` must be a boolean")))?,
+        "constrainProportions" => {
+            let on = v.as_bool().ok_or_else(|| bad(cmd, format!("`{k}` must be a boolean")))?;
+            let n = doc.get_mut(id)?;
+            n.constrain_proportions = on;
+            // The lock captures the ratio of the size the node has now; a zero side has none.
+            n.aspect_ratio = Some(n.width / n.height).filter(|r| on && r.is_finite() && *r > 1e-9);
+        }
         _ => return Ok(false),
     }
     Ok(true)
@@ -1170,6 +1189,13 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
     }
     if !unknown.is_empty() {
         return Err(bad(cmd, format!("unknown properties: {} (known: {KEYS})", unknown.join(", "))));
+    }
+    // Checked once every key is in, so `absolute` and `scrollPosition` may come in one call.
+    if props.contains_key("scrollPosition")
+        && doc.get(id)?.scroll_position != figcraft_doc::proto::ScrollPosition::Scrolls
+        && in_auto_layout_flow(doc, id)
+    {
+        return Err(bad(cmd, "scrollPosition: fixed and sticky need a layer that ignores auto layout (set `absolute` first)"));
     }
     // Inside an instance, record which property groups were overridden (an instance's own
     // resizing, export settings and interactions are its own, not overrides).

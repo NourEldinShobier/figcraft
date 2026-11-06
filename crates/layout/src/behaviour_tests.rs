@@ -457,6 +457,20 @@ fn gap_rules() {
             rects: &[(90.0, 0.0, 20.0, 20.0)],
         },
         Case {
+            rule: "a single child of auto gap evenly in 100 wide, 40 wide: 30 on each side",
+            frame: Frame { size: (100.0, 20.0), main: MainAlign::SpaceEvenly, ..FRAME },
+            kids: &[kid(40.0, 20.0)],
+            want: (100.0, 20.0),
+            rects: &[(30.0, 0.0, 40.0, 20.0)],
+        },
+        Case {
+            rule: "a single child of auto gap around has half a gap on each side: centred (60 / 2 = 30)",
+            frame: Frame { size: (100.0, 20.0), main: MainAlign::SpaceAround, ..FRAME },
+            kids: &[kid(40.0, 20.0)],
+            want: (100.0, 20.0),
+            rects: &[(30.0, 0.0, 40.0, 20.0)],
+        },
+        Case {
             rule: "auto gap with fill children: they take the free space, leaving no gap",
             // Fill takes 200 - 20 - 20; between has nothing left to share.
             frame: Frame { size: (200.0, 20.0), main: MainAlign::SpaceBetween, gap: 10.0, ..FRAME },

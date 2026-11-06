@@ -58,7 +58,8 @@ pub struct Prefs {
     #[serde(deserialize_with = "read_ui_scale")]
     pub ui_scale: f64,
     /// Files that have a path are saved by themselves a few seconds after they change (the app's
-    /// timer; off: only File ▸ Save writes them).
+    /// timer; on unless the user turned it off, and a stored `false` stays; off: only File ▸ Save
+    /// writes them).
     pub auto_save: bool,
     /// The desktop app starts on the Home screen instead of in a new file.
     pub start_on_home: bool,
@@ -143,7 +144,7 @@ impl Default for Prefs {
             user_name: cmd::comment::DEFAULT_AUTHOR.into(),
             reduce_motion: false,
             ui_scale: 1.0,
-            auto_save: false,
+            auto_save: true,
             start_on_home: false,
             invite_links: None,
             plugins: Vec::new(),

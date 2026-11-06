@@ -256,3 +256,94 @@ fn selection_and_diagnostics_tools_work_through_an_attached_app() {
     assert!(d["backend"].as_str().unwrap().contains(&port.to_string()), "{d}");
     assert_eq!((d["documents"].as_array().unwrap().len(), d["documents"][0]["dirty"].clone()), (1, json!(true)));
 }
+
+type Requests = std::sync::Arc<std::sync::Mutex<Vec<(String, Value)>>>;
+
+/// A fake app that remembers every request. It answers `file.open` with the id 7 and everything
+/// aimed at document 7 with a canned reply, and passes the rest on to a headless session.
+fn recording_app() -> (u16, Requests) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = log.clone();
+    std::thread::spawn(move || {
+        let mut h = Headless::new();
+        for stream in listener.incoming().flatten() {
+            let mut out = stream.try_clone().unwrap();
+            for line in BufReader::new(stream).lines() {
+                let Ok(line) = line else { break };
+                let v: Value = serde_json::from_str(&line).unwrap_or(Value::Null);
+                let (method, params) = (v["method"].as_str().unwrap_or("").to_string(), v["params"].clone());
+                seen.lock().unwrap().push((method.clone(), params.clone()));
+                let result = if method == "engine.execute" && params["command"] == "file.open" {
+                    Ok(json!({"id": 7}))
+                } else if params["document"] == 7 {
+                    Ok(json!({"ids": [], "total": 0, "canned": true}))
+                } else {
+                    h.call(&method, params)
+                };
+                let reply = match result {
+                    Ok(r) => json!({"id": v["id"], "ok": true, "result": r}),
+                    Err(e) => json!({"id": v["id"], "ok": false, "error": e}),
+                };
+                if writeln!(out, "{reply}").is_err() {
+                    break;
+                }
+            }
+        }
+    });
+    (port, log)
+}
+
+#[test]
+fn open_file_in_an_attached_app_opens_in_the_background_and_makes_the_file_the_target() {
+    let (port, log) = recording_app();
+    let mut s = Server::new(Box::new(attach(port)));
+    let text = |r: &Value| -> Value { serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap() };
+    let requests = || log.lock().unwrap().clone();
+    let last_open = || requests().into_iter().rev().find(|(m, p)| m == "engine.execute" && p["command"] == "file.open").unwrap().1;
+
+    let opened = call(&mut s, "open_file", json!({"path": "screen.figcraft"}));
+    assert_eq!(opened["isError"], false, "{opened}");
+    let out = text(&opened);
+    assert_eq!(out["note"], "opened in the background as document 7; later calls act on it (pass `document` to act on another tab)");
+    assert_eq!(last_open()["params"], json!({"path": "screen.figcraft", "activate": false}));
+    // The summary is read from the opened file, not from the tab in front.
+    assert_eq!(requests().last().map(|(m, p)| (m.clone(), p["document"].clone())), Some(("document.inspect".to_string(), json!(7))));
+    assert_eq!(text(&call(&mut s, "diagnostics", json!({})))["target"], 7);
+
+    // A call without `document` goes to the target; one with `document` goes where it says.
+    call(&mut s, "find_nodes", json!({"name": "Card"}));
+    let (method, params) = requests().last().cloned().unwrap();
+    assert_eq!((method.as_str(), params["command"].clone(), params["document"].clone()), ("engine.execute", json!("node.find"), json!(7)));
+    call(&mut s, "find_nodes", json!({"name": "Card", "document": 3}));
+    assert_eq!(requests().last().unwrap().1["document"], 3);
+    // The canvas drivers act on the tab in front.
+    call(&mut s, "key", json!({"key": "Escape"}));
+    assert!(requests().last().unwrap().1.get("document").is_none());
+
+    // `focus` leaves the window to the file, and the file stays the target.
+    let focused = call(&mut s, "open_file", json!({"path": "screen.figcraft", "focus": true}));
+    assert!(last_open()["params"].get("activate").is_none(), "{}", last_open());
+    assert!(text(&focused).get("note").is_none());
+    call(&mut s, "find_nodes", json!({"name": "Card"}));
+    assert_eq!(requests().last().unwrap().1["document"], 7);
+
+    // Clearing the target sends calls to the tab in front again.
+    assert_eq!(text(&call(&mut s, "use_document", json!({"document": null})))["target"], Value::Null);
+    call(&mut s, "find_nodes", json!({"name": "Card"}));
+    assert!(requests().last().unwrap().1.get("document").is_none());
+}
+
+#[test]
+fn documents_all_in_an_attached_app_sends_one_request_per_open_file() {
+    let (port, log) = recording_app();
+    let mut s = Server::new(Box::new(attach(port)));
+    call(&mut s, "run_command", json!({"command": "file.new", "params": {"name": "Second"}}));
+    log.lock().unwrap().clear();
+    let r = call(&mut s, "find_nodes", json!({"name": "Card", "documents": "all"}));
+    assert_eq!(r["isError"], false, "{r}");
+    let finds: Vec<Value> = log.lock().unwrap().iter().filter(|(_, p)| p["command"] == "node.find").map(|(_, p)| p["document"].clone()).collect();
+    assert_eq!(finds.len(), 2, "{finds:?}");
+    assert!(finds.iter().all(Value::is_u64) && finds[0] != finds[1]);
+}

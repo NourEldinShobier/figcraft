@@ -22,7 +22,13 @@ fn svg(name: &str) -> String {
 }
 
 fn open(s: &mut Session, params: &Value) -> Result<Value, String> {
-    s.execute("file.open", params).map_err(|e| e.to_string())
+    // The tab's `id` is new every time; the rest is what these tests compare.
+    s.execute("file.open", params).map_err(|e| e.to_string()).map(|mut v| {
+        if let Some(o) = v.as_object_mut() {
+            o.remove("id");
+        }
+        v
+    })
 }
 
 #[test]

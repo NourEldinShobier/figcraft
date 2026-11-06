@@ -256,7 +256,8 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
             }
             // The browser has no files to save to.
             if !cfg!(target_arch = "wasm32") && crate::widgets::checkbox(ui, prefs.auto_save, tr("Save files automatically")) {
-                toggles.push("pref.autoSave");
+                // Without `on` the command only reads the setting.
+                app.run("pref.autoSave", json!({"on": !prefs.auto_save}));
             }
             if !cfg!(target_arch = "wasm32") && crate::widgets::checkbox(ui, prefs.start_on_home, tr("Start on the Home screen")) {
                 toggles.push("pref.startOnHome");

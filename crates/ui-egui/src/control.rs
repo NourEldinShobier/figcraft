@@ -12,6 +12,10 @@
 //! - `ui.type {text}` — type into the text being edited
 //! - `ui.open {path}` — open a file as the Open dialog does: queued behind the progress card, decoded
 //!   on a worker thread (the window stays live; `ui.state` shows `pendingOpens` until it is done)
+//! - `ui.focus {}` — bring the window to the front (restore it, ask for focus and attention); the
+//!   app uses it when a second launch with a file hands the file to the running window
+//! - `ui.invite {link}` — open the Join dialog with a `figcraft:` invite link filled in, as the
+//!   app does for a link it was started with
 //! - `ui.input {events: [{move|down|up: [x, y], button?} | {key, shift?, alt?, cmd?} | {text} | {leave}
 //!   | {hold: {alt?, shift?, cmd?}} | {gamepad: "A" | "Gamepad A" | 0}]}` — raw pointer and key events
 //!   for the next frame, as if from the window (panels, popovers); `hold` keeps modifier keys down
@@ -1487,6 +1491,30 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             ctx.request_repaint();
             Ok(json!({"queued": true}))
         }
+        "ui.focus" => {
+            // Restores a minimised window, then asks for the keyboard focus; where the system
+            // refuses to hand it to a window the user is not in (Windows, Wayland), the window
+            // asks for attention instead (taskbar flash, dock bounce).
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(egui::UserAttentionType::Informational));
+            Ok(json!({"ok": true}))
+        }
+        "ui.invite" => {
+            // What the app does at start-up with an invite link: the Join dialog opens with the
+            // link filled in, so joining stays the person's choice.
+            let link = p
+                .get("link")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|l| l.len() <= 4096)
+                .ok_or("`link` required (at most 4096 characters)")?;
+            if !link.get(..9).is_some_and(|s| s.eq_ignore_ascii_case("figcraft:")) {
+                return Err("`link` must be a figcraft: invite link".into());
+            }
+            crate::live::open_invite(app, link);
+            Ok(json!({"ok": true}))
+        }
         "ui.menu.invoke" => {
             let id = p.get("id").and_then(Value::as_str).ok_or("`id` required")?;
             crate::menus::invoke(app, id);
@@ -1591,3 +1619,6 @@ mod capture_tests;
 
 #[cfg(test)]
 mod document_tests;
+
+#[cfg(test)]
+mod focus_tests;

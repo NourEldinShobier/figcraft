@@ -515,6 +515,11 @@ pub struct Node {
     /// Lock aspect ratio when resizing from the panel.
     #[serde(default, skip_serializing_if = "is_default")]
     pub constrain_proportions: bool,
+    /// The width / height the lock captured when it was turned on (or when the panel last sized
+    /// the node); the layout pass and resizes keep it while `constrain_proportions` is set. `None`:
+    /// the node's current ratio.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aspect_ratio: Option<f64>,
     /// Inside an instance: the node of the main component this one mirrors.
     #[serde(default, skip_serializing_if = "is_default")]
     pub source: Option<NodeId>,
@@ -732,6 +737,7 @@ impl Node {
             var_modes: BTreeMap::new(),
             bool_op: None,
             constrain_proportions: false,
+            aspect_ratio: None,
             source: None,
             exposed: false,
 

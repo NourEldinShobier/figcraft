@@ -131,7 +131,9 @@ naming it and the ones it takes, never ignored; `ids` and `id` are always taken.
 `agent` (a string, next to `command`) runs the command for an AI agent of that name, as the MCP
 server does with its client's name: comments it makes are signed "<agent> (agent)" ("AI agent" for
 an empty name), marked `"agent": true`, and keep their own read state. Without it the command acts
-as the user (the name from Preferences).
+as the user (the name from Preferences). An agent's `file.open` without `activate` opens the file
+behind the tab in front (`activate: false`); the user's `file.open` switches to it. `activate`,
+when given, wins.
 
 Four parameters work in the `params` of every command and need no entry in its doc: `where` (an
 object of `node.find` filters; the layers it finds become the command's `ids`, and the result gets
@@ -338,6 +340,19 @@ text tool).
 Open a file the way the Open dialog does: queued behind the progress card and decoded on a worker
 thread, so the window keeps painting while a large file imports (`engine.execute` `file.open` stays
 synchronous). Returns `{"queued": true}`; `ui.state` reports `pendingOpens` until the file is open.
+
+### `ui.focus {}`
+
+Bring the window to the front: restore it when minimised, ask for the keyboard focus and request
+the user's attention (a taskbar flash or dock bounce where the system will not give the focus to a
+window the user is not in, as on Windows and Wayland). Returns `{"ok": true}`. A second `figcraft`
+launch with a file uses it, after `ui.open`, to hand the file to the running window. Only people
+should call it: it interrupts whatever the user is doing.
+
+### `ui.invite {link}`
+
+Open the Join dialog with the `figcraft:` invite link filled in, as the app does for a link it was
+started with; joining stays the person's choice. Anything that is not a `figcraft:` link is an error.
 
 ### `ui.input {events}`
 

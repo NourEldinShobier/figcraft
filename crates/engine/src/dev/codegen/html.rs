@@ -1,5 +1,5 @@
-use super::css::{Tokens, css_decls};
-use super::{CodeLang, Ctx, Document, LayoutMode, Node, NodeId, NodeKind, Param, Sizing, indent, num, with_v_if};
+use super::css::{Tokens, css_decls, placement_decls, sized_by_parent};
+use super::{CodeLang, Ctx, Document, Node, NodeId, NodeKind, Param, Sizing, indent, with_v_if};
 
 // ------------------------------------------------------------------ HTML and React markup
 
@@ -149,32 +149,6 @@ pub(crate) struct Markup<'c, 'a> {
     pub fluid_leaves: f64,
 }
 
-/// How `n` sits in its parent: in the flex flow, or placed at its position.
-fn placement_decls(n: &Node, parent: Option<&Node>, root: bool, in_flow: bool) -> String {
-    let mut decls = String::new();
-    if root {
-        decls.push_str("position: relative;\n");
-    } else if in_flow {
-        let vertical = parent.and_then(|p| p.layout.as_ref()).is_some_and(|l| l.mode == LayoutMode::Vertical);
-        let (main, cross) =
-            if vertical { (n.child_layout.sizing_v, n.child_layout.sizing_h) } else { (n.child_layout.sizing_h, n.child_layout.sizing_v) };
-        if main == Sizing::Fill {
-            decls.push_str("flex: 1 1 0;\n");
-        }
-        if cross == Sizing::Fill {
-            decls.push_str("align-self: stretch;\n");
-        }
-    } else {
-        let c = n.transform.as_coeffs();
-        decls.push_str(&format!("position: absolute;\nleft: {}px;\ntop: {}px;\n", num(c[4]), num(c[5])));
-        let rot = figcraft_geom::rotation_degrees(n.transform);
-        if rot.abs() > 0.01 {
-            decls.push_str(&format!("transform: rotate({}deg);\ntransform-origin: 0 0;\n", num(-rot)));
-        }
-    }
-    decls
-}
-
 impl<'c, 'a> Markup<'c, 'a> {
     pub fn new(ctx: &'c Ctx<'a>, lang: CodeLang) -> Self {
         Markup {
@@ -318,14 +292,21 @@ impl<'c, 'a> Markup<'c, 'a> {
             return;
         }
         let hugs = n.layout.is_some() || matches!(n.kind, NodeKind::Text(_));
-        let hug = (hugs && n.child_layout.sizing_h == Sizing::Hug, hugs && n.child_layout.sizing_v == Sizing::Hug);
+        // Hug and fill sizes are left to the content and the parent; so are the sizes of a layer
+        // pinned to both sides of its parent.
+        let (fill_h, fill_v) = sized_by_parent(n, parent, root, in_flow);
+        let hug = (hugs && n.child_layout.sizing_h == Sizing::Hug || fill_h, hugs && n.child_layout.sizing_v == Sizing::Hug || fill_v);
         let mut own = css_decls(doc, n, &mut self.tokens, hug);
         let page = self.ctx.doc.node(self.ctx.root).map_or(f64::INFINITY, |r| r.width);
         if self.fluid && (n.layout.is_some() || matches!(n.kind, NodeKind::Text(_)) || (!root && n.width >= page * self.fluid_leaves)) {
             // Full width, or sized by the flex row (`flex: 1`): no cap needed.
             own = fluid(&own, n.width >= page - 0.5 || decls.contains("flex: 1 1 0;"), n.layout.is_some());
+            // A page box shrinks with the page, so it is not held at its width.
+            decls = decls.replace("flex-shrink: 0;\n", "");
         }
-        if n.layout.is_none() && !n.children.is_empty() && !root && in_flow {
+        // The containing block of ignore-auto-layout children, and of the free children of a frame.
+        let has_absolute = n.children.iter().any(|c| doc.node(*c).is_some_and(|k| k.child_layout.absolute));
+        if !n.children.is_empty() && !root && in_flow && (n.layout.is_none() || has_absolute) {
             own.push_str("position: relative;\n");
         }
         decls.push_str(&own);

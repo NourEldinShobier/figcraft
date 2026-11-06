@@ -336,6 +336,11 @@ struct Item {
     /// inside stroke): fill children share the free space by their content area, border-box
     /// fashion, so these come on top of each one's share.
     inset_main: f64,
+    /// A layer with its aspect ratio locked: the main size per unit of cross size, and the cross
+    /// size per unit of main size. Each is `None` when the layer is unlocked or hugs the axis that
+    /// would be derived (an auto layout frame's content decides that size).
+    main_per_cross: Option<f64>,
+    cross_per_main: Option<f64>,
     /// Baseline alignment: distance from the item's top to its first baseline.
     baseline: Option<f64>,
     /// Baseline alignment: offset from the line's top (computed per line).
@@ -413,6 +418,18 @@ fn align_flow_lines(items: &[Item], extents: &mut [(f64, f64)], al: &AutoLayout,
     (offset, cross_gap)
 }
 
+/// The width / height a layer with its proportions locked keeps: the ratio the lock captured, else
+/// its current one. `None` for unlocked layers, text (its height is measured) and rotated layers
+/// (shortcut: their box ratio is not the outer one; upgrade when rotated locked layers matter).
+fn locked_ratio(n: &figcraft_doc::Node) -> Option<f64> {
+    let c = n.transform.as_coeffs();
+    if !n.constrain_proportions || matches!(n.kind, NodeKind::Text(_)) || c[1].abs() > 1e-9 || c[2].abs() > 1e-9 {
+        return None;
+    }
+    let r = n.aspect_ratio.unwrap_or(n.width / n.height);
+    (r.is_finite() && r > 1e-9).then_some(r)
+}
+
 /// Collect the size and sizing constraints of the children in flow order.
 fn flow_items(doc: &Document, kids: &[NodeId], horizontal: bool, hug_main: bool, hug_cross: bool) -> Vec<Item> {
     let mut items = Vec::with_capacity(kids.len());
@@ -427,6 +444,12 @@ fn flow_items(doc: &Document, kids: &[NodeId], horizontal: bool, hug_main: bool,
             let (pt, pr, pb, pl) = insets(node, al);
             if horizontal { pl + pr } else { pt + pb }
         });
+        let hugs = |s: Sizing| s == Sizing::Hug && node.layout.is_some();
+        let (main_per_cross, cross_per_main) = locked_ratio(node).map_or((None, None), |r| {
+            // `r` is width / height: main / cross when the flow is horizontal, cross / main otherwise.
+            let (m_per_c, c_per_m) = if horizontal { (r, 1.0 / r) } else { (1.0 / r, r) };
+            ((!hugs(sm)).then_some(m_per_c), (!hugs(sc)).then_some(c_per_m))
+        });
         items.push(Item {
             id: *child,
             main: if horizontal { w } else { h },
@@ -439,6 +462,8 @@ fn flow_items(doc: &Document, kids: &[NodeId], horizontal: bool, hug_main: bool,
             min_cross,
             max_cross,
             inset_main,
+            main_per_cross,
+            cross_per_main,
             baseline: None,
             base_off: 0.0,
         });
@@ -537,7 +562,9 @@ pub fn layout_frame(doc: &mut Document, frame: NodeId, m: &dyn Measure) {
     if !wraps {
         for it in items.iter_mut().filter(|it| it.fill_cross && !it.fill_main) {
             let cross = clamp_size(inner_cross_fixed, it.min_cross, it.max_cross);
-            let (w, h) = if horizontal { (it.main, cross) } else { (cross, it.main) };
+            // A locked aspect ratio derives the main size from the filled cross size.
+            let main = it.main_per_cross.map_or(it.main, |k| clamp_size(cross * k, it.min_main, it.max_main));
+            let (w, h) = if horizontal { (main, cross) } else { (cross, main) };
             resize_child(doc, it.id, w, h, m);
             let (w, h) = outer_size(doc, it.id);
             it.main = if horizontal { w } else { h };
@@ -552,7 +579,14 @@ pub fn layout_frame(doc: &mut Document, frame: NodeId, m: &dyn Measure) {
     // Fill children take their main size now, so their cross size (wrapped text, a hugging frame)
     // is final before the lines and the frame are sized.
     for it in items.iter_mut().filter(|it| it.fill_main) {
-        let cross = if it.fill_cross && !wraps { clamp_size(inner_cross_fixed, it.min_cross, it.max_cross) } else { it.cross };
+        let cross = if it.fill_cross && !wraps {
+            clamp_size(inner_cross_fixed, it.min_cross, it.max_cross)
+        } else if it.fill_cross {
+            it.cross
+        } else {
+            // A locked aspect ratio derives the cross size from the filled main size.
+            it.cross_per_main.map_or(it.cross, |k| clamp_size(it.main * k, it.min_cross, it.max_cross))
+        };
         let (w, h) = if horizontal { (it.main, cross) } else { (cross, it.main) };
         resize_child(doc, it.id, w, h, m);
         let (w, h) = outer_size(doc, it.id);
@@ -1191,6 +1225,8 @@ pub fn grid_snap_lines_in(doc: &Document, frame: NodeId, xf: Affine) -> (Vec<f64
     (xs, ys)
 }
 
+#[cfg(test)]
+mod aspect_lock_tests;
 #[cfg(test)]
 mod behaviour_tests;
 #[cfg(test)]
