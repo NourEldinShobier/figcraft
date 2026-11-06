@@ -215,6 +215,8 @@ pub const TOOL_NAMES: &[&str] = &[
     "list_versions",
     "restore_version",
     "compare_version",
+    "find_similar",
+    "propagate_change",
 ];
 
 /// The tools that take `documents`: one call per file (`"all"` or a list of ids), at most
@@ -260,6 +262,8 @@ const DOCUMENT_TOOLS: &[&str] = &[
     "list_versions",
     "restore_version",
     "compare_version",
+    "find_similar",
+    "propagate_change",
 ];
 
 /// All tools, in `tools/list` order.
@@ -829,6 +833,33 @@ fn tools() -> Vec<Value> {
             ),
             true,
         ),
+        tool(
+            "find_similar",
+            "Find similar layers",
+            "Layers that look like the same element as `id` on any page of the document (engine `family.find`): a header copied onto every screen, a repeated card. Scores layers by family tag, shared component, structure, name and size: {id, family, total, twins: [{id, name, type, page, frame, score, reasons, sameFrame}]}, best first. Use it after changing one layer to see where else the same change may belong, then propagate_change. `documents` is not supported; pass `document` and call it per file.",
+            obj(
+                json!({"id": id_schema("The layer (default: the selection)"), "minScore": json!({"type": "number", "description": "Lowest score to list, 0-1 (default 0.6)"}), "limit": int("Most twins to return (default 50, up to 1000)")}),
+                &[],
+            ),
+            true,
+        ),
+        tool(
+            "propagate_change",
+            "Apply a change to similar layers",
+            "Copy the look of the layer `from` onto its twins (engine `family.propagate`), so a change made on one screen reaches the same element on the others. Twins are the `ids` you pass, else the layers find_similar scores at `minScore` (default 0.8). By default it copies every look property that differs (fills, strokes, effects, corner radius, opacity, type style…) and never names, text, positions or sizes; `props` lists the exact property names instead (naming `characters` copies text). Children are paired by position when both layers have the same child types (`deep`, default true). Nothing is changed unless `confirm` is true: without it the call returns the preview (`dryRun`) of what would change. Applied, it is one undo step. Returns {from, twins, changed: [{id, props}], skipped: [{id, prop, why}]}.",
+            obj(
+                json!({
+                    "from": id_schema("The layer that was changed"),
+                    "ids": json!({"type": "array", "items": id_schema("A twin"), "description": "Twins to change (default: the layers find_similar finds)"}),
+                    "props": json!({"type": "array", "items": string("Property name, as get_node shows it"), "description": "Only these properties"}),
+                    "minScore": json!({"type": "number", "description": "Lowest twin score when `ids` is not given, 0-1 (default 0.8)"}),
+                    "deep": boolean("Pair and copy children too (default true)"),
+                    "confirm": boolean("true applies the change; without it the call only previews")
+                }),
+                &["from"],
+            ),
+            false,
+        ),
     ]
 }
 
@@ -1179,6 +1210,8 @@ fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, doc_target:
         "list_versions" => list_versions(b, a),
         "restore_version" => restore_version(b, a),
         "compare_version" => compare_version(b, a),
+        "find_similar" => find_similar(b, a),
+        "propagate_change" => propagate_change(b, a),
         other => Err(format!("unknown tool `{other}` (tools/list has: {})", TOOL_NAMES.join(", "))),
     }
 }
@@ -1403,7 +1436,24 @@ fn set_properties(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolRes
     if let Some(w) = warnings {
         out["warnings"] = w;
     }
+    if !quiet && let Some(similar) = similar_on(b, &ids) {
+        out["similarOn"] = similar;
+    }
     Ok(ToolResult::json(&out))
+}
+
+/// Where else the edited layer has twins: up to 5 close matches on other frames, with the call that
+/// would carry the change over. Only for an edit of one to three layers; a failure says nothing.
+fn similar_on(b: &mut dyn Backend, ids: &[u64]) -> Option<Value> {
+    if ids.is_empty() || ids.len() > 3 {
+        return None;
+    }
+    let found = exec(b, "family.find", json!({"id": ids[0], "minScore": 0.85, "limit": 5})).ok()?;
+    let twins: Vec<Value> = found.get("twins")?.as_array()?.iter().filter(|t| t["sameFrame"] != true).cloned().collect();
+    if twins.is_empty() {
+        return None;
+    }
+    Some(json!({"from": ids[0], "total": found["total"], "twins": twins, "hint": "these layers look like the same element on other frames; propagate_change {from, confirm: true} copies this change to them (leave confirm out to preview)"}))
 }
 
 /// The layers `where` (the `node.find` filters) names, with how many matched; `None` without it.
@@ -2093,6 +2143,37 @@ fn restore_version(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolRe
         ));
     }
     exec(b, "version.restore", json!({"id": id})).map(|v| ToolResult::json(&v))
+}
+
+/// `find_similar`: `family.find` with the arguments the engine validates.
+fn find_similar(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let params = pick(a, &["id", "minScore", "limit"]);
+    exec(b, "family.find", params).map(|v| ToolResult::json(&v))
+}
+
+/// `propagate_change`: `family.propagate`, a preview unless `confirm` is true.
+fn propagate_change(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let mut params = pick(a, &["from", "ids", "props", "minScore", "deep"]);
+    let confirm = flag(a, "confirm")?;
+    if !confirm {
+        params["dryRun"] = json!(true);
+    }
+    let mut out = exec(b, "family.propagate", params)?;
+    if !confirm {
+        out = json!({"preview": true, "note": "nothing was changed; pass confirm: true to apply", "result": out});
+    }
+    Ok(ToolResult::json(&out))
+}
+
+/// The listed keys of `a` that are set, as a params object.
+fn pick(a: &Map<String, Value>, keys: &[&str]) -> Value {
+    let mut out = Map::new();
+    for k in keys {
+        if let Some(v) = a.get(*k).filter(|v| !v.is_null()) {
+            out.insert((*k).to_string(), v.clone());
+        }
+    }
+    Value::Object(out)
 }
 
 /// `compare_version`: what changed since a version, in one top-level frame or section or in all

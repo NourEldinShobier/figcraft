@@ -279,7 +279,7 @@ fn list_versions_returns_the_newest_ones_and_checkpoint_checks_its_arguments() {
 fn the_new_tools_are_registered_documented_and_in_the_instructions() {
     let mut c = Client::new();
     let tail = ["use_document", "copy_between_documents", "checkpoint", "list_versions", "restore_version", "compare_version"];
-    assert_eq!(&TOOL_NAMES[TOOL_NAMES.len() - 6..], tail);
+    assert_eq!(&TOOL_NAMES[TOOL_NAMES.len() - 8..TOOL_NAMES.len() - 2], tail);
     let tools = c.rpc("tools/list", json!({}))["result"]["tools"].clone();
     let tools = tools.as_array().unwrap();
     let tool = |name: &str| tools.iter().find(|t| t["name"] == name).unwrap_or_else(|| panic!("no tool {name}")).clone();

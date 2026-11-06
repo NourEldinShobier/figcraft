@@ -47,7 +47,7 @@ wait_for_changes {after, timeoutMs} and pass the returned cursor back. \
 Documents: with the app attached, open_file opens a file in the background and later calls act on it (the target \
 document, use_document sets another) without touching the user's tab; `document` names another file for one call, \
 and `documents` (\"all\" or a list) on find_nodes, set_properties, run_command and get_nodes runs it in each file, \
-e.g. to change every screen that has an element; copy_between_documents moves layers across files. \
+e.g. to change every screen that has an element; copy_between_documents moves layers across files. The same element repeated on several screens is a family: find_similar lists a layer's twins, set_properties results show them as similarOn, and propagate_change (previewed until confirm) copies a change to them. \
 Call checkpoint before a big change (restore_version goes back). \
 Resources: figcraft://document, figcraft://node/{id}, figcraft://command/{id}, figcraft://comments. \
 prompts/list has workflows, including fix_comments.";
