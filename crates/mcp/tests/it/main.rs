@@ -10,6 +10,8 @@ mod agent_tasks;
 mod attached;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::disallowed_methods)]
 mod automation_roots;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod cancel_progress;
 #[allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod common;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -40,8 +42,6 @@ mod lint_layout_tool;
 mod multi_doc_tools;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod overlay_anchor;
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-mod cancel_progress;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod protocol;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
