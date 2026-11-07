@@ -65,6 +65,7 @@ pub use dev::annotations;
 pub use dev::code_connect;
 pub use dev::codegen;
 pub use dev::component_codegen;
+pub use dev::design_extras;
 pub use dev::design_read;
 pub use dev::dev_measurements;
 pub use dev::dev_resources;

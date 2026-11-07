@@ -132,3 +132,48 @@ fn search_finds_components_variables_and_styles_by_text() {
     assert_eq!((limited["variables"].as_array().unwrap().len(), limited["total"].as_u64()), (1, Some(2)));
     assert!(s.execute("inspect.searchDesignSystem", &json!({"limit": 0})).is_err());
 }
+
+#[test]
+fn design_context_extras_cover_the_subtree() {
+    let (mut s, f, r) = card();
+    let ex = |s: &mut Session, c: &str, p: Value| s.execute(c, &p).unwrap();
+    // A mapped instance inside the card.
+    let main = id(ex(&mut s, "frame.create", json!({"x": 400, "y": 0, "width": 40, "height": 20, "name": "Chip"})));
+    let comp = id(ex(&mut s, "component.create", json!({"ids": [main]})));
+    let inst = id(ex(&mut s, "instance.create", json!({"component": comp, "x": 0, "y": 0, "parent": f})));
+    ex(&mut s, "codeConnect.set", json!({"id": inst, "importPath": "@acme/ui", "template": "<Chip kind=\"x\"/>"}));
+    ex(&mut s, "annotation.add", json!({"id": r, "label": "Fade in"}));
+    ex(&mut s, "devResource.add", json!({"id": r, "url": "https://example.com/spec", "name": "Spec"}));
+    ex(&mut s, "node.set", json!({"id": f, "props": {"devStatus": "readyForDev"}}));
+    ex(&mut s, "comment.add", json!({"x": 20, "y": 30, "text": "Check spacing", "anchor": f.0}));
+    ex(&mut s, "proto.interaction.add", json!({"id": r, "dest": f}));
+
+    let out = ex(&mut s, "inspect.designContext", json!({"id": f, "language": "react", "include": "all"}));
+    assert_eq!(out["instances"][0]["componentName"], "Chip");
+    assert_eq!(out["instances"][0]["mainId"].as_u64(), Some(comp.0));
+    assert_eq!(out["instances"][0]["codeConnect"]["importPath"], "@acme/ui");
+    assert!(out["instances"][0]["codeConnect"]["snippet"].as_str().unwrap().contains("<Chip kind=\"x\"/>"));
+    assert!(out["code"].as_str().unwrap().contains("<Chip kind=\"x\"/>"), "mapped instance replaces generated markup: {}", out["code"]);
+    assert_eq!(out["annotations"][0]["label"], "Fade in");
+    assert_eq!(out["devResources"][0]["url"], "https://example.com/spec");
+    assert_eq!(out["devResources"][0]["layer"].as_u64(), Some(r.0));
+    assert_eq!(out["status"]["status"], "readyForDev");
+    assert_eq!(out["comments"][0]["text"], "Check spacing");
+    let b = &out["bindings"][0];
+    assert_eq!(b["id"].as_u64(), Some(r.0));
+    assert_eq!(b["bound"]["fill"]["css"], "var(--color-brand, #3366FF)");
+    assert_eq!(out["interactions"][0]["trigger"], "On click");
+    assert!(out["interactions"][0]["actions"][0].as_str().unwrap().starts_with("Navigate to Card <1>"));
+    let hints = out["hints"].as_array().unwrap();
+    assert!(hints[0].as_str().unwrap().contains("mapped components first") && hints[1].as_str().unwrap().contains("design tokens"), "{hints:?}");
+    assert!(out.get("truncated").is_none());
+
+    // Default include leaves out the heavy lists; a named list gives only that one.
+    let d = ex(&mut s, "inspect.designContext", json!({"id": f}));
+    assert!(d.get("comments").is_none() && d.get("interactions").is_none() && d.get("hints").is_some());
+    let only = ex(&mut s, "inspect.designContext", json!({"id": f, "include": ["status"]}));
+    assert!(only.get("instances").is_none() && only["status"]["status"] == "readyForDev");
+    for junk in [json!("bogus"), json!(5), json!(["status", 3]), json!({"a": 1})] {
+        assert!(s.execute("inspect.designContext", &json!({"id": f, "include": junk})).is_err());
+    }
+}

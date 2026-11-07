@@ -667,12 +667,13 @@ fn tools() -> Vec<Value> {
         tool(
             "get_design_context",
             "Get design context",
-            "Everything needed to implement a layer in code (engine `inspect.designContext`): generated `code` (HTML + CSS by default; `language` as inspect.code: css, html, react, vue, tailwind, swiftui, compose…), the layer's `properties` (layout, typography, fills, strokes, effects with style and variable names), `variables` used, exportable `assets` and a child `outline`. Same name and arguments as the Figma MCP tool.",
+            "Everything needed to implement a layer in code (engine `inspect.designContext`): generated `code` (HTML + CSS by default; `language` as inspect.code: css, html, react, vue, tailwind, swiftui, compose…), the layer's `properties` (layout, typography, fills, strokes, effects with style and variable names), `variables` used, exportable `assets` and a child `outline`. `include` adds more for the layer and its descendants: `instances` (with Code Connect snippets, which also replace generated markup in `code`), `annotations`, `devResources`, `status`, `comments` and `interactions` (both opt-in), `bindings` (variable-bound properties as var(--name, raw value)) and `hints` (use mapped components first, then tokens, then raw values). Same name and arguments as the Figma MCP tool.",
             obj(
                 json!({
                     "nodeId": id_schema("Layer id (default: the selection)"),
                     "language": string("css | html | react | leptos | vue | tailwind | swiftui | compose | arkui (default html)"),
                     "depth": int("Outline depth (default 3, max 32)"),
+                    "include": {"type": "array", "items": {"type": "string", "enum": ["instances", "annotations", "devResources", "status", "comments", "bindings", "interactions", "hints", "all"]}, "description": "Extras to add (default all but comments and interactions)"},
                 }),
                 &[],
             ),

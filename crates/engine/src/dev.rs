@@ -2,6 +2,7 @@ pub mod annotations;
 pub mod code_connect;
 pub mod codegen;
 pub mod component_codegen;
+pub mod design_extras;
 pub mod design_read;
 pub mod dev_measurements;
 pub mod dev_resources;
