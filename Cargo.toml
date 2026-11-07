@@ -66,6 +66,8 @@ serde_json = { version = "1", features = ["float_roundtrip", "unbounded_depth"] 
 # `figcraft-cli mcp` parent-process watchdog (MIT, native only).
 sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 regex = "1.13"
+# `script.run`: the embedded script language (MIT OR Apache-2.0, pure Rust, runs on wasm32). No modules (no `import`), no timestamps: scripts reach the document only through host functions.
+rhai = { version = "1.27", default-features = false, features = ["std", "no_module", "no_time"] }
 log = "0.4"
 same-file = "1.0.6"
 # All date/time conversion goes through chrono (no hand-rolled calendar code beyond the 400-year range extension; AGENTS.md).

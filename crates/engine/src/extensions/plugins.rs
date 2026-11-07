@@ -123,6 +123,8 @@ const DENIED: &[&str] = &[
     "help.",
     "plugin.",
     "plugins.",
+    // A script starting a script would nest sandboxes and their budgets.
+    "script.",
     "libraries.",
     "library.add",
     // Contacts the servers a file names, and remembers them as yours (#1097).
@@ -144,18 +146,18 @@ const DENIED: &[&str] = &[
 /// Read-only exceptions to [`DENIED`].
 const ALLOWED: &[&str] = &["doc.list", "version.list"];
 
-/// Why a plugin may not call `command` with `params` (before running it), if it may not.
-fn refusal(m: &Manifest, command: &str, params: &Value) -> Option<String> {
+/// Why `command` with `params` is out of reach of code that runs in a sandbox (a plugin, a
+/// `script.run` script), whatever its permissions: no files, no other documents, no dialogs'
+/// commands, no layer data a widget owns.
+pub(crate) fn sandbox_refusal(command: &str, params: &Value) -> Option<String> {
     if DENIED.iter().any(|p| command.starts_with(p)) && !ALLOWED.contains(&command) {
-        return Some(format!("`{command}` isn't available to plugins"));
+        return Some(format!("`{command}` isn't available to plugins and scripts"));
     }
-    // A preview runs its inner command, which the plugin's permissions and the denied list must cover too.
-    // An inner command that can't be previewed (a nested preview) is refused by the preview itself,
-    // before it runs: descending into its parameters first would only rescan them.
+    // A preview runs its inner command, which the denied list must cover too.
     if command == "text.preview"
         && let Some(inner) = get(params, "command").and_then(Value::as_str)
         && crate::textpreview::PREVIEWABLE.contains(&inner)
-        && let Some(why) = refusal(m, inner, get(params, "params").unwrap_or(&Value::Null))
+        && let Some(why) = sandbox_refusal(inner, get(params, "params").unwrap_or(&Value::Null))
     {
         return Some(why);
     }
@@ -179,6 +181,22 @@ fn refusal(m: &Manifest, command: &str, params: &Value) -> Option<String> {
     // Variables JSON may be given as a path: only objects and JSON text for plugins.
     if command == "variable.import" && get(params, "variables").and_then(Value::as_str).is_some_and(|t| !t.trim_start().starts_with('{')) {
         return Some("plugins can't read files: pass the variables JSON itself".into());
+    }
+    None
+}
+
+/// Why a plugin may not call `command` with `params` (before running it), if it may not.
+fn refusal(m: &Manifest, command: &str, params: &Value) -> Option<String> {
+    if let Some(why) = sandbox_refusal(command, params) {
+        return Some(why);
+    }
+    // A preview runs its inner command, which the plugin's permissions must cover too.
+    if command == "text.preview"
+        && let Some(inner) = get(params, "command").and_then(Value::as_str)
+        && crate::textpreview::PREVIEWABLE.contains(&inner)
+        && let Some(why) = refusal(m, inner, get(params, "params").unwrap_or(&Value::Null))
+    {
+        return Some(why);
     }
     if !m.permissions.allows(command) {
         return Some(format!("`{command}` isn't in the commands {} asked permission for", m.name));

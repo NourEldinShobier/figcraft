@@ -412,6 +412,7 @@ The SVG icon preset (`iconPreset: true` on `export` and `export_many`, with `cur
 | `audit_tokens {root?, page?, limit?}` | Visible solid fills and strokes with a literal colour that a colour variable already holds (`lint.tokens`): `{total, listed, hardcoded: [{id, name, field, color, variables}], fixes: [{variable, field, ids}], bound}`. Each fix is a `variable.bind {ids, field, variable}`. Read-only. Takes `document`. |
 | `lint_layout {root?, page?, checks?, grid?, limit?}` | Layout defects among sibling layers (`lint.layout`): `{total, listed, truncated?, findings: [{check, ids, message, fix?: {command, params}}]}`. Checks: `overlap`, `misaligned` (edges 0-4 px off a shared line; fix `align.*`), `uneven-gap` (rows/columns of 3+; fix `distribute.*`), `tiny-target` (under 24x24, 44x44 in frames up to 500 wide; fix `node.set`), `off-grid` (opt-in; fix `node.set`). Auto-layout children are skipped. Run a `fix` with `run_command`. Read-only. Takes `document`. |
 | `check_accessibility {root?, page?, limit?}` | Accessibility audit beyond contrast (`a11y.audit`): `{issues, checks: {contrast, targets, nonText, alt, readingOrder}, details: {contrast, targets, nonText, alt}}`. Contrast as `check_contrast`; targets: layers with interactions and frames/components/instances named like a button, link, tab, input under 24x24 (44x44 in frames up to 500 wide); nonText: a control's boundary (when it has no text label, or is a field) and its icons need 3:1 (WCAG 1.4.11); alt: images, vectors and groups named icon/logo/image/photo without alt text. Alt text is `set_properties {props: {alt}}` (stored as plugin data `figcraft.alt`, shown by `get_node` as `alt`; `""` marks decorative, `null` clears). Single checks and the full reading order: `run_command` `a11y.checkTargets`, `a11y.checkNonText`, `a11y.checkAlt`, `a11y.readingOrder`. Read-only. Takes `document`. |
+| `run_script {code, maxOperations?, dryRun?}` | Write to the canvas by code (`script.run`): runs a Rhai script with loops and conditions as one undo step; if it throws or a command fails, nothing changes. Host functions `cmd(id, #{params})`, `find(#{filters})`, `get(id)`, `log(text)`. Returns `{value, logs, created: [ids], changed, deleted, commands, operations}`; with `dryRun`, `{dryRun, wouldChange, created, deleted, count, result}` and the file untouched. Errors name the line and column. See [Scripts](#scripts). Takes `document`. |
 | `get_design_guidelines {}` | The Markdown design rules stored with the file (`library.guidelines`): `{text, bytes}`. Read-only. Takes `document`. Write them with `run_command` `library.setGuidelines {text}` (up to 20 KB, `""` clears; one undo step); `get_design_context` puts them first in its `hints`. The `create_design_system_rules {target?}` prompt reads variables, styles and components, writes a rules file for the project and offers to store the summary with `library.setGuidelines`. |
 | `get_code_connect_map {id?, language?}` | The Code Connect link of a component, set or instance with the import line and the snippet it renders to (`inspect.componentCode`), or without `id` every link in the file (`codeConnect.export`), filtered by `language`. Read-only. Takes `document`. |
 | `add_code_connect_map {id, language?, importPath?, name?, template?}` | Links a component (or its set) to a code component (`codeConnect.set`); `{property}` in the template is the instance's value. Returns `{component, language, code, unknown}`. Takes `document`. |
@@ -1837,6 +1838,52 @@ permissions: without it nothing is downloaded); `plugin.directory.publish {path 
 {"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"plugin.directory.install","params":{"id":"org.figcraft.examples.swatch-grid","confirm":true}}}}
 ```
 
+### Scripts
+
+`script.run {code, maxOperations?}` (MCP: `run_script`) is the write-by-code tool: one call runs a
+[Rhai](https://rhai.rs) script (a small pure-Rust language, so the browser build has it too) with
+loops, conditions, functions and reads. The whole script is one undo step and rolls back entirely
+when it throws, when a command it calls fails, or when it runs out of budget. `dryRun: true` runs it,
+reports what it would change (`wouldChange`, `created`, `deleted`) and undoes it.
+
+Host functions:
+
+- `cmd(id, #{params})` / `cmd(id)` runs any engine command (`list_commands`) and returns its
+  result as a map, array or value. A failing command stops the script with its error; `try { } catch
+  (e) { }` handles it and that command leaves nothing behind.
+- `find(#{filters})` returns the ids `node.find` finds as an array (`limit` defaults to and is at
+  most 1000; more matches than come back is an error, never a silent cut).
+- `get(id)` returns `node.get` of a layer as a map.
+- `log(text)` (or `print`) adds a line to `logs` (200 lines of 1000 characters at most).
+
+The last expression is the result `value`. Layer ids are integers; maps are `#{x: 10, name: "A"}`.
+
+```
+// five cards in a row
+for i in 0..5 {
+    cmd("node.create", #{type: "frame", name: "Card " + i, x: i * 220, y: 0, width: 200, height: 120});
+}
+
+// recolour every layer named Button, skipping hidden ones
+let n = 0;
+for id in find(#{name: "Button"}) {
+    if get(id).visible != false {
+        cmd("node.set", #{ids: [id], props: #{fills: [#{type: "solid", color: "#2563EB"}]}});
+        n += 1;
+    }
+}
+n
+```
+
+The sandbox has no modules (`import`), no `eval`, no clock and no files: scripts cannot call the
+commands plugins cannot (`file.*`, `doc.*` except `doc.list`, `app.*`, `plugin.*`, `script.*`,
+`command.batch`, undo and redo, ...) nor pass a `path` to the commands that read or write a file.
+Budgets that do not depend on wall-clock time: `maxOperations` (default 200000, at most 5000000;
+Rhai counts each expression and statement), 10000 commands, arrays of up to 1000 elements, maps of
+up to 250 entries, strings of 1 MB, call depth 32, `code` of 100 KB. An error reads `script error at
+line 3, column 5: <message>` followed by that line of the script and the logs written before it, and
+says nothing was changed.
+
 ### Dev Mode
 
 - **Pages as React + Tailwind:** `inspect.code {id, language: "tailwind"}` writes a layer tree as a
@@ -2256,7 +2303,7 @@ so no command's doc lists them. A command whose own doc lists one of the names k
   are cut at 10000 ids (`truncated: true`; `count` is the full number). Only commands marked
   undoable (`undoable` in `list_commands`) can be dry-run, since only edits of the document can be
   rolled back: anything else (saving, opening, exporting, UI requests) is refused with `dryRun is
-  not available for <command>`. A `command.batch` can be dry-run when each of its steps can.
+  not available for <command>`. A `command.batch` can be dry-run when each of its steps can, and `script.run` always can.
   `wouldChange` counts the layers the edit changes including what the layout then moves, and
   covers layers only (not styles, variables or pages).
 - `keepSelection: true` restores the selection and the current page to what they were before the

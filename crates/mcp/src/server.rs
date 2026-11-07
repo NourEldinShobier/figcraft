@@ -41,7 +41,7 @@ inspect_document / get_node return the layer tree as JSON (check sizes, fills, l
 screenshot returns a PNG of the page or of given layers to look at. undo/redo step through history. \
 Cheap reads that touch neither the selection nor the view: find_nodes (search), get_nodes (an outline of many layers), \
 contact_sheet (many frames on one PNG), get_selection (what the user has selected) and diagnostics (backend and open files). \
-Every command also takes `where`, `list`, `dryRun` and `keepSelection`. Comments: comment.list returns threads (text, anchor node id, frame, page, x/y, replies); fix open ones, \
+Every command also takes `where`, `list`, `dryRun` and `keepSelection`. For loops and conditions over many layers, run_script runs one script as one undo step. Comments: comment.list returns threads (text, anchor node id, frame, page, x/y, replies); fix open ones, \
 reply with what changed, then resolve (a reply reopens a thread). To react to new feedback, call \
 wait_for_changes {after, timeoutMs} and pass the returned cursor back. \
 Documents: with the app attached, open_file opens a file in the background and later calls act on it (the target \

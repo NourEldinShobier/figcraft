@@ -45,8 +45,11 @@ fn changes(before: &Document, after: &Document) -> Changes {
 }
 
 /// Why `id` can't be dry-run: only commands that merely edit the document (the undoable ones) can
-/// be rolled back. A batch can when every step can.
+/// be rolled back. A batch can when every step can, and a script (a group of its own) always can.
 fn dry_run_refusal(id: &str, params: &Value) -> Option<String> {
+    if id == "script.run" {
+        return None;
+    }
     if id == "command.batch" {
         for step in params.get("commands").and_then(Value::as_array).into_iter().flatten() {
             let Some(step_id) = step.get("command").and_then(Value::as_str) else { continue };

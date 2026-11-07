@@ -28,6 +28,7 @@ pub mod page;
 pub mod props;
 pub mod proto;
 pub mod proto_actions;
+pub mod script;
 pub mod section;
 pub mod structure;
 pub mod styles;
@@ -100,6 +101,7 @@ fn registry() -> &'static Registry {
         list.extend(family::specs());
         list.extend(guidelines::specs());
         list.extend(tokencheck::specs());
+        list.extend(script::specs());
         list.extend(lintlayout::specs());
         list.extend(docdiff::specs());
         list.extend(summary::specs());

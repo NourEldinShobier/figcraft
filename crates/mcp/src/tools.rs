@@ -225,6 +225,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "diff_documents",
     "summarize_document",
     "check_accessibility",
+    "run_script",
 ];
 
 /// The tools that take `documents`: one call per file (`"all"` or a list of ids), at most
@@ -280,6 +281,7 @@ const DOCUMENT_TOOLS: &[&str] = &[
     "diff_documents",
     "summarize_document",
     "check_accessibility",
+    "run_script",
 ];
 
 /// All tools, in `tools/list` order.
@@ -962,6 +964,20 @@ fn tools() -> Vec<Value> {
             ),
             true,
         ),
+        tool(
+            "run_script",
+            "Write to the canvas by code",
+            "Write to the canvas by code: one call runs a Rhai script (engine `script.run`) with loops, conditions and reads, as ONE undo step; when the script throws or any command fails, nothing is changed. Host functions: `cmd(id, #{params})` runs any engine command (list_commands) and returns its result as a map, e.g. `cmd(\"node.create\", #{type: \"frame\", width: 100, height: 60}).id` (a failing command stops the script, `try { ... } catch (e) { ... }` handles it); `find(#{filters})` returns the ids node.find finds as an array (up to 1000: narrow the filters when more match); `get(id)` returns the layer as a map; `log(text)` adds a line to `logs`. The last expression is the result `value`. Maps are `#{x: 10, name: \"A\"}`, ids are integers, `for i in 0..5 { }`, `if`, `let`, `fn` work as in Rust. No files, no import, no eval, no clock; at most `maxOperations` operations (default 200000, up to 5000000) and 10000 commands. Returns {value, logs, created: [ids], changed, deleted, commands, operations}; with `dryRun` {dryRun, wouldChange, created, deleted, count, result} and the file untouched. An error names the line and column and shows that line. Examples: create 5 frames: `for i in 0..5 { cmd(\"node.create\", #{type: \"frame\", name: \"Card \" + i, x: i * 220, y: 0, width: 200, height: 120}); }`; recolour every layer named Button: `for id in find(#{name: \"Button\"}) { cmd(\"node.set\", #{ids: [id], props: #{fills: [#{type: \"solid\", color: \"#2563EB\"}]}}); }`.",
+            obj(
+                json!({
+                    "code": string("The Rhai script (at most 100000 bytes)"),
+                    "maxOperations": json!({"type": "integer", "minimum": 1, "maximum": 5_000_000, "description": "Operation budget (default 200000); a script that exceeds it fails and changes nothing"}),
+                    "dryRun": boolean("Run the script, report what it would change and undo it"),
+                }),
+                &["code"],
+            ),
+            false,
+        ),
     ]
 }
 
@@ -1353,6 +1369,7 @@ fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, doc_target:
         "lint_layout" => exec(b, "lint.layout", pick(a, &["root", "page", "checks", "grid", "limit"])).map(|v| ToolResult::json(&v)),
         "diff_documents" => exec(b, "doc.diff", pick(a, &["a", "b", "version", "limit"])).map(|v| ToolResult::json(&v)),
         "check_accessibility" => exec(b, "a11y.audit", pick(a, &["root", "page", "limit"])).map(|v| ToolResult::json(&v)),
+        "run_script" => exec(b, "script.run", pick(a, &["code", "maxOperations", "dryRun"])).map(|v| ToolResult::json(&v)),
         "summarize_document" => exec(b, "inspect.summary", pick(a, &["budgetTokens"])).map(|v| ToolResult::json(&v)),
         other => Err(format!("unknown tool `{other}` (tools/list has: {})", TOOL_NAMES.join(", "))),
     }

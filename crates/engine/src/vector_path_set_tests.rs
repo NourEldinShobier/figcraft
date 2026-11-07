@@ -213,7 +213,7 @@ fn a_boolean_operand_takes_a_new_path_and_the_group_follows() {
 
 #[test]
 fn junk_paths_never_panic() {
-    let long = "M0 0 ".to_string() + &"L1 1 ".repeat(5000);
+    let long = format!("M0 0 {}", "L1 1 ".repeat(5000));
     let junk = [
         json!("M"),
         json!("Z"),

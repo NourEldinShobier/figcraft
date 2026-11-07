@@ -43,6 +43,8 @@ mod screenshot_marks;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod screenshot_pixel_limit;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod script_tool;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod selection_tools;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod terse_results;
