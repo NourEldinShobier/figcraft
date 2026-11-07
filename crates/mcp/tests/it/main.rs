@@ -41,7 +41,11 @@ mod multi_doc_tools;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod overlay_anchor;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod cancel_progress;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod protocol;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod revision_guard;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod screenshot_marks;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

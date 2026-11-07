@@ -35,8 +35,14 @@ command, and only the file it works in shows them. This is display only: no undo
 saved, nothing sent to a live session's other people, and nothing changes in what the agent may
 do.
 
-Attached calls are never automatically replayed after a transport failure: the app may have
-applied the request before its reply was lost. The error reports that the operation may have
+Attached calls fail with one of five typed errors (`AttachError`: `NotReachable`,
+`RefusedAtConnect`, `QueueFull`, `LostReply`, `App`), turned into the message text only at the
+backend boundary. A call is repeated automatically only when that cannot apply an edit twice:
+`QueueFull` (the app said its request queue is full) up to 3 times, 100, 300 and 900 ms apart;
+for read-only methods (`document.inspect`, `node.get`, `doc.revision`, `ui.render`, `ui.screenshot`,
+`ui.inspect`, `engine.commands`, `events.poll`, `doc.list`, `doc.status`) also a fresh connection the
+app closed without a byte (same backoff) and one lost reply. A lost reply of anything else is not
+replayed: the app may have applied the request. The error reports that the operation may have
 completed; inspect the document before retrying an edit. The next explicit call reconnects.
 If that connection cannot be established, the error says the request was not sent.
 A reply from the app is read up to **512 MiB before the newline** (the largest window capture is
@@ -420,7 +426,7 @@ The SVG icon preset (`iconPreset: true` on `export` and `export_many`, with `cur
 | `add_code_connect_map {id, language?, importPath?, name?, template?}` | Links a component (or its set) to a code component (`codeConnect.set`); `{property}` in the template is the instance's value. Returns `{component, language, code, unknown}`. Takes `document`. |
 | `diff_documents {a?, b?, version?, limit?}` | Structural diff (`doc.diff`) from `a` (an open file) or a saved `version` to `b` (default the file in front): `{mode, a, b, identical, counts: {added, removed, moved, changed}, changed: [{id, path, type, changes: [{prop, old, new}], moreProps?}], moved: [{id, path, from, to}], added: [{id, path, type, layers}], removed, truncated?, note?}`. Layers match by id for a version and by page/name path for two files; added and removed list the top layer of each subtree; at most `limit` (default 50, up to 1000) items. Z-order changes are not reported. Read-only. Takes `document`. |
 | `summarize_document {budgetTokens?}` | A token-budgeted overview (`inspect.summary`): counts of pages, layers, components, instances, styles and variables; per page the top-level frames with size, child and layer counts; the largest text; repeated element families; the calls to drill in with. Fits `budgetTokens` (default 2000, 100-50000) by showing fewer frames, headings and families, not by cutting off: `more*` fields count what is left out, `level` is the detail shown (0 most), `overBudget` when nothing fits. Read-only. Takes `document`. |
-| `diagnostics {}` | `{backend, attached, mcpServer: {pid}, target, autoSave, documents: [{index, id, name, path, dirty, changedOnDisk, lastSaved, active}]}` from the engine command `doc.status`. `attached` is true when the FigCraft app is driven. `changedOnDisk`: the file changed on disk since the document was read or saved. `lastSaved`: the file's modification time (ISO 8601 UTC), null without a file. `path` is null for an untitled document and for AI agents, as in `doc.list` (#1117). |
+| `diagnostics {}` | `{backend, attached, mcpServer: {pid}, requests: {inFlight: {id, tool}, queued, cancelledBeforeStart, lastFinished: {tool, ms, failed}}, target, autoSave, documents: [{index, id, name, path, dirty, changedOnDisk, lastSaved, active}]}` from the engine command `doc.status`. `attached` is true when the FigCraft app is driven. `changedOnDisk`: the file changed on disk since the document was read or saved. `lastSaved`: the file's modification time (ISO 8601 UTC), null without a file. `path` is null for an untitled document and for AI agents, as in `doc.list` (#1117). |
 | `export {ids, format, scale \| size, path?, bleed?, cropMarks?, bleedMarks?, cmyk?, contentsOnly?, includeBoundingBox?, svgOutlineText?, svgIdAttribute?, svgSimplifyStroke?, vdCompat?}` | png, jpg, svg, webp, pdf, xml (an Android Vector Drawable: `svgIdAttribute` writes `android:name`, `vdCompat` is `bestEffort` (default: approximated with a warning), `exact` (left out with a warning) or `ignore` (no warnings: overlapping layer opacity dropped, even-odd fills kept as `fillType="evenOdd"`, diamond gradients left out), and the result lists `warnings` for what was changed or left out), or `fig`: the whole file as `.fig`, experimental (see Exporting `.fig` files below); `size` is `2x`, `512w` or `512h`. The image covers what the layers paint (shadows towards their offset, strokes, unclipped children, a mask group's mask; hidden layers take no room; a slice is its area with everything under it, or only the frame or group it sits in while `contentsOnly` is on); `contentsOnly: false` also draws every other layer showing in that area, `includeBoundingBox` exports the layers' own boxes; SVG: `svgOutlineText: false` keeps `<text>`, `svgIdAttribute` writes unique ids from layer names, `svgSimplifyStroke: false` writes every stroke as an outline. The same options go in export settings (`export.add` / `export.update`). PDF: frames one page each (sized in points), anything else together on one page; print options: `bleed` (points or a length like `"3mm"`, `"0.125in"`), crop and bleed marks, CMYK colour (see Exports below), also taken by `file.export`, `file.exportLayers`, `file.exportFramesPdf` and stored per export setting by `export.add` / `export.update`; `run_command` `file.exportFramesPdf {page?, path?}` writes every top-level frame of a page. Without `path`, images come back as MCP image content, SVG as text, XML as text followed by `{format, bytes, warnings}`. Layers' own export settings: `run_command` with `export.add` / `export.update {index, size?, suffix?, format?}` / `export.remove` and `file.exportLayers {ids?, dir?, assets?}` (every layer once per setting, named `<layer><suffix>.<format>`, a slash in a layer name making a folder; `assets: true` exports the Inspect tab's assets instead: icons as SVG, images as PNG). |
 | `export_many {ids?, formats?, scales?, naming?, flatten?, dir?, iconPreset?, currentColor?, ...}` | Engine `file.exportMany`. An unknown key is an error. A `/` in a layer name makes folders under `dir` (`state/win/dark` is `dir/state/win/dark.png`); `flatten: true` turns it into `_` instead. `export` and `export_many` create missing folders of `path` / `dir`. Each layer (default the selection, else the page's top-level layers) on its own, in every format of `formats` (png, jpg, webp, svg, pdf, xml; default png) at every scale of `scales` (default 1; svg, pdf and xml ignore them), with no export settings on the layers: 6 icons as png and svg at 1x/2x/4x is one call. `naming` is a template with `{name}`, `{id}`, `{scale}`, `{format}`, `{ext}` (default `{name}@{scale}x.{ext}` for raster with several scales, else `{name}.{ext}`; `/` makes folders, repeated names get ` 2`). With `dir` the files are written there and each entry has its `path`; without it they come back base64-encoded in `data` as `{name: base64}`. At most 1000 files. The SVG icon preset below applies to its SVGs. |
 | `export_source {path?}` | Engine `file.exportSource`. The whole document as canonical plain-text JSON Lines (sorted keys, no volatile fields, one line per layer; see [source-format.md](source-format.md)). Without `path` the text comes back as `source`; a path with an extension is written as one file, a path without one as a folder with `design.jsonl` and `images/<hash>`. Read it back with `file.importSource`. |
@@ -1533,6 +1539,25 @@ file that isn't open is an error. `doc.list` gives an agent each open file's `id
 needs the file in front. Over the control channel, `engine.execute`, `document.inspect`,
 `node.get` and `ui.render` take the same `document`; other methods refuse one naming a file behind
 the tab in front. Headless sessions take it too.
+
+### Stale context, cancelling and progress
+
+- **`rev` and `ifRev`.** `get_node`, `inspect_document`, `find_nodes` and `get_selection` results
+  carry `rev`, the document's revision (control method `doc.revision`; every command, undo and redo
+  on the document moves it, selection and view commands included, and reading does not). The write
+  tools `set_properties`, `run_command`, `batch`, `create_node`, `propagate_change` and `run_script`
+  take `ifRev`: when the document is at another revision the call changes nothing and fails with
+  `stale: you read revision N, the document is at M (k commands since)` plus the labels of the
+  latest undo steps, so an agent working from old context re-reads. A guarded call that succeeds
+  returns the new `rev` to chain the next one. `ifRev` guards one document: not with `documents`.
+  An app from before `doc.revision` cannot check it and says so.
+- **Cancelling.** With the stdio server a client's `notifications/cancelled` drops the request it
+  names if that has not started (no reply is sent). A request already running cannot be interrupted:
+  the backend call blocks until the app answers. `diagnostics` reports `requests`: the request it
+  runs in, how many are queued, how many were cancelled before starting and the last finished call.
+- **Progress.** A `tools/call` with `_meta.progressToken` for `run_script`, `import_html` or
+  `export_many` gets a `notifications/progress` (progress 0 of 1) when the call starts and one
+  (1 of 1) when it finishes, before the result; there are no values in between.
 
 ### Target document, many documents, copying and versions
 

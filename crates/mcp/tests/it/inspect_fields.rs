@@ -19,9 +19,9 @@ fn tree(mut create: impl FnMut(Value) -> Value) -> Value {
 
 fn compact_keys(node: &Value, outline: bool) {
     let allowed: &[&str] = if outline {
-        &["id", "name", "type", "characters", "mainComponentName", "visible", "children", "childCount", "truncated"]
+        &["id", "name", "type", "characters", "mainComponentName", "visible", "children", "childCount", "truncated", "rev"]
     } else {
-        &["id", "name", "children", "childCount", "truncated"]
+        &["id", "name", "children", "childCount", "truncated", "rev"]
     };
     for key in node.as_object().unwrap().keys() {
         assert!(allowed.contains(&key.as_str()), "unexpected {key}: {node}");
@@ -78,7 +78,10 @@ struct Recording {
 
 impl Backend for Recording {
     fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
-        self.calls.push((method.into(), params.clone()));
+        // The `rev` stamp on reads asks for the revision; the calls under test are the others.
+        if method != "doc.revision" {
+            self.calls.push((method.into(), params.clone()));
+        }
         self.inner.call(method, params)
     }
     fn has_ui(&self) -> bool {
@@ -131,7 +134,9 @@ fn fields_and_outline_survive_every_depth_retry() {
 fn compact_children_keep_window_markers_and_page_in_order() {
     let mut c = Client::new();
     let root = tree(|params| c.create(params));
-    let full = c.ok("get_node", json!({"id": root, "depth": 1, "fields": []}));
+    let mut full = c.ok("get_node", json!({"id": root, "depth": 1, "fields": []}));
+    // Sized as the tree alone: the `rev` stamp is added after the page is cut.
+    full.as_object_mut().unwrap().remove("rev");
     let expected = full["children"].as_array().unwrap();
     let wire = serde_json::to_string(&serde_json::to_string_pretty(&full).unwrap()).unwrap().len();
     let limit = wire + 1024 - 1;
@@ -143,7 +148,8 @@ fn compact_children_keep_window_markers_and_page_in_order() {
         let page = c.ok("get_node", json!({"id": root, "depth": 1, "fields": [], "offset": at, "maxBytes": limit}));
         assert!(page["truncated"]["children"].is_object(), "{page}");
         let wire = serde_json::to_string(&serde_json::to_string_pretty(&page).unwrap()).unwrap().len();
-        assert!(wire + 1024 <= limit, "page at {at} exceeds maxBytes: {wire} + envelope > {limit}");
+        // The `rev` stamp (under 32 bytes) is added after the page is sized and comes out of the envelope's slack.
+        assert!(wire + 1024 <= limit + 32, "page at {at} exceeds maxBytes: {wire} + envelope > {limit}");
         assert_eq!(page["truncated"]["children"]["from"], at);
         seen.extend(page["children"].as_array().unwrap().iter().cloned());
         offset = page["truncated"]["children"]["nextOffset"].as_u64();

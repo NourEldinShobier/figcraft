@@ -1,7 +1,9 @@
 //! JSON-RPC 2.0 framing and the MCP lifecycle / tools / resources / prompts methods.
 
+use std::collections::{HashSet, VecDeque};
 use std::io::{BufRead, Read, Write};
 use std::sync::Arc;
+use std::time::Instant;
 
 use figcraft_engine::file_access::{Roots, confined};
 
@@ -62,6 +64,35 @@ pub struct Server {
     /// The client's name from `initialize` (`clientInfo.title`, else `.name`; empty until then):
     /// every command runs as this AI agent, so its comments are signed with it, not the user's name.
     agent: String,
+    /// Ids (as JSON text) of requests the client cancelled before they started.
+    cancelled: HashSet<String>,
+    /// Requests read but not started (only the concurrent loop sees any).
+    queued: usize,
+    /// Requests dropped unstarted because the client cancelled them.
+    dropped: u64,
+    /// The last finished tool call: name, milliseconds, whether it failed.
+    last_call: Option<(String, u128, bool)>,
+}
+
+/// Tools that can run long enough for a client to want progress notifications.
+const PROGRESS_TOOLS: &[&str] = &["run_script", "import_html", "export_many"];
+
+/// One framed line from the client.
+enum Frame {
+    Line(Vec<u8>),
+    TooLong,
+}
+
+/// The next line of `input`, without its newline; `None` at the end.
+fn read_frame(input: &mut impl BufRead) -> std::io::Result<Option<Frame>> {
+    let mut line = Vec::new();
+    if input.take((MAX_LINE + 1) as u64).read_until(b'\n', &mut line)? == 0 {
+        return Ok(None);
+    }
+    if line.last() == Some(&b'\n') {
+        line.pop();
+    }
+    Ok(Some(if line.len() > MAX_LINE { Frame::TooLong } else { Frame::Line(line) }))
 }
 
 /// The backend as the MCP client's AI agent: `engine.execute` carries its name (`agent`).
@@ -138,7 +169,7 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 
 impl Server {
     pub fn new(backend: Box<dyn Backend>) -> Self {
-        Self { backend, initialized: false, roots: None, agent: String::new() }
+        Self { backend, initialized: false, roots: None, agent: String::new(), cancelled: HashSet::new(), queued: 0, dropped: 0, last_call: None }
     }
 
     /// Confine the files every request reads and writes to `roots` (see
@@ -164,33 +195,112 @@ impl Server {
 
     /// Serve newline-delimited JSON-RPC until `input` closes. stdout is the protocol stream; logs
     /// go to stderr. An oversized frame gets an error and closes the stream without draining it.
+    /// Requests run in the order they arrive; a `notifications/cancelled` is seen only after the
+    /// request it names (use [`Server::serve_concurrent`] to cancel queued requests).
     pub fn serve(&mut self, mut input: impl BufRead, mut output: impl Write) -> std::io::Result<()> {
-        let mut line = Vec::new();
-        loop {
-            line.clear();
-            if (&mut input).take((MAX_LINE + 1) as u64).read_until(b'\n', &mut line)? == 0 {
+        while let Some(frame) = read_frame(&mut input)? {
+            if !self.process(frame, &mut output)? {
                 break;
-            }
-            if line.last() == Some(&b'\n') {
-                line.pop();
-            }
-            if line.len() > MAX_LINE {
-                writeln!(output, "{}", error(Value::Null, INVALID_REQUEST, "message too large"))?;
-                output.flush()?;
-                break;
-            }
-            let text = String::from_utf8_lossy(&line);
-            if let Some(reply) = self.handle_line(&text) {
-                output.write_all(reply.as_bytes())?;
-                output.write_all(b"\n")?;
-                output.flush()?;
             }
         }
         Ok(())
     }
 
+    /// Like [`Server::serve`], but a thread reads `input` while a request runs: a
+    /// `notifications/cancelled` that arrives meanwhile drops the request it names if that has not
+    /// started yet (a request already running cannot be interrupted: the backend call blocks), and
+    /// `diagnostics` shows how many requests wait.
+    pub fn serve_concurrent(&mut self, input: impl Read + Send + 'static, mut output: impl Write) -> std::io::Result<()> {
+        let (tx, rx) = std::sync::mpsc::sync_channel::<std::io::Result<Frame>>(256);
+        std::thread::spawn(move || {
+            let mut input = std::io::BufReader::new(input);
+            loop {
+                let frame = match read_frame(&mut input) {
+                    Ok(Some(f)) => Ok(f),
+                    Ok(None) => return,
+                    Err(e) => Err(e),
+                };
+                let stop = frame.is_err() || matches!(frame, Ok(Frame::TooLong));
+                if tx.send(frame).is_err() || stop {
+                    return;
+                }
+            }
+        });
+        let mut backlog: VecDeque<Frame> = VecDeque::new();
+        loop {
+            if backlog.is_empty() {
+                match rx.recv() {
+                    Ok(f) => backlog.push_back(f?),
+                    Err(_) => break,
+                }
+            }
+            while let Ok(f) = rx.try_recv() {
+                backlog.push_back(f?);
+            }
+            for f in &backlog {
+                if let Frame::Line(l) = f {
+                    self.note_cancel(&String::from_utf8_lossy(l));
+                }
+            }
+            let Some(frame) = backlog.pop_front() else { continue };
+            self.queued = backlog.len();
+            if !self.process(frame, &mut output)? {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Handle one frame and write its replies; false when the stream must close.
+    fn process(&mut self, frame: Frame, output: &mut impl Write) -> std::io::Result<bool> {
+        let Frame::Line(line) = frame else {
+            writeln!(output, "{}", error(Value::Null, INVALID_REQUEST, "message too large"))?;
+            output.flush()?;
+            return Ok(false);
+        };
+        let text = String::from_utf8_lossy(&line);
+        let mut failed = None;
+        let reply = self.handle_line_with(&text, &mut |note| {
+            if failed.is_none() {
+                failed = writeln!(output, "{note}").and_then(|()| output.flush()).err();
+            }
+        });
+        if let Some(e) = failed {
+            return Err(e);
+        }
+        if let Some(reply) = reply {
+            output.write_all(reply.as_bytes())?;
+            output.write_all(b"\n")?;
+            output.flush()?;
+        }
+        Ok(true)
+    }
+
+    /// Remember the request a `notifications/cancelled` line names (it is queued behind the
+    /// running one, or already finished).
+    fn note_cancel(&mut self, line: &str) {
+        if !line.contains("notifications/cancelled") {
+            return;
+        }
+        let Ok(v) = serde_json::from_str::<Value>(line) else { return };
+        if v.get("method").and_then(Value::as_str) == Some("notifications/cancelled")
+            && let Some(id) = v.pointer("/params/requestId").filter(|i| i.is_string() || i.is_number())
+        {
+            if self.cancelled.len() >= 256 {
+                self.cancelled.clear();
+            }
+            self.cancelled.insert(id.to_string());
+        }
+    }
+
     /// Handle one line; returns the reply line (None for notifications and blank lines).
     pub fn handle_line(&mut self, line: &str) -> Option<String> {
+        self.handle_line_with(line, &mut |_| {})
+    }
+
+    /// [`Server::handle_line`], handing notifications the server sends while it works (progress)
+    /// to `emit` as they happen.
+    pub fn handle_line_with(&mut self, line: &str, emit: &mut dyn FnMut(Value)) -> Option<String> {
         if line.len() > MAX_LINE {
             return Some(error(Value::Null, INVALID_REQUEST, "message too large").to_string());
         }
@@ -204,11 +314,11 @@ impl Server {
                 if batch.is_empty() {
                     Some(error(Value::Null, INVALID_REQUEST, "empty batch"))
                 } else {
-                    let replies: Vec<Value> = batch.into_iter().take(1000).filter_map(|m| self.handle(m)).collect();
+                    let replies: Vec<Value> = batch.into_iter().take(1000).filter_map(|m| self.handle_with(m, emit)).collect();
                     (!replies.is_empty()).then_some(Value::Array(replies))
                 }
             }
-            Ok(msg) => self.handle(msg),
+            Ok(msg) => self.handle_with(msg, emit),
             Err(e) => Some(error(Value::Null, PARSE_ERROR, format!("parse error: {e}"))),
         };
         reply.map(|r| r.to_string())
@@ -216,6 +326,10 @@ impl Server {
 
     /// Handle one JSON-RPC message; `None` for notifications and responses.
     pub fn handle(&mut self, msg: Value) -> Option<Value> {
+        self.handle_with(msg, &mut |_| {})
+    }
+
+    fn handle_with(&mut self, msg: Value, emit: &mut dyn FnMut(Value)) -> Option<Value> {
         let Value::Object(o) = &msg else { return Some(error(Value::Null, INVALID_REQUEST, "message must be a JSON object")) };
         let id = o.get("id").cloned();
         let Some(method) = o.get("method").and_then(Value::as_str) else {
@@ -236,15 +350,35 @@ impl Server {
         if !(params.is_object() || params.is_null()) {
             return Some(error(id, INVALID_PARAMS, "`params` must be an object"));
         }
+        // The client cancelled it while it waited: no work and, per the spec, no reply.
+        if method != "initialize" && self.cancelled.remove(&id.to_string()) {
+            self.dropped += 1;
+            return None;
+        }
         // A bug that panics fails this request only; the server keeps serving.
         let roots = self.roots.clone();
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| confined(roots.as_ref(), || self.request(method, &params)))).unwrap_or_else(
-            |p| Err((INTERNAL_ERROR, format!("internal error in `{method}`: {} (please report this bug)", panic_message(p.as_ref())))),
-        );
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| confined(roots.as_ref(), || self.request(method, &params, &id, emit))))
+            .unwrap_or_else(|p| {
+                Err((INTERNAL_ERROR, format!("internal error in `{method}`: {} (please report this bug)", panic_message(p.as_ref()))))
+            });
         Some(match r {
             Ok(r) => response(id, r),
             Err((code, m)) => error(id, code, m),
         })
+    }
+
+    /// `diagnostics`: the request being served, the ones waiting behind it, the last finished call.
+    fn add_request_state(&self, r: &mut crate::tools::ToolResult, id: &Value, name: &str) {
+        let Some(Ok(Value::Object(mut v))) = r.content.first().and_then(|c| c.get("text")).and_then(Value::as_str).map(serde_json::from_str::<Value>)
+        else {
+            return;
+        };
+        let last = self.last_call.as_ref().map(|(t, ms, failed)| json!({"tool": t, "ms": ms, "failed": failed}));
+        v.insert(
+            "requests".into(),
+            json!({"inFlight": {"id": id, "tool": name}, "queued": self.queued, "cancelledBeforeStart": self.dropped, "lastFinished": last}),
+        );
+        *r = crate::tools::ToolResult::json(&Value::Object(v));
     }
 
     /// What `initialize` says about the automation roots.
@@ -267,7 +401,7 @@ impl Server {
         AsAgent { inner: self.backend.as_mut(), agent: &self.agent }
     }
 
-    fn request(&mut self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
+    fn request(&mut self, method: &str, params: &Value, id: &Value, emit: &mut dyn FnMut(Value)) -> Result<Value, (i64, String)> {
         match method {
             "initialize" => {
                 self.agent = client_name(params);
@@ -295,7 +429,24 @@ impl Server {
                 if !crate::tools::TOOL_NAMES.contains(&name) {
                     return Err((INVALID_PARAMS, format!("unknown tool `{name}`")));
                 }
-                Ok(call_tool(&mut self.as_agent(), name, &args).to_value())
+                let token = params.pointer("/_meta/progressToken").filter(|t| t.is_string() || t.is_number()).cloned();
+                let progress = |emit: &mut dyn FnMut(Value), done: bool| {
+                    if let Some(t) = token.as_ref().filter(|_| PROGRESS_TOOLS.contains(&name)) {
+                        let message = if done { format!("{name} finished") } else { format!("{name} started") };
+                        emit(
+                            json!({"jsonrpc": "2.0", "method": "notifications/progress", "params": {"progressToken": t, "progress": u8::from(done), "total": 1, "message": message}}),
+                        );
+                    }
+                };
+                let started = Instant::now();
+                progress(emit, false);
+                let mut r = call_tool(&mut self.as_agent(), name, &args);
+                progress(emit, true);
+                if name == "diagnostics" && !r.is_error {
+                    self.add_request_state(&mut r, id, name);
+                }
+                self.last_call = Some((name.to_string(), started.elapsed().as_millis(), r.is_error));
+                Ok(r.to_value())
             }
             "resources/list" => Ok(resources::list()),
             "resources/templates/list" => Ok(resources::templates()),

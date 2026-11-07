@@ -272,6 +272,7 @@ impl Headless {
                 let options = figcraft_engine::inspect::InspectOptions::parse(&p)?;
                 Ok(figcraft_engine::inspect::node_json_with_options(doc, id, depth, &options))
             }
+            "doc.revision" => self.session.ds().map(|d| json!({"revision": d.revision})).map_err(|e| e.to_string()),
             "ui.inspect" => Ok(self.inspect_ui()),
             "ui.pointer" => self.pointer(&p),
             "ui.key" => self.key(&p),

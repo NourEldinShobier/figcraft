@@ -34,6 +34,7 @@
 //!
 //! Any method takes `window` (an id from `window.list`) to run in that window, with its tabs and
 //! panels; without it, requests go to the window last in front. `engine.execute`,
+//! `doc.revision` answers `{revision}`: the document's change counter, which reading it does not move.
 //! `document.inspect`, `node.get` and `ui.render` also take `document` (an `id` from `doc.list`,
 //! or an open file's path) to act on that file without bringing its tab to the front.
 
@@ -1395,7 +1396,7 @@ fn ui_set_styles(app: &mut FigApp, p: &Value) -> Result<(), String> {
 }
 
 /// The methods whose `document` may name a file behind the tab in front.
-const DOCUMENT_METHODS: &[&str] = &["engine.execute", "document.inspect", "node.get", "ui.render"];
+const DOCUMENT_METHODS: &[&str] = &["engine.execute", "document.inspect", "node.get", "ui.render", "doc.revision"];
 
 /// The request's `document` (an `id` from `doc.list`, or an open file's path), when it names one.
 fn document_of(p: &Value) -> Option<&Value> {
@@ -1455,6 +1456,7 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             let options = figcraft_engine::inspect::InspectOptions::parse(p)?;
             in_document(app, p, |s| Ok(figcraft_engine::inspect::document_with_options(s, depth, b(p, "allPages"), &options)))
         }
+        "doc.revision" => in_document(app, p, |s| s.ds().map(|d| json!({"revision": d.revision})).map_err(|e| e.to_string())),
         "node.get" => {
             let id = p.get("id").and_then(figcraft_engine::params::id_of).ok_or("`id` required")?;
             let depth = p.get("depth").and_then(Value::as_u64).unwrap_or(1) as usize;

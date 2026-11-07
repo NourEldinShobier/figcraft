@@ -232,6 +232,11 @@ pub const TOOL_NAMES: &[&str] = &[
 
 /// The tools that take `documents`: one call per file (`"all"` or a list of ids), at most
 /// [`MAX_DOCUMENTS`] files.
+/// Write tools that take `ifRev`.
+const REV_GUARDED_TOOLS: &[&str] = &["set_properties", "run_command", "batch", "create_node", "propagate_change", "run_script"];
+/// Read tools whose result carries the document's `rev`.
+const REV_STAMPED_TOOLS: &[&str] = &["get_node", "inspect_document", "find_nodes", "get_selection"];
+
 const MULTI_DOCUMENT_TOOLS: &[&str] = &["find_nodes", "set_properties", "run_command", "get_nodes"];
 
 /// Most files one `documents` call works on.
@@ -298,6 +303,10 @@ pub fn tool_definitions() -> Vec<Value> {
         "description": "Run this call once in each of these files and return {documents: [{document, name, ok, result | error}], totalMatched?} (find_nodes also `total`): \"all\" (every open file) or a list of document ids (from doc.list), at most 100. A file where the call fails does not stop the others; for set_properties a file where `where` matches nothing reports matched 0. With `where` this changes or finds the same element in every screen file at once. Not together with `document`",
         "anyOf": [{"type": "string", "enum": ["all"]}, {"type": "array", "maxItems": MAX_DOCUMENTS, "items": {"anyOf": [{"type": "integer"}, {"type": "string"}]}}],
     });
+    let if_rev = json!({
+        "type": "integer", "minimum": 0,
+        "description": "The `rev` of an earlier read (get_node, inspect_document, find_nodes, get_selection) or of the previous guarded write. When the document has changed since (any command, undo or redo, by you, the user or another agent), the call changes nothing and fails with what changed, so you re-read first. A successful call returns the new `rev`. Not together with `documents`"
+    });
     for t in &mut tools {
         let Some(name) = t.get("name").and_then(Value::as_str).map(str::to_string) else { continue };
         let Some(props) = t.pointer_mut("/inputSchema/properties").and_then(Value::as_object_mut) else { continue };
@@ -306,6 +315,9 @@ pub fn tool_definitions() -> Vec<Value> {
         }
         if MULTI_DOCUMENT_TOOLS.contains(&name.as_str()) {
             props.insert("documents".into(), documents.clone());
+        }
+        if REV_GUARDED_TOOLS.contains(&name.as_str()) {
+            props.insert("ifRev".into(), if_rev.clone());
         }
     }
     tools
@@ -1257,11 +1269,20 @@ fn valid_document(d: &Value) -> bool {
 /// the session's target document, else the file in front.
 fn dispatch(b: &mut dyn Backend, name: &str, a: &mut Map<String, Value>) -> Result<ToolResult, String> {
     let documents = a.remove("documents").filter(|d| !d.is_null());
+    let if_rev = match a.remove("ifRev") {
+        Some(v) if REV_GUARDED_TOOLS.contains(&name) && !v.is_null() => {
+            Some(v.as_u64().ok_or("`ifRev` must be a non-negative integer: the `rev` of an earlier read")?)
+        }
+        _ => None,
+    };
     // `use_document` reads its own `document`.
     let explicit = if name == "use_document" { None } else { a.remove("document").filter(|d| !d.is_null()) };
     if let Some(documents) = documents {
         if explicit.is_some() {
             return Err("pass `document` or `documents`, not both".into());
+        }
+        if if_rev.is_some() {
+            return Err("`ifRev` guards one document: do not combine it with `documents`".into());
         }
         return across_documents(b, name, a, &documents);
     }
@@ -1269,9 +1290,9 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &mut Map<String, Value>) -> Resu
     let window_shot = name == "screenshot" && a.get("window").is_some_and(|w| !w.is_null() && *w != Value::Bool(false));
     let by_target = explicit.is_none() && !window_shot && !UNTARGETED.contains(&name);
     let Some(document) = explicit.or_else(|| if by_target { b.target() } else { None }) else {
-        return run_tool(b, name, a, None);
+        return run_guarded(b, name, a, None, if_rev);
     };
-    let r = run_tool(&mut InDocument { inner: &mut *b, document: document.clone() }, name, a, Some(&document));
+    let r = run_guarded(&mut InDocument { inner: &mut *b, document: document.clone() }, name, a, Some(&document), if_rev);
     // A target whose tab was closed would fail every call: say so and go back to the tab in front.
     if r.is_err() && by_target && status_row(b, Some(&document)).is_none() {
         b.set_target(None);
@@ -1280,6 +1301,76 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &mut Map<String, Value>) -> Resu
         ));
     }
     r
+}
+
+/// The revision of the file a call acts on (`None`: an app from before `doc.revision`).
+fn current_rev(b: &mut dyn Backend) -> Option<u64> {
+    b.call("doc.revision", json!({})).ok()?.get("revision")?.as_u64()
+}
+
+/// Put `rev` into a JSON-object result; any other result gets a second block.
+fn stamp_rev(r: &mut ToolResult, rev: u64) {
+    if r.is_error {
+        return;
+    }
+    let first = r.content.iter_mut().find_map(|c| c.get_mut("text"));
+    if let Some(Value::String(t)) = first {
+        let body = t.trim_start();
+        if let Some(rest) = body.strip_prefix('{') {
+            let empty = rest.trim_start().starts_with('}');
+            let at = t.len() - body.len() + 1;
+            t.insert_str(at, &format!("\"rev\": {rev}{}", if empty { "" } else { "," }));
+            return;
+        }
+    }
+    r.content.push(json!({"type": "text", "text": format!("{{\"rev\": {rev}}}")}));
+}
+
+/// What a stale `ifRev` call reports: the revisions it missed and the latest undo steps.
+fn stale_rev_message(b: &mut dyn Backend, want: u64, now: u64) -> String {
+    let missed = now.saturating_sub(want);
+    let steps = exec(b, "history.list", json!({"limit": missed.clamp(1, 8)})).ok().and_then(|v| {
+        let labels: Vec<String> = v
+            .get("entries")?
+            .as_array()?
+            .iter()
+            .filter_map(|e| e.get("label").and_then(Value::as_str).filter(|l| !l.is_empty()).map(str::to_string))
+            .collect();
+        (!labels.is_empty()).then(|| labels.join(", "))
+    });
+    let what = match steps {
+        Some(l) => format!("latest undo steps (oldest first): {l}"),
+        None => "no undoable edit among them (selection, view or page changes, or an undo)".into(),
+    };
+    format!(
+        "stale: you read revision {want}, the document is at {now} ({missed} command{} since); nothing was changed. {what}. Re-read (get_node, inspect_document, find_nodes or get_selection return `rev`) and retry with the new `rev`.",
+        if missed == 1 { "" } else { "s" }
+    )
+}
+
+/// `run_tool` with the revision guard (`ifRev`) and the `rev` stamp on reads.
+fn run_guarded(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, doc: Option<&Value>, if_rev: Option<u64>) -> Result<ToolResult, String> {
+    let stamped = REV_STAMPED_TOOLS.contains(&name);
+    if if_rev.is_none() && !stamped {
+        return run_tool(b, name, a, doc);
+    }
+    // Read before the call: a change that lands meanwhile makes the next guarded write fail.
+    let before = current_rev(b);
+    if let Some(want) = if_rev {
+        let now = before.ok_or("this FigCraft app does not report document revisions, so `ifRev` cannot be checked (update the app)")?;
+        if now != want {
+            return Err(stale_rev_message(b, want, now));
+        }
+    }
+    let mut r = run_tool(b, name, a, doc)?;
+    if stamped {
+        if let Some(rev) = before {
+            stamp_rev(&mut r, rev);
+        }
+    } else if let Some(rev) = current_rev(b) {
+        stamp_rev(&mut r, rev);
+    }
+    Ok(r)
 }
 
 /// `documents`: the tool once in each file, collected as `{documents: [{document, name, ok, result
@@ -1785,7 +1876,7 @@ const MARKER_RESERVE: usize = 1 << 10;
 /// JSON-RPC envelope (`jsonrpc`, `id`, `result`) and the newline the transport writes after it.
 /// About ninety bytes of that is fixed and the rest is the request id, so `maxBytes` holds for
 /// any id up to roughly 900 bytes -- which is every id in practice, a number or a UUID. An id
-/// larger than that is the one case where the message can pass the caller's figure, and sizing
+/// larger than that (less the `rev` stamp, under 32 bytes) is the one case where the message can pass the caller's figure, and sizing
 /// the real envelope here would mean handing the transport's request id to every tool.
 const ENVELOPE_RESERVE: usize = 1 << 10;
 

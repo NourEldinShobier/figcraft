@@ -60,3 +60,16 @@ fn a_command_that_opens_a_file_still_brings_it_to_the_front() {
     handle(&mut app, "engine.execute", json!({"command": "file.new", "document": back})).unwrap();
     assert_eq!(app.session.active, 2, "a new file opens in front");
 }
+
+#[test]
+fn doc_revision_reads_without_moving_and_follows_the_named_file() {
+    let (mut app, back) = two_files();
+    let rev = |app: &mut FigApp, p: Value| handle(app, "doc.revision", p).unwrap()["revision"].as_u64().unwrap();
+    let (front0, back0) = (rev(&mut app, json!({})), rev(&mut app, json!({"document": back})));
+    assert_eq!(rev(&mut app, json!({})), front0, "reading does not move it");
+    let rect = json!({"command": "shape.rectangle", "params": {"width": 20, "height": 10}, "document": back});
+    handle(&mut app, "engine.execute", rect).unwrap();
+    assert!(rev(&mut app, json!({"document": back})) > back0, "an edit moves the named file's revision");
+    assert_eq!(rev(&mut app, json!({})), front0, "the file in front is untouched");
+    assert_eq!(app.session.active, 1, "Front stays in front");
+}

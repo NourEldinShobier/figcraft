@@ -116,6 +116,8 @@ pub struct Attached {
     /// How many times the app was found restarted (it makes a new token at every start): ids and
     /// the target document from before are void.
     restarts: u64,
+    /// The connection has carried no request yet.
+    unused: bool,
 }
 
 impl Attached {
@@ -144,7 +146,17 @@ impl Attached {
 
     /// Connect with an explicit validated token.
     pub fn connect_with_token(addr: &str, token: figcraft_collab_net::control_auth::ControlToken) -> std::io::Result<Self> {
-        let mut r = Self { addr: addr.to_string(), token, conn: None, next_id: 1, max_reply: MAX_REPLY, timeout: None, target: None, restarts: 0 };
+        let mut r = Self {
+            addr: addr.to_string(),
+            token,
+            conn: None,
+            next_id: 1,
+            max_reply: MAX_REPLY,
+            timeout: None,
+            target: None,
+            restarts: 0,
+            unused: true,
+        };
         r.reconnect()?;
         Ok(r)
     }
@@ -173,6 +185,7 @@ impl Attached {
 
     fn reconnect(&mut self) -> std::io::Result<()> {
         self.conn = None;
+        self.unused = true;
         let mut last = std::io::Error::new(std::io::ErrorKind::NotFound, format!("cannot resolve {}", self.addr));
         let addresses: Vec<_> = self.addr.to_socket_addrs()?.collect();
         if addresses.is_empty() {
@@ -233,8 +246,61 @@ impl Attached {
     }
 }
 
-impl Backend for Attached {
-    fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+/// Why a call to the attached app failed. Turned into a string only at the [`Backend`] boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AttachError {
+    /// No connection could be made (unresolvable, timed out); the request was not sent.
+    NotReachable(String),
+    /// The connection was actively refused (nothing listens there, or the address is not loopback);
+    /// the request was not sent.
+    RefusedAtConnect(String),
+    /// The app said its request queue is full; the request was not run.
+    QueueFull(String),
+    /// The request was written but no usable reply came back, so it may have run.
+    /// `before_any_byte`: the app closed a fresh connection without a byte, i.e. it never took it up.
+    LostReply { method: String, addr: String, detail: String, before_any_byte: bool },
+    /// The app answered with an error (or a reply that cannot be used).
+    App(String),
+}
+
+impl std::fmt::Display for AttachError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotReachable(s) | Self::RefusedAtConnect(s) | Self::QueueFull(s) | Self::App(s) => f.write_str(s),
+            Self::LostReply { method, addr, detail, .. } => write!(
+                f,
+                "FigCraft control call `{method}` at {addr} failed: {detail}; the operation may have completed. Inspect the document before retrying."
+            ),
+        }
+    }
+}
+
+/// Methods that change nothing, so repeating one after a lost reply is safe.
+const READ_ONLY_METHODS: &[&str] = &[
+    "document.inspect",
+    "node.get",
+    "ui.render",
+    "ui.screenshot",
+    "ui.inspect",
+    "engine.commands",
+    "events.poll",
+    "doc.list",
+    "doc.status",
+    "doc.revision",
+];
+
+/// Waits before the 1st, 2nd and 3rd retry of a call the app did not take up.
+const BACKOFF: [Duration; 3] = [Duration::from_millis(100), Duration::from_millis(300), Duration::from_millis(900)];
+
+/// The app's own words for a full request queue.
+fn is_queue_full(msg: &str) -> bool {
+    let m = msg.to_lowercase();
+    (m.contains("queue") && m.contains("full")) || (m.contains("too many") && m.contains("pending")) || m.contains("app is busy")
+}
+
+impl Attached {
+    /// One try: connect if needed, write the request, read the reply.
+    fn attempt(&mut self, method: &str, params: &Value) -> Result<Value, AttachError> {
         let id = self.next_id;
         self.next_id += 1;
         if self.conn.is_none() || self.stale() {
@@ -249,9 +315,16 @@ impl Backend for Attached {
                 self.adopt_token(token);
             }
             self.reconnect().map_err(|e| {
-                format!("FigCraft app at {} is not reachable: {e} (request was not sent; start it with `figcraft --control PORT`)", self.addr)
+                let msg =
+                    format!("FigCraft app at {} is not reachable: {e} (request was not sent; start it with `figcraft --control PORT`)", self.addr);
+                if matches!(e.kind(), std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::PermissionDenied) {
+                    AttachError::RefusedAtConnect(msg)
+                } else {
+                    AttachError::NotReachable(msg)
+                }
             })?;
         }
+        let fresh = std::mem::replace(&mut self.unused, false);
         // Built after the token was refreshed: a restarted app refuses the old one.
         let mut line = json!({"id": id, "method": method, "params": params, "token": self.token.as_str()});
         if let (Some(t), Some(fields)) = (self.timeout, line.as_object_mut()) {
@@ -261,17 +334,59 @@ impl Backend for Attached {
         // A lost reply does not mean the app failed to apply the request.
         let reply = self.roundtrip(&line).map_err(|e| {
             self.conn = None;
-            format!(
-                "FigCraft control call `{method}` at {} failed: {e}; the operation may have completed. Inspect the document before retrying.",
-                self.addr
-            )
+            let detail = e.to_string();
+            // An oversized or undecodable reply repeats the same way: no retry, no "lost".
+            if e.kind() == std::io::ErrorKind::InvalidData {
+                return AttachError::App(format!(
+                    "FigCraft control call `{method}` at {} failed: {detail}; the operation may have completed. Inspect the document before retrying.",
+                    self.addr
+                ));
+            }
+            AttachError::LostReply {
+                method: method.into(),
+                addr: self.addr.clone(),
+                before_any_byte: fresh && e.kind() == std::io::ErrorKind::UnexpectedEof,
+                detail,
+            }
         })?;
-        let v: Value = serde_json::from_str(reply.trim()).map_err(|e| format!("bad reply from the app: {e}"))?;
+        let v: Value = serde_json::from_str(reply.trim()).map_err(|e| AttachError::App(format!("bad reply from the app: {e}")))?;
         if v.get("ok").and_then(Value::as_bool) == Some(true) {
             Ok(v.get("result").cloned().unwrap_or(Value::Null))
         } else {
-            Err(v.get("error").and_then(Value::as_str).unwrap_or("unknown error").to_string())
+            let msg = v.get("error").and_then(Value::as_str).unwrap_or("unknown error").to_string();
+            Err(if is_queue_full(&msg) { AttachError::QueueFull(msg) } else { AttachError::App(msg) })
         }
+    }
+
+    /// [`Backend::call`] with its typed error: up to 3 retries (100/300/900 ms apart) when the app's
+    /// queue was full, or (read-only methods only) it dropped a fresh connection unanswered; one
+    /// retry of any other lost reply of a read-only method. A lost reply of a write is never repeated.
+    pub fn call_typed(&mut self, method: &str, params: Value) -> Result<Value, AttachError> {
+        let (mut backoffs, mut replayed) = (0, false);
+        loop {
+            let err = match self.attempt(method, &params) {
+                Ok(v) => return Ok(v),
+                Err(e) => e,
+            };
+            // A dropped fresh connection is only repeated for methods that change nothing: the app
+            // may have run a write before it lost the reply.
+            let wait = matches!(&err, AttachError::QueueFull(_))
+                || (matches!(&err, AttachError::LostReply { before_any_byte: true, .. }) && READ_ONLY_METHODS.contains(&method));
+            if wait && backoffs < BACKOFF.len() {
+                std::thread::sleep(BACKOFF[backoffs]);
+                backoffs += 1;
+            } else if !replayed && matches!(err, AttachError::LostReply { .. }) && READ_ONLY_METHODS.contains(&method) {
+                replayed = true;
+            } else {
+                return Err(err);
+            }
+        }
+    }
+}
+
+impl Backend for Attached {
+    fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        self.call_typed(method, params).map_err(|e| e.to_string())
     }
 
     fn has_ui(&self) -> bool {

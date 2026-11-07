@@ -171,8 +171,7 @@ fn mcp(attach: Option<&str>, timeout: Option<u64>, roots: Option<figcraft_engine
     }
     parent_watch::start();
     let mut server = figcraft_mcp::Server::new(backend).with_roots(roots);
-    let stdin = std::io::stdin();
     let stdout = std::io::stdout();
-    server.serve(stdin.lock(), stdout.lock()).map_err(|e| format!("stdio: {e}"))?;
+    server.serve_concurrent(std::io::stdin(), stdout.lock()).map_err(|e| format!("stdio: {e}"))?;
     Ok(ExitCode::SUCCESS)
 }

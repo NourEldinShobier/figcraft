@@ -45,7 +45,9 @@ fn a_tree_too_large_for_the_client_is_reported_shallower_and_says_so() {
     assert_eq!(t["requestedDepth"], 6, "{t}");
     assert!(t["depth"].as_u64().unwrap() < 6, "the depth was reduced: {t}");
     assert_eq!(t["maxBytes"], 30_000, "{t}");
-    assert_eq!(t["requestedDepthBytes"], full_wire, "the marker says what the full tree would have taken: {t}");
+    // The marker counts the tree; the `rev` stamp the call adds afterwards is a few bytes more.
+    let stamp = full_wire as u64 - t["requestedDepthBytes"].as_u64().unwrap();
+    assert!((1..=32).contains(&stamp), "the marker says what the full tree would have taken: {t}");
     // The marker points at the way to read the rest.
     assert!(t["hint"].as_str().unwrap_or("").contains("get_node"), "{t}");
     // Still a usable document, not just a marker: the page and its top-level layers are there.

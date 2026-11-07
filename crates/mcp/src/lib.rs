@@ -28,7 +28,7 @@ mod gradient_tests;
 mod oversize_tests;
 
 pub use auto::Auto;
-pub use backend::{Attached, Backend, decode_data, page_children};
+pub use backend::{AttachError, Attached, Backend, decode_data, page_children};
 pub use headless::Headless;
 pub use prompts::{PROMPTS, PromptArg, PromptDef};
 pub use resources::{COMMAND_TEMPLATE, COMMANDS_URI, DOC_URI, NODE_TEMPLATE};

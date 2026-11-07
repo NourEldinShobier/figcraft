@@ -79,7 +79,7 @@ window, with its tabs, panels and canvas: `engine.execute` acts on the file it s
 last in front (the one the user clicked last, or the last `window.new` / `window.focus`). An
 unknown id is an error.
 
-**Documents.** `engine.execute`, `document.inspect`, `node.get` and `ui.render` take an optional
+**Documents.** `engine.execute`, `document.inspect`, `node.get`, `ui.render` and `doc.revision` take an optional
 `document`: an open file's `id` (from `doc.list`, or `document.inspect`'s `id`) or its path. The
 request acts on that file without bringing its tab to the front; the tab in front comes back
 afterwards unless the command opened or switched to another file itself. A file that isn't open is
@@ -195,6 +195,11 @@ is older than the retained window (1024 events). The method is answered by the c
 against the shared log, not by the UI thread, so it does not freeze the app, use a request slot, or
 need a drawn frame: it works while the window is minimised. Other requests on the same connection
 wait until the poll finishes (at most 25 s); use a separate connection to keep editing meanwhile.
+
+### `doc.revision {document?}`
+
+`{revision}`: the document's change counter. Every command, undo and redo that runs on it moves it;
+reading it does not. The MCP server stamps reads with it (`rev`) and checks `ifRev` against it.
 
 ### `document.inspect {depth?, allPages?, fields?, outline?}`
 
