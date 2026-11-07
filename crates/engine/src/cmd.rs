@@ -17,6 +17,7 @@ pub mod guidelines;
 pub mod history;
 pub mod idlists;
 pub mod image;
+pub mod import_html;
 pub mod keys;
 pub mod layername;
 pub mod layout;
@@ -99,6 +100,7 @@ fn registry() -> &'static Registry {
         list.extend(idlists::specs());
         list.extend(adjust::specs());
         list.extend(family::specs());
+        list.extend(import_html::specs());
         list.extend(guidelines::specs());
         list.extend(tokencheck::specs());
         list.extend(script::specs());

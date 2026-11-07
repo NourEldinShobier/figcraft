@@ -28,6 +28,8 @@ mod family_tools;
 mod garbage;
 mod guidelines_tool;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod import_html_tool;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod inspect_fields;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod inspect_response_limit;

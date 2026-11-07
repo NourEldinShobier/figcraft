@@ -413,6 +413,7 @@ The SVG icon preset (`iconPreset: true` on `export` and `export_many`, with `cur
 | `lint_layout {root?, page?, checks?, grid?, limit?}` | Layout defects among sibling layers (`lint.layout`): `{total, listed, truncated?, findings: [{check, ids, message, fix?: {command, params}}]}`. Checks: `overlap`, `misaligned` (edges 0-4 px off a shared line; fix `align.*`), `uneven-gap` (rows/columns of 3+; fix `distribute.*`), `tiny-target` (under 24x24, 44x44 in frames up to 500 wide; fix `node.set`), `off-grid` (opt-in; fix `node.set`). Auto-layout children are skipped. Run a `fix` with `run_command`. Read-only. Takes `document`. |
 | `check_accessibility {root?, page?, limit?}` | Accessibility audit beyond contrast (`a11y.audit`): `{issues, checks: {contrast, targets, nonText, alt, readingOrder}, details: {contrast, targets, nonText, alt}}`. Contrast as `check_contrast`; targets: layers with interactions and frames/components/instances named like a button, link, tab, input under 24x24 (44x44 in frames up to 500 wide); nonText: a control's boundary (when it has no text label, or is a field) and its icons need 3:1 (WCAG 1.4.11); alt: images, vectors and groups named icon/logo/image/photo without alt text. Alt text is `set_properties {props: {alt}}` (stored as plugin data `figcraft.alt`, shown by `get_node` as `alt`; `""` marks decorative, `null` clears). Single checks and the full reading order: `run_command` `a11y.checkTargets`, `a11y.checkNonText`, `a11y.checkAlt`, `a11y.readingOrder`. Read-only. Takes `document`. |
 | `run_script {code, maxOperations?, dryRun?}` | Write to the canvas by code (`script.run`): runs a Rhai script with loops and conditions as one undo step; if it throws or a command fails, nothing changes. Host functions `cmd(id, #{params})`, `find(#{filters})`, `get(id)`, `log(text)`. Returns `{value, logs, created: [ids], changed, deleted, commands, operations}`; with `dryRun`, `{dryRun, wouldChange, created, deleted, count, result}` and the file untouched. Errors name the line and column. See [Scripts](#scripts). Takes `document`. |
+| `import_html {html | path, parent?, x?, y?, width?, dryRun?}` | Static HTML + CSS to editable layers (`import.html`), best effort and bounded, as one undo step. Block flow becomes a vertical auto layout frame, `display: flex` an auto layout frame (direction, gap, justify-content, align-items, wrap, flex-grow), text a text layer (inline bold, colour, size as ranges), `<img>` with a `data:` URI an image, inline `<svg>` vector layers. Returns `{rootId, created, warnings, truncated?}`; `warnings` lists each unsupported property, tag or selector once. Nothing is fetched. At most 5000 layers and 2 MB. `path` is read inside the allowed read roots. See [Import HTML](#import-html). Takes `document`. |
 | `get_design_guidelines {}` | The Markdown design rules stored with the file (`library.guidelines`): `{text, bytes}`. Read-only. Takes `document`. Write them with `run_command` `library.setGuidelines {text}` (up to 20 KB, `""` clears; one undo step); `get_design_context` puts them first in its `hints`. The `create_design_system_rules {target?}` prompt reads variables, styles and components, writes a rules file for the project and offers to store the summary with `library.setGuidelines`. |
 | `get_code_connect_map {id?, language?}` | The Code Connect link of a component, set or instance with the import line and the snippet it renders to (`inspect.componentCode`), or without `id` every link in the file (`codeConnect.export`), filtered by `language`. Read-only. Takes `document`. |
 | `add_code_connect_map {id, language?, importPath?, name?, template?}` | Links a component (or its set) to a code component (`codeConnect.set`); `{property}` in the template is the instance's value. Returns `{component, language, code, unknown}`. Takes `document`. |
@@ -1883,6 +1884,46 @@ Rhai counts each expression and statement), 10000 commands, arrays of up to 1000
 up to 250 entries, strings of 1 MB, call depth 32, `code` of 100 KB. An error reads `script error at
 line 3, column 5: <message>` followed by that line of the script and the logs written before it, and
 says nothing was changed.
+
+### Import HTML
+
+`import.html {html | path, parent?, x?, y?, width?}` (MCP: `import_html`) turns a static page or
+fragment into layers, so an HTML mockup, a style sheet built from tokens or one card of a page can be
+edited instead of redrawn. It never fetches anything and never fails on input it does not understand:
+what it cannot represent is skipped and named once in `warnings`, for example
+"property grid-template-columns is not supported (ignored)", "tag <video> is not supported (drawn as a
+placeholder rectangle)", "at-rule @media is not supported (skipped)" or "selector a:hover is not
+supported (rule skipped; ...)".
+
+- **Parsing:** a small tolerant HTML parser (optional end tags, void elements, raw-text `style` and
+  `script`, character references) and a hand-written CSS parser. `<style>` blocks and `style`
+  attributes apply with the cascade: `!important`, then the style attribute, then specificity, then
+  source order; selectors are tag, `.class`, `#id`, `:root`, `*` and the descendant combinator;
+  custom properties (`--x`, `var(--x, fallback)`) inherit.
+- **Layout:** block flow is a vertical auto layout frame (block children fill the width, an
+  inline-block hugs it). `display: flex` is an auto layout frame in the flex direction with `gap`,
+  `justify-content`, `align-items`, `flex-wrap` and `flex-grow` (`row-reverse` and `column-reverse`
+  reverse the items). `width` and `height` in px, % (of the width the parent offers) and em fix the
+  size; `min-`/`max-` become the layer limits; `box-sizing` decides whether padding adds to a width.
+  Margins become a transparent frame with padding around the layer; `margin: 0 auto` centres it.
+  A flex item stretches across the container only when the container has a fixed height, since a
+  stretched item in a container that hugs its content has no size to take.
+- **Text:** runs of text and inline elements become one text layer with the collapsed white space,
+  `<br>` as a line break and ranges for bold, italic, colour, size and underline. An inline element
+  with a background, border, padding or side margin, an `<img>`, an `<svg>` and a button are laid out
+  as boxes in a wrapping row. List markers are not drawn.
+- **Paint:** `background-color`, a simple `linear-gradient(angle | to side, stops)`, `border` (all sides
+  or per side, solid, dashed, dotted), `border-radius`, `box-shadow` (drop and `inset`), `opacity`,
+  `overflow: hidden` (clip) and `visibility: hidden`.
+- **Images:** `data:` URIs of raster images and of SVG. A remote `src`, a data URI that cannot be read,
+  `<video>`, `<canvas>`, `<iframe>`, form controls and so on become grey placeholder rectangles of
+  the size the page gives them.
+- **Bounds:** 2 MB of input, 5000 layers (`truncated: true` and a warning when the page is longer),
+  nesting 100 levels deep, 100 distinct warnings.
+
+```json
+{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"import_html","arguments":{"html":"<div style='display:flex;gap:16px;padding:24px;background:#fff'><div style='flex:1;padding:16px;border:1px solid #ddd;border-radius:8px'>One</div><div style='flex:1;padding:16px;border:1px solid #ddd;border-radius:8px'>Two</div></div>","width":800}}}
+```
 
 ### Dev Mode
 

@@ -226,6 +226,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "summarize_document",
     "check_accessibility",
     "run_script",
+    "import_html",
 ];
 
 /// The tools that take `documents`: one call per file (`"all"` or a list of ids), at most
@@ -282,6 +283,7 @@ const DOCUMENT_TOOLS: &[&str] = &[
     "summarize_document",
     "check_accessibility",
     "run_script",
+    "import_html",
 ];
 
 /// All tools, in `tools/list` order.
@@ -978,6 +980,24 @@ fn tools() -> Vec<Value> {
             ),
             false,
         ),
+        tool(
+            "import_html",
+            "Import static HTML and CSS as layers",
+            "Turn a static HTML page or fragment into editable layers (engine `import.html`), as one undo step: block flow becomes a vertical auto layout frame, `display: flex` an auto layout frame (flex-direction, gap, justify-content, align-items, flex-wrap, flex-grow), text a text layer (inline bold, colour and size become ranges), `<img>` with a `data:` URI an image, inline `<svg>` vector layers, and `<style>` blocks and `style` attributes apply (tag, .class, #id and descendant selectors, custom properties with var()). Supported properties: display (block, flex, inline, inline-block, none), width/height/min/max in px, % and em, margin (also auto to centre), padding, background and background-color, simple linear-gradient, border and border-radius, color, font and font-*, line-height, text-align, text-transform, letter-spacing, text-decoration, opacity, box-shadow, overflow. Best effort and bounded: nothing is fetched (other images, video, canvas and form controls become grey placeholder rectangles), grid, positioning, transforms, media queries and pseudo-selectors are not supported, and each is listed once in `warnings`. At most 5000 layers and 2 MB of input. Returns {rootId, created, warnings, truncated?}; the root is a frame as wide as `width` named after the page title. Check the result with screenshot or get_node. Pass `html` (the source) or `path` (an .html file inside the allowed read roots).",
+            obj(
+                json!({
+                    "html": string("The page or fragment (at most 2 MB). Not together with path"),
+                    "path": string("An .html file to read, inside the allowed read roots. Not together with html"),
+                    "parent": id_schema("A frame or the page to put the layers in (default: the open page)"),
+                    "x": num("Position of the root in its parent (default: beside the existing layers on the page, else 0)"),
+                    "y": num("Position of the root in its parent (default: beside the existing layers on the page, else 0)"),
+                    "width": json!({"type": "number", "minimum": 1, "maximum": 20000, "description": "Viewport width in px that the page is laid out at (default 1440); percentage widths and block widths follow it"}),
+                    "dryRun": boolean("Import, report what would change and undo it"),
+                }),
+                &[],
+            ),
+            false,
+        ),
     ]
 }
 
@@ -1370,6 +1390,7 @@ fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, doc_target:
         "diff_documents" => exec(b, "doc.diff", pick(a, &["a", "b", "version", "limit"])).map(|v| ToolResult::json(&v)),
         "check_accessibility" => exec(b, "a11y.audit", pick(a, &["root", "page", "limit"])).map(|v| ToolResult::json(&v)),
         "run_script" => exec(b, "script.run", pick(a, &["code", "maxOperations", "dryRun"])).map(|v| ToolResult::json(&v)),
+        "import_html" => exec(b, "import.html", pick(a, &["html", "path", "parent", "x", "y", "width", "dryRun"])).map(|v| ToolResult::json(&v)),
         "summarize_document" => exec(b, "inspect.summary", pick(a, &["budgetTokens"])).map(|v| ToolResult::json(&v)),
         other => Err(format!("unknown tool `{other}` (tools/list has: {})", TOOL_NAMES.join(", "))),
     }

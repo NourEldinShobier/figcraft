@@ -426,7 +426,7 @@ fn frame_create(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Where a new top-level frame of `w`×`h` goes: 100 to the right of the right-most top-level
 /// layer (top-aligned with it), or centred in the view on an empty page.
-fn free_spot(s: &Session, w: f64, h: f64) -> Result<(f64, f64)> {
+pub(super) fn free_spot(s: &Session, w: f64, h: f64) -> Result<(f64, f64)> {
     let ds = s.ds()?;
     let doc = &ds.doc;
     let right_most = doc
