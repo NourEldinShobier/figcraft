@@ -153,8 +153,10 @@ fn put(sheet: &mut Pixmap, x: u32, y: u32, grey: u8, alpha: u32) {
     }
     let i = (y as usize * w as usize + x as usize) * 4;
     if let Some(px) = sheet.data_mut().get_mut(i..i + 4) {
-        for c in px.iter_mut().take(3) {
-            *c = ((u32::from(grey) * alpha + u32::from(*c) * (255 - alpha) + 127) / 255) as u8;
+        // Premultiplied: alpha moves towards opaque the same way (no change on opaque pixels).
+        for (k, c) in px.iter_mut().enumerate() {
+            let target = if k == 3 { 255 } else { u32::from(grey) };
+            *c = ((target * alpha + u32::from(*c) * (255 - alpha) + 127) / 255) as u8;
         }
     }
 }
@@ -196,6 +198,48 @@ fn draw_digit(sheet: &mut Pixmap, rows: &[u8; 7], at: (u32, u32), k: u32) {
             }
         }
     }
+}
+
+/// Most badges `screenshot` draws by default.
+pub const MAX_MARKS: usize = 60;
+
+/// Badges on `pix` for the `screenshot` tool's `marks`: badge `labels[i]` is wanted with its top
+/// left at `at[i]` (image pixels). It is moved inside the image and off the badges drawn before it
+/// (nudged down, then right; with no free place it stays at the last try). Returns where each ended.
+pub fn draw_marks(pix: &mut Pixmap, labels: &[u64], at: &[(i64, i64)]) -> Vec<(u32, u32)> {
+    let (w, h) = (i64::from(pix.width()), i64::from(pix.height()));
+    let k = match w.max(h) {
+        0..=499 => 1,
+        500..=1599 => 2,
+        _ => 3,
+    };
+    let mut placed: Vec<(i64, i64, i64, i64)> = Vec::new();
+    let mut out = Vec::new();
+    for (label, (wx, wy)) in labels.iter().zip(at) {
+        let n = label.to_string().len() as i64;
+        let (bw, bh) = (n * 5 * k + (n - 1) * k + 4 * k, 7 * k + 4 * k);
+        let clamp = |x: i64, y: i64| (x.clamp(0, (w - bw).max(0)), y.clamp(0, (h - bh).max(0)));
+        let hit =
+            |x: i64, y: i64, p: &[(i64, i64, i64, i64)]| p.iter().any(|(px, py, pw, ph)| x < px + pw && *px < x + bw && y < py + ph && *py < y + bh);
+        let (mut x, mut y) = clamp(*wx, *wy);
+        'search: for _ in 0..40 {
+            if !hit(x, y, &placed) {
+                break;
+            }
+            for (dx, dy) in [(0, bh + 1), (bw + 1, 0)] {
+                let (nx, ny) = clamp(x + dx, y + dy);
+                if (nx, ny) != (x, y) && !hit(nx, ny, &placed) {
+                    (x, y) = (nx, ny);
+                    break 'search;
+                }
+            }
+            (x, y) = clamp(x + bw + 1, y + bh + 1);
+        }
+        placed.push((x, y, bw, bh));
+        badge(pix, x as u32, y as u32, *label as usize, k as u32);
+        out.push((x as u32, y as u32));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -260,6 +304,23 @@ mod tests {
         assert!(s.width() > 400, "{}", s.width());
         // A flat colour stays that colour when averaged.
         assert_eq!(&at(&s, 108, 108)[..3], &[10, 20, 30]);
+    }
+
+    #[test]
+    fn marks_stay_inside_and_do_not_overlap() {
+        let mut p = solid(200, 100, [200, 200, 200, 255]);
+        // Three badges wanted at one corner, one past the bottom right.
+        let spots = draw_marks(&mut p, &[1, 2, 3, 4], &[(0, 0), (0, 0), (0, 0), (500, 90)]);
+        assert_eq!(spots.len(), 4);
+        assert_eq!(spots[0], (0, 0));
+        for (i, (x, y)) in spots.iter().enumerate() {
+            assert!(*x + 9 <= 200 && *y + 11 <= 100, "badge {i} at {x},{y}");
+            for (j, (x2, y2)) in spots.iter().enumerate().skip(i + 1) {
+                assert!(x.abs_diff(*x2) >= 9 || y.abs_diff(*y2) >= 11, "badges {i} and {j} overlap");
+            }
+        }
+        let px: Vec<[u8; 4]> = (0..100).map(|i| at(&p, i % 10, i / 10)).collect();
+        assert!(px.iter().any(|c| c[0] > 250) && px.iter().any(|c| c[0] < 120));
     }
 
     #[test]

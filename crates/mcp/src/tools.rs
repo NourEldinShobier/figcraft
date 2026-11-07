@@ -565,6 +565,8 @@ fn tools() -> Vec<Value> {
                     "maxSize": int("Largest side in pixels (default 1600)"),
                     "cvd": {"type": "string", "enum": ["protanopia", "deuteranopia", "tritanopia", "achromatopsia"], "description": "Show the image as a person with this colour vision deficiency sees it (Machado 2009 matrices)"},
                     "window": {"description": "Capture the app window: true for the one in front, or a window id (attached app only; headless renders the page)", "anyOf": [{"type": "boolean"}, {"type": "integer"}]},
+                    "marks": {"description": "Set-of-marks for vision models: true, or {ids?: layers to mark (default the rendered layers, or the page's top-level layers), style?: \"index\" (badges 1, 2, 3 ...; default) or \"id\" (the layer id), limit?: most badges (default 60, up to 200)}. A white-on-dark badge at the top left of each marked layer and of its children down to `markDepth`; the result's `marks` maps badge to layer id and name. Not with `window`", "anyOf": [{"type": "boolean"}, {"type": "object"}]},
+                    "markDepth": int("With `marks`: levels of children below each marked layer that get a badge too (default 1; 0 = only the layers themselves; up to 5)"),
                 }),
                 &[],
             ),
@@ -2577,12 +2579,84 @@ fn screenshot(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult,
         bytes = b.render_png(&ids, scale)?;
         (w, h) = png_info(&bytes);
     }
-    let bytes = tint(bytes)?;
-    Ok(ToolResult::image(
-        &bytes,
-        "image/png",
-        &json!({"source": if ids.is_empty() { "page" } else { "layers" }, "ids": ids, "scale": scale, "width": w, "height": h, "cvd": cvd.map(figcraft_render::cvd::Cvd::id)}),
-    ))
+    let mut bytes = tint(bytes)?;
+    let mut info = json!({"source": if ids.is_empty() { "page" } else { "layers" }, "ids": ids, "scale": scale, "width": w, "height": h, "cvd": cvd.map(figcraft_render::cvd::Cvd::id)});
+    if let Some((marked, legend)) = mark_layers(b, a, &measured, scale, (w, h), &bytes)? {
+        bytes = marked;
+        info["marks"] = legend;
+    }
+    Ok(ToolResult::image(&bytes, "image/png", &info))
+}
+
+/// The `marks` of `screenshot`: the PNG with badges, and the legend `{style, badges, truncated?}`.
+/// The render is centred on the union of the `measured` layers' bounds, which maps page to pixels.
+fn mark_layers(
+    b: &mut dyn Backend,
+    a: &Map<String, Value>,
+    measured: &[u64],
+    scale: f64,
+    size: (u32, u32),
+    png: &[u8],
+) -> Result<Option<(Vec<u8>, Value)>, String> {
+    let opts = match a.get("marks") {
+        None | Some(Value::Null | Value::Bool(false)) => return Ok(None),
+        Some(Value::Bool(true)) => Map::new(),
+        Some(Value::Object(o)) => o.clone(),
+        Some(_) => return Err("`marks` must be true or an object {ids?, style?, limit?}".into()),
+    };
+    let by_id = match s_arg(&opts, "style")? {
+        None | Some("index") => false,
+        Some("id") => true,
+        Some(other) => return Err(format!("marks.style must be \"index\" or \"id\", not \"{other}\"")),
+    };
+    let limit = n_arg(&opts, "limit")?.unwrap_or(crate::sheet::MAX_MARKS as f64).clamp(1.0, 200.0) as usize;
+    let depth = n_arg(a, "markDepth")?.unwrap_or(1.0).clamp(0.0, 5.0) as u64;
+    let roots = ids_arg(&opts, "ids")?.unwrap_or_else(|| measured.to_vec());
+    let (bx0, by0, bx1, by1) = bounds_of(b, measured).ok_or("marks: nothing to mark")?;
+    let ox = (f64::from(size.0) - (bx1 - bx0) * scale) / 2.0;
+    let oy = (f64::from(size.1) - (by1 - by0) * scale) / 2.0;
+    // Breadth first: the top-level layers, then their children, so the cap drops the deepest first.
+    let mut queue: std::collections::VecDeque<(u64, u64)> = roots.iter().map(|i| (*i, 0)).collect();
+    let (mut labels, mut at, mut legend, mut truncated, mut visited) = (Vec::new(), Vec::new(), Vec::new(), false, 0usize);
+    while let Some((id, d)) = queue.pop_front() {
+        visited += 1;
+        if visited > 4 * limit + 50 {
+            truncated = true;
+            break;
+        }
+        let Ok(n) = b.call("node.get", json!({"id": id, "depth": 1})) else { continue };
+        if n.get("visible") == Some(&Value::Bool(false)) {
+            continue;
+        }
+        if d < depth {
+            for cid in n.get("children").and_then(Value::as_array).into_iter().flatten().filter_map(|c| c.get("id").and_then(Value::as_u64)) {
+                queue.push_back((cid, d + 1));
+            }
+        }
+        let ab = n.get("absoluteBounds");
+        let g = |k: &str| ab.and_then(|v| v.get(k)).and_then(Value::as_f64);
+        let (Some(x), Some(y), Some(w), Some(h)) = (g("x"), g("y"), g("width"), g("height")) else { continue };
+        let (px, py) = (ox + (x - bx0) * scale, oy + (y - by0) * scale);
+        if px + w * scale < 0.0 || py + h * scale < 0.0 || px > f64::from(size.0) || py > f64::from(size.1) {
+            continue;
+        }
+        if labels.len() >= limit {
+            truncated = true;
+            break;
+        }
+        let badge = if by_id { id } else { labels.len() as u64 + 1 };
+        labels.push(badge);
+        at.push((px.floor() as i64, py.floor() as i64));
+        legend.push(json!({"badge": badge, "id": id, "name": n.get("name").cloned().unwrap_or(Value::Null)}));
+    }
+    let mut pix = figcraft_render::images::decode(png).ok_or("the rendered image can't be read")?;
+    crate::sheet::draw_marks(&mut pix, &labels, &at);
+    let bytes = figcraft_render::encode_png(&pix)?;
+    let mut out = json!({"style": if by_id { "id" } else { "index" }, "badges": legend});
+    if truncated {
+        out["truncated"] = json!(format!("only the first {} layers are marked: raise marks.limit or name fewer `ids`", labels.len()));
+    }
+    Ok(Some((bytes, out)))
 }
 
 fn open_file(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
