@@ -13,6 +13,7 @@ pub mod edit;
 pub mod facilitate;
 pub mod family;
 pub mod file;
+pub mod guidelines;
 pub mod history;
 pub mod idlists;
 pub mod image;
@@ -97,6 +98,7 @@ fn registry() -> &'static Registry {
         list.extend(idlists::specs());
         list.extend(adjust::specs());
         list.extend(family::specs());
+        list.extend(guidelines::specs());
         list.extend(tokencheck::specs());
         list.extend(lintlayout::specs());
         list.extend(docdiff::specs());

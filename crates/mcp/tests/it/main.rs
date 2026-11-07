@@ -26,6 +26,7 @@ mod export_xml;
 mod family_tools;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod garbage;
+mod guidelines_tool;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod inspect_fields;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

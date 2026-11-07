@@ -221,7 +221,17 @@ fn prompts_list_and_get() {
     let names: Vec<&str> = r["result"]["prompts"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap()).collect();
     assert_eq!(
         names,
-        ["mobile_screen", "design_system", "landing_page", "prototype_flow", "fix_comments", "watch_comments", "apply_everywhere", "design_to_code"]
+        [
+            "mobile_screen",
+            "design_system",
+            "landing_page",
+            "prototype_flow",
+            "fix_comments",
+            "watch_comments",
+            "apply_everywhere",
+            "create_design_system_rules",
+            "design_to_code"
+        ]
     );
     let r = c.rpc("prompts/get", json!({"name": "mobile_screen", "arguments": {"screen": "login"}}));
     let text = r["result"]["messages"][0]["content"]["text"].as_str().unwrap();

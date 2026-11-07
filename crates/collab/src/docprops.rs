@@ -347,6 +347,7 @@ doc_scalars! {
     DocumentColors => document_colors,
     ColorProfile => color_profile,
     ImagePresets => image_presets,
+    Guidelines => guidelines,
     AnnotationCategories => annotation_categories,
     Libraries => libraries,
     Kind => kind,

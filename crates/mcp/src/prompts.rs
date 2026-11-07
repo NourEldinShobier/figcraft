@@ -128,6 +128,18 @@ pub const PROMPTS: &[PromptDef] = &[
         defaults: &[("layer", "the selected layer"), ("scope", "file")],
     },
     PromptDef {
+        name: "create_design_system_rules",
+        title: "Write design system rules",
+        description: "Read the file's variables, styles and components and write a rules file for the user's project.",
+        args: &[PromptArg { name: "target", description: "Rules file to write, e.g. AGENTS.md or CLAUDE.md (default AGENTS.md)", required: false }],
+        template: r#"Write the design system rules for this FigCraft file into {target} in the user's project.
+
+1. Read: get_variable_defs (tokens), run_command style.list (paint, text and effect styles), search_design_system (components and variants), get_code_connect_map (components that already have code), and get_design_guidelines (rules already stored).
+2. Write {target}: token names and when to use each, type and spacing scales, which component to use for what (with its code import where mapped), and the do and don't rules you can see in the file. Keep it short and concrete.
+3. Offer the user to store a summary in the file: run_command {"command": "library.setGuidelines", "params": {"text": "<markdown, up to 20 KB>"}} so designers and get_design_context hints carry it. Only do it after they agree."#,
+        defaults: &[("target", "AGENTS.md")],
+    },
+    PromptDef {
         name: "design_to_code",
         title: "Implement a frame as code",
         description: "Turn a frame into code that reuses linked components and design tokens.",

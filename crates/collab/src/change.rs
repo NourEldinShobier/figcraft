@@ -203,6 +203,8 @@ pub enum DocProp {
     ColorProfile,
     /// Saved image adjustment presets.
     ImagePresets,
+    /// Markdown design guidelines.
+    Guidelines,
     /// Annotation categories (`null`: the defaults).
     AnnotationCategories,
     /// Enabled libraries and the assets copied from them (whole).

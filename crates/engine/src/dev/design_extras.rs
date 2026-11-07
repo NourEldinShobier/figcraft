@@ -47,6 +47,11 @@ fn clip(s: &str) -> String {
     s.chars().take(MAX_TEXT).collect()
 }
 
+/// The file's design guidelines as the first hint (empty without any).
+fn guideline_hint(g: &str) -> Vec<String> {
+    if g.is_empty() { vec![] } else { vec![format!("Follow the design guidelines (library.guidelines): {}", clip(g))] }
+}
+
 /// `v` cut to [`MAX_ITEMS`]; the list's name goes to `trunc` when entries were dropped.
 fn capped(mut v: Vec<Value>, name: &'static str, trunc: &mut Vec<&'static str>) -> Vec<Value> {
     if v.len() > MAX_ITEMS {
@@ -176,7 +181,7 @@ pub fn extras(doc: &Document, root: NodeId, lang: CodeLang, include: &[&str]) ->
         out.insert("interactions".into(), json!(capped(list, "interactions", &mut trunc)));
     }
     if want("hints") {
-        let mut hints = Vec::new();
+        let mut hints = guideline_hint(&doc.guidelines);
         let mapped: Vec<String> = instances
             .iter()
             .filter(|i| i.get("codeConnect").is_some())

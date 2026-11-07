@@ -233,6 +233,9 @@ pub struct Document {
     /// Image adjustment presets saved in this file.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub image_presets: Vec<ImagePreset>,
+    /// Markdown design rules for humans and agents (`library.setGuidelines`; empty: none).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub guidelines: String,
     /// Annotation categories (`None`: [`AnnotationCategory::defaults`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub annotation_categories: Option<Vec<AnnotationCategory>>,
@@ -289,6 +292,7 @@ impl Document {
             published: None,
             color_profile: ColorProfile::Srgb,
             image_presets: Vec::new(),
+            guidelines: String::new(),
             annotation_categories: None,
             dev_snapshots: BTreeMap::new(),
             timer: None,

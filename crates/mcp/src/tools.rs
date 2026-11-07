@@ -217,6 +217,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "compare_version",
     "find_similar",
     "propagate_change",
+    "get_design_guidelines",
     "audit_tokens",
     "lint_layout",
     "get_code_connect_map",
@@ -271,6 +272,7 @@ const DOCUMENT_TOOLS: &[&str] = &[
     "compare_version",
     "find_similar",
     "propagate_change",
+    "get_design_guidelines",
     "audit_tokens",
     "lint_layout",
     "get_code_connect_map",
@@ -885,6 +887,13 @@ fn tools() -> Vec<Value> {
             false,
         ),
         tool(
+            "get_design_guidelines",
+            "Read the design guidelines",
+            "The Markdown design rules stored with the file (engine `library.guidelines`): {text, bytes}. Read them before building or changing UI. To store new rules call run_command `library.setGuidelines` {text} (up to 20 KB).",
+            obj(json!({}), &[]),
+            true,
+        ),
+        tool(
             "audit_tokens",
             "Find colours that should be variables",
             "Visible solid fills and strokes that carry a literal colour a colour variable already holds (engine `lint.tokens`), so the design follows its tokens: {total, listed, hardcoded: [{id, name, field, color, variables}], fixes: [{variable, field, ids}], bound}. Each entry of `fixes` (hits with exactly one matching variable) is one run_command `variable.bind` {ids, field, variable}. Limited to `root` (a layer) or `page` (id, name or \"all\"; default the open page).",
@@ -1339,6 +1348,7 @@ fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, doc_target:
         "add_code_connect_map" => {
             exec(b, "codeConnect.set", pick(a, &["id", "language", "importPath", "name", "template"])).map(|v| ToolResult::json(&v))
         }
+        "get_design_guidelines" => exec(b, "library.guidelines", json!({})).map(|v| ToolResult::json(&v)),
         "audit_tokens" => exec(b, "lint.tokens", pick(a, &["root", "page", "limit"])).map(|v| ToolResult::json(&v)),
         "lint_layout" => exec(b, "lint.layout", pick(a, &["root", "page", "checks", "grid", "limit"])).map(|v| ToolResult::json(&v)),
         "diff_documents" => exec(b, "doc.diff", pick(a, &["a", "b", "version", "limit"])).map(|v| ToolResult::json(&v)),
