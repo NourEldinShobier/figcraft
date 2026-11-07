@@ -1061,6 +1061,20 @@ fn apply_shape(cmd: &str, doc: &mut Document, id: NodeId, k: &str, v: &Value) ->
             Value::Null => super::keys::claim(cmd, doc, id, None)?,
             _ => super::keys::claim(cmd, doc, id, Some(&string_val(v).ok_or_else(|| bad(cmd, "`key` must be a string or null"))?))?,
         },
+        "alt" => {
+            let n = doc.get_mut(id)?;
+            match v {
+                Value::Null => {
+                    n.plugin_data.remove(super::a11yaudit::ALT_KEY);
+                }
+                _ => {
+                    let alt = string_val(v)
+                        .filter(|a| a.chars().count() <= 2000)
+                        .ok_or_else(|| bad(cmd, "`alt` must be a string of up to 2000 characters, or null"))?;
+                    n.plugin_data.insert(super::a11yaudit::ALT_KEY.into(), alt);
+                }
+            }
+        }
         "pluginData" => {
             let n = doc.get_mut(id)?;
             if let Some(o) = v.as_object() {

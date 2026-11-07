@@ -9,6 +9,7 @@ use crate::Session;
 pub const NODE_KEYS: &[&str] = &[
     "absolute",
     "absoluteBounds",
+    "alt",
     "annotations",
     "key",
     "arc",
@@ -382,7 +383,11 @@ pub fn node_json_with_options(doc: &Document, id: NodeId, depth: usize, options:
     if let Some(k) = n.key() {
         put!("key", json!(k));
     }
-    let data: std::collections::BTreeMap<_, _> = n.plugin_data.iter().filter(|(k, _)| k.as_str() != figcraft_doc::key::KEY_FIELD).collect();
+    if let Some(a) = n.plugin_data.get(crate::cmd::a11yaudit::ALT_KEY) {
+        put!("alt", json!(a));
+    }
+    let data: std::collections::BTreeMap<_, _> =
+        n.plugin_data.iter().filter(|(k, _)| k.as_str() != figcraft_doc::key::KEY_FIELD && k.as_str() != crate::cmd::a11yaudit::ALT_KEY).collect();
     if !data.is_empty() {
         put!("pluginData", json!(data));
     }

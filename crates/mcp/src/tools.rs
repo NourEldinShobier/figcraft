@@ -223,6 +223,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "add_code_connect_map",
     "diff_documents",
     "summarize_document",
+    "check_accessibility",
 ];
 
 /// The tools that take `documents`: one call per file (`"all"` or a list of ids), at most
@@ -276,6 +277,7 @@ const DOCUMENT_TOOLS: &[&str] = &[
     "add_code_connect_map",
     "diff_documents",
     "summarize_document",
+    "check_accessibility",
 ];
 
 /// All tools, in `tools/list` order.
@@ -938,6 +940,16 @@ fn tools() -> Vec<Value> {
             obj(json!({"budgetTokens": json!({"type": "integer", "minimum": 100, "maximum": 50000, "description": "Token budget for the answer (default 2000)"})}), &[]),
             true,
         ),
+        tool(
+            "check_accessibility",
+            "Audit accessibility",
+            "Accessibility audit beyond contrast (engine `a11y.audit`): text contrast (as check_contrast), tap-target size (WCAG 2.5.8: 24 px, 44 px in frames up to 500 wide) for layers with interactions and components named like buttons, links, inputs; non-text contrast (1.4.11: 3:1 for a control's boundary and icons); images and icons without alt text (set with set_properties {alt}; \"\" marks decorative); and the screen-reader reading order count. Returns {issues, checks: {contrast, targets, nonText, alt, readingOrder} (counts), details: {contrast, targets, nonText, alt} (the first `limit` findings each)}. For one check or the full reading order run_command a11y.checkTargets, a11y.checkNonText, a11y.checkAlt or a11y.readingOrder. Limited to `root` (a layer) or `page` (id, name or \"all\"; default the open page).",
+            obj(
+                json!({"root": id_schema("Only this layer and what is inside it"), "page": string("A page id or name, or \"all\" (default: the open page)"), "limit": int("Findings listed per check (default 100, up to 5000)")}),
+                &[],
+            ),
+            true,
+        ),
     ]
 }
 
@@ -1327,6 +1339,7 @@ fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, doc_target:
         "audit_tokens" => exec(b, "lint.tokens", pick(a, &["root", "page", "limit"])).map(|v| ToolResult::json(&v)),
         "lint_layout" => exec(b, "lint.layout", pick(a, &["root", "page", "checks", "grid", "limit"])).map(|v| ToolResult::json(&v)),
         "diff_documents" => exec(b, "doc.diff", pick(a, &["a", "b", "version", "limit"])).map(|v| ToolResult::json(&v)),
+        "check_accessibility" => exec(b, "a11y.audit", pick(a, &["root", "page", "limit"])).map(|v| ToolResult::json(&v)),
         "summarize_document" => exec(b, "inspect.summary", pick(a, &["budgetTokens"])).map(|v| ToolResult::json(&v)),
         other => Err(format!("unknown tool `{other}` (tools/list has: {})", TOOL_NAMES.join(", "))),
     }

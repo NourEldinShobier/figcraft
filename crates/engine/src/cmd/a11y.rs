@@ -102,7 +102,7 @@ fn contrast(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"level": report.level, "results": report.results, "unknown": report.unknown}))
 }
 
-fn check_contrast(s: &mut Session, p: &Value) -> Result<Value> {
+pub(super) fn check_contrast(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "a11y.checkContrast";
     let aaa = level_aaa(cmd, p)?;
     let ids = match get(p, "ids") {

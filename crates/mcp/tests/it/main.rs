@@ -1,6 +1,8 @@
 //! The crate's integration tests, built as one test binary.
 
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod a11y_tool;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod agent_comments;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod agent_tasks;

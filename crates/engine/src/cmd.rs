@@ -1,6 +1,7 @@
 //! The command registry. Each area module exposes `specs()`; [`all_commands`] collects them once.
 
 pub mod a11y;
+pub mod a11yaudit;
 pub mod adjust;
 pub mod arrange;
 pub mod comment;
@@ -118,6 +119,7 @@ fn registry() -> &'static Registry {
         list.extend(variables_io::specs());
         list.extend(tokens::specs());
         list.extend(a11y::specs());
+        list.extend(a11yaudit::specs());
         list.extend(component::specs());
         list.extend(library::specs());
         list.extend(proto::specs());
