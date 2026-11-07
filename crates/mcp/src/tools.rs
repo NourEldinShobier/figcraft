@@ -221,6 +221,8 @@ pub const TOOL_NAMES: &[&str] = &[
     "lint_layout",
     "get_code_connect_map",
     "add_code_connect_map",
+    "diff_documents",
+    "summarize_document",
 ];
 
 /// The tools that take `documents`: one call per file (`"all"` or a list of ids), at most
@@ -272,6 +274,8 @@ const DOCUMENT_TOOLS: &[&str] = &[
     "lint_layout",
     "get_code_connect_map",
     "add_code_connect_map",
+    "diff_documents",
+    "summarize_document",
 ];
 
 /// All tools, in `tools/list` order.
@@ -912,6 +916,28 @@ fn tools() -> Vec<Value> {
             ),
             false,
         ),
+        tool(
+            "diff_documents",
+            "Diff two documents",
+            "A structural diff (engine `doc.diff`): `a` and `b`, two open files (ids from doc.list; `b` defaults to the file in front), or `version` (a version id from list_versions) against the current file (or `document`). Layers match by id for a version and by page/name path for two files. Returns {mode, a, b, identical, counts: {added, removed, moved, changed}, changed: [{id, path, type, changes: [{prop, old, new}], moreProps?}], moved: [{id, path, from, to}], added: [{id, path, type, layers}], removed: [...], truncated?, note?}: the changes run from a (or the version) to b, at most `limit` items listed, and added/removed list the top layer of each subtree. For one frame's detailed property changes since a version use compare_version. Z-order changes are not reported.",
+            obj(
+                json!({
+                    "a": id_schema("The earlier file: an open document id (doc.list)"),
+                    "b": id_schema("The later file (default: the file in front, or `document`)"),
+                    "version": string("A version id of the current file, instead of `a` (list_versions)"),
+                    "limit": int("Items to list (default 50, up to 1000)")
+                }),
+                &[],
+            ),
+            true,
+        ),
+        tool(
+            "summarize_document",
+            "Summarize the file",
+            "A token-budgeted overview of the file (engine `inspect.summary`) to read before anything else in an unfamiliar file: counts of pages, layers, components, instances, styles and variables; per page the top-level frames with size, child count and layer count; the largest text (headings); repeated element families; and the calls to drill in with. It meets `budgetTokens` (default 2000) by showing less (fewer frames, headings and families, shorter text), never by cutting off mid-list: what is left out is counted in the more* fields, and `level` says how much detail is shown (0 is the most). `overBudget` is set when even the smallest summary does not fit.",
+            obj(json!({"budgetTokens": json!({"type": "integer", "minimum": 100, "maximum": 50000, "description": "Token budget for the answer (default 2000)"})}), &[]),
+            true,
+        ),
     ]
 }
 
@@ -1300,6 +1326,8 @@ fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, doc_target:
         }
         "audit_tokens" => exec(b, "lint.tokens", pick(a, &["root", "page", "limit"])).map(|v| ToolResult::json(&v)),
         "lint_layout" => exec(b, "lint.layout", pick(a, &["root", "page", "checks", "grid", "limit"])).map(|v| ToolResult::json(&v)),
+        "diff_documents" => exec(b, "doc.diff", pick(a, &["a", "b", "version", "limit"])).map(|v| ToolResult::json(&v)),
+        "summarize_document" => exec(b, "inspect.summary", pick(a, &["budgetTokens"])).map(|v| ToolResult::json(&v)),
         other => Err(format!("unknown tool `{other}` (tools/list has: {})", TOOL_NAMES.join(", "))),
     }
 }

@@ -11,6 +11,8 @@ mod automation_roots;
 #[allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod common;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod diff_tools;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod export_hidden_roots;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod export_xml;
@@ -22,7 +24,6 @@ mod garbage;
 mod inspect_fields;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod inspect_response_limit;
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod lint_layout_tool;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod multi_doc_tools;

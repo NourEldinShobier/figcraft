@@ -303,7 +303,7 @@ fn set_family(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"family": family, "ids": ids}))
 }
 
-fn list(s: &mut Session, p: &Value) -> Result<Value> {
+pub(super) fn list(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "family.list";
     let limit = limit(CMD, p, 30)?;
     let doc = s.doc()?;
