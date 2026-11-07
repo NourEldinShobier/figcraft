@@ -715,13 +715,13 @@ fn tools() -> Vec<Value> {
         tool(
             "export_tokens",
             "Export design tokens",
-            "Export the file's variables as design tokens (engine `variable.exportTokens`). `format` dtcg (default): Design Tokens Format Module files, one per collection and mode, `{files: [{name, collection, mode, tokens}]}`, colours as `{colorSpace: \"srgb\", components, alpha?, hex}`, lengths as `{value, unit: \"px\"}`, aliases as `{group.token}`. `css`: custom properties, the default mode on `:root` and the others on `[data-theme=\"<mode>\"]`. `tailwind`: `{theme: {extend: {colors, borderRadius, fontSize, spacing, fontFamily}}, text}` with `var(--name)` values and the css that defines them. `json`: the local variables JSON. Read-only unless `path` writes a file (a folder for dtcg). Import DTCG back with run_command `variable.importTokens`.",
+            "Export the file's variables as design tokens (engine `variable.exportTokens`). `format` dtcg (default): Design Tokens Format Module files, one per collection and mode, `{files: [{name, collection, mode, tokens}]}`, colours as `{colorSpace: \"srgb\", components, alpha?, hex}`, lengths as `{value, unit: \"px\"}`, aliases as `{group.token}`. `css`: custom properties, the default mode on `:root` and the others on `[data-theme=\"<mode>\"]`. `tailwind`: `{theme: {extend: {colors, borderRadius, fontSize, spacing, fontFamily}}, text}` with `var(--name)` values and the css that defines them. `json`: the local variables JSON. `dtcg-styles`: text styles as typography, effect styles as shadow, paint styles as color, gradient or border composite tokens with `com.figcraft` $extensions. `style-dictionary`: a v4 scaffold, `{files: [{name, text | tokens}]}` with a config and a token file (hex colours, `16px`) per collection and mode, plus the styles. `resolver`: a DTCG resolver document (modes as modifier contexts) with the token files. `swift`, `kotlin`: constants as text (Color/CGFloat, Compose Color/dp), the default mode under the variables' iOS / ANDROID code syntax. `android`: `values/colors.xml`, `values/dimens.xml`, `values-night/colors.xml`. Read-only unless `path` writes a file (a folder for the multi-file formats). Import DTCG back with run_command `variable.importTokens`.",
             obj(
                 json!({
-                    "format": {"type": "string", "enum": ["dtcg", "css", "tailwind", "json"], "description": "Output format (default dtcg)"},
+                    "format": {"type": "string", "enum": ["dtcg", "dtcg-styles", "style-dictionary", "resolver", "css", "tailwind", "json", "swift", "kotlin", "android"], "description": "Output format (default dtcg)"},
                     "collection": string("Collection id or name (default every collection of the file)"),
                     "modes": {"type": "array", "items": {"type": "string"}, "description": "Mode names or ids to include (default all)"},
-                    "path": string("Write to this file (dtcg: this folder, one file per mode)"),
+                    "path": string("Write to this file (multi-file formats: this folder)"),
                 }),
                 &[],
             ),

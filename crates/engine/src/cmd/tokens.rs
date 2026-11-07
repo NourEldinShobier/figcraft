@@ -15,7 +15,7 @@ use figcraft_color::Color;
 use figcraft_doc::{Collection, CollectionId, Document, Mode, Variable, VariableId, VariableType, VariableValue};
 use serde_json::{Map, Value, json};
 
-use super::CommandSpec;
+use super::{CommandSpec, tokens_export};
 use crate::library::local_collections;
 use crate::params::{get, string};
 use crate::token_roles::{NumberRole, Roles};
@@ -26,7 +26,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "variable.exportTokens",
             "Export design tokens",
-            "{collection? [id or name; default every collection of this file, not library copies], format? (dtcg (default): Design Tokens Format Module files, one per collection and mode | css: custom properties, the default mode on :root and each other mode on [data-theme=\"<mode>\"] | tailwind: a `theme.extend` object whose values are var(--name) plus the css that defines them | json: the local variables JSON), modes? [mode names or ids; default all], path? (a folder for dtcg files, a file for the other formats)}  → dtcg: {files: [{name, collection, mode, tokens}]} (+ paths when written) | css, tailwind, json: {text} (tailwind also {theme})",
+            "{collection? [id or name; default every collection of this file, not library copies], format? (dtcg (default): Design Tokens Format Module files, one per collection and mode, with a `com.figcraft` $extensions for scopes, code syntax and hidden-from-publishing | dtcg-styles: text styles as typography, effect styles as shadow, paint styles as color or gradient (a paint style under Border/ or Stroke/ as border, width 1px assumed) tokens | style-dictionary: a v4 scaffold, a config and a token file (hex colours, 16px lengths) per collection and mode building css variables, plus the styles | resolver: a DTCG resolver document (sets, modifiers with a context per mode) with the token files | swift: Color/CGFloat constants, the default mode under the variables' iOS code syntax (Color.brand becomes extension Color) | kotlin: a Compose file (Color, dp), objects per collection and mode, ANDROID code syntax honoured | android: values/colors.xml, values/dimens.xml and values-night/colors.xml (a mode named Dark) | css: custom properties, the default mode on :root and each other mode on [data-theme=\"<mode>\"] | tailwind: a `theme.extend` object whose values are var(--name) plus the css that defines them | json: the local variables JSON), modes? [mode names or ids; default all], path? (a folder for dtcg files, a file for the other formats)}  → dtcg, dtcg-styles, style-dictionary, resolver, android: {files: [{name, tokens | text}], skipped?} (+ paths when written) | css, tailwind, json, swift, kotlin: {text} (tailwind also {theme})",
             false,
             export_tokens
         ),
@@ -43,19 +43,18 @@ pub fn specs() -> Vec<CommandSpec> {
 const MAX_TOKENS: usize = 20_000;
 const MAX_FILE_BYTES: u64 = 32 << 20;
 
-fn clean_segment(s: &str) -> String {
+pub(super) fn clean_segment(s: &str) -> String {
     let t: String = s.trim().chars().map(|c| if matches!(c, '.' | '{' | '}') || c.is_control() { '-' } else { c }).collect();
     let t = t.trim_start_matches('$').to_string();
     if t.is_empty() { "_".into() } else { t }
 }
 
-/// Each variable of `c` as its token path: names split on `/`, unique, `$root` where a path is also a group.
-fn paths_for(doc: &Document, c: &Collection) -> HashMap<VariableId, Vec<String>> {
-    let vars: Vec<&Variable> = doc.variables.variables.iter().filter(|v| v.collection == c.id).collect();
+/// Each name as its token path: split on `/`, unique, `$root` where a path is also a group.
+pub(super) fn unique_paths(names: &[&str]) -> Vec<Vec<String>> {
     let mut seen: HashSet<Vec<String>> = HashSet::new();
-    let mut paths: Vec<Vec<String>> = Vec::with_capacity(vars.len());
-    for v in &vars {
-        let mut p: Vec<String> = v.name.split('/').map(clean_segment).collect();
+    let mut paths: Vec<Vec<String>> = Vec::with_capacity(names.len());
+    for name in names {
+        let mut p: Vec<String> = name.split('/').map(clean_segment).collect();
         while !seen.insert(p.clone()) {
             if let Some(last) = p.last_mut() {
                 *last = format!("{last}-2");
@@ -74,10 +73,17 @@ fn paths_for(doc: &Document, c: &Collection) -> HashMap<VariableId, Vec<String>>
             p.push("$root".into());
         }
     }
-    vars.iter().map(|v| v.id.clone()).zip(paths).collect()
+    paths
 }
 
-fn insert(tree: &mut Map<String, Value>, path: &[String], token: Value) {
+/// Each variable of `c` as its token path (see [`unique_paths`]).
+fn paths_for(doc: &Document, c: &Collection) -> HashMap<VariableId, Vec<String>> {
+    let vars: Vec<&Variable> = doc.variables.variables.iter().filter(|v| v.collection == c.id).collect();
+    let names: Vec<&str> = vars.iter().map(|v| v.name.as_str()).collect();
+    vars.iter().map(|v| v.id.clone()).zip(unique_paths(&names)).collect()
+}
+
+pub(super) fn insert(tree: &mut Map<String, Value>, path: &[String], token: Value) {
     match path {
         [] => {}
         [leaf] => {
@@ -95,7 +101,7 @@ fn round5(x: f32) -> f64 {
     (f64::from(x) * 1e5).round() / 1e5
 }
 
-fn color_value(c: Color) -> Value {
+pub(super) fn color_value(c: Color) -> Value {
     let mut o = Map::new();
     o.insert("colorSpace".into(), json!("srgb"));
     o.insert("components".into(), json!([round5(c.r), round5(c.g), round5(c.b)]));
@@ -116,13 +122,69 @@ fn type_name(v: &Variable, roles: &Roles) -> &'static str {
     }
 }
 
-struct Ctx<'a> {
-    doc: &'a Document,
+pub(super) struct Ctx<'a> {
+    pub(super) doc: &'a Document,
     roles: Roles,
     paths: HashMap<CollectionId, HashMap<VariableId, Vec<String>>>,
+    /// Style Dictionary's strings (`#RRGGBB`, `16px`) instead of DTCG colour and dimension objects.
+    legacy: bool,
 }
 
-impl Ctx<'_> {
+/// One token file of a collection and mode.
+pub(super) struct TokFile {
+    pub(super) collection: String,
+    pub(super) mode: String,
+    pub(super) name: String,
+    pub(super) default: bool,
+    pub(super) tokens: Value,
+}
+
+impl TokFile {
+    fn json(&self) -> Value {
+        json!({"name": self.name, "collection": self.collection, "mode": self.mode, "tokens": self.tokens})
+    }
+}
+
+impl<'a> Ctx<'a> {
+    pub(super) fn new(doc: &'a Document, legacy: bool) -> Self {
+        Ctx { doc, roles: Roles::new(doc), paths: doc.variables.collections.iter().map(|c| (c.id.clone(), paths_for(doc, c))).collect(), legacy }
+    }
+
+    pub(super) fn is_unitless(&self, v: &Variable) -> bool {
+        type_name(v, &self.roles) == "number"
+    }
+
+    /// `{Collection.group.token}` for variable `id`, whichever file refers to it.
+    pub(super) fn ref_any(&self, id: &str) -> Option<String> {
+        let target = self.doc.variables.get_by_id(id)?;
+        let path = self.paths.get(&target.collection)?.get(&target.id)?.join(".");
+        let c = self.doc.variables.collection(&target.collection)?;
+        Some(format!("{{{}.{path}}}", clean_segment(&c.name)))
+    }
+
+    /// The token files of `colls`, one per mode in `only`.
+    pub(super) fn files(&self, colls: &[&Collection], only: &Option<Vec<String>>) -> Vec<TokFile> {
+        let mut files = Vec::new();
+        for c in colls {
+            for m in c.modes.iter().filter(|m| mode_wanted(only, m)) {
+                let mut tree = Map::new();
+                for v in self.doc.variables.variables.iter().filter(|v| v.collection == c.id) {
+                    if let (Some(tok), Some(path)) = (self.token(c, v, m), self.paths.get(&c.id).and_then(|h| h.get(&v.id))) {
+                        insert(&mut tree, path, tok);
+                    }
+                }
+                files.push(TokFile {
+                    collection: c.name.clone(),
+                    mode: m.name.clone(),
+                    name: file_name(c, m),
+                    default: c.default_mode() == Some(&m.id),
+                    tokens: Value::Object(tree),
+                });
+            }
+        }
+        files
+    }
+
     fn reference(&self, from: &Collection, target: &Variable) -> Option<String> {
         let path = self.paths.get(&target.collection)?.get(&target.id)?.join(".");
         if target.collection == from.id {
@@ -143,7 +205,7 @@ impl Ctx<'_> {
                 type_name(target, &self.roles)
             }
             VariableValue::Color(col) => {
-                t.insert("$value".into(), color_value(*col));
+                t.insert("$value".into(), if self.legacy { json!(col.to_css_hex()) } else { color_value(*col) });
                 "color"
             }
             VariableValue::Number(x) if type_name(v, &self.roles) == "number" => {
@@ -151,7 +213,7 @@ impl Ctx<'_> {
                 "number"
             }
             VariableValue::Number(x) => {
-                t.insert("$value".into(), json!({"value": x, "unit": "px"}));
+                t.insert("$value".into(), if self.legacy { json!(format!("{x}px")) } else { json!({"value": x, "unit": "px"}) });
                 "dimension"
             }
             VariableValue::String(s) => {
@@ -168,6 +230,21 @@ impl Ctx<'_> {
         if !v.description.is_empty() {
             t.insert("$description".into(), json!(v.description));
         }
+        let mut ext = Map::new();
+        if let Some(sc) = &v.scopes
+            && (sc.is_empty() || sc.iter().any(|x| x.as_str() != figcraft_doc::ALL_SCOPES))
+        {
+            ext.insert("scopes".into(), json!(sc));
+        }
+        if !v.code_syntax.is_empty() {
+            ext.insert("codeSyntax".into(), json!(v.code_syntax));
+        }
+        if v.hidden_from_publishing {
+            ext.insert("hiddenFromPublishing".into(), json!(true));
+        }
+        if !ext.is_empty() {
+            t.insert("$extensions".into(), json!({"com.figcraft": ext}));
+        }
         Some(Value::Object(t))
     }
 }
@@ -177,7 +254,7 @@ fn file_name(c: &Collection, m: &Mode) -> String {
     format!("{}.{}.tokens.json", safe(&c.name), safe(&m.name))
 }
 
-fn mode_wanted(only: &Option<Vec<String>>, m: &Mode) -> bool {
+pub(super) fn mode_wanted(only: &Option<Vec<String>>, m: &Mode) -> bool {
     only.as_ref().is_none_or(|o| o.iter().any(|x| *x == m.id || *x == m.name))
 }
 
@@ -206,37 +283,48 @@ fn export_tokens(s: &mut Session, p: &Value) -> Result<Value> {
     };
     match format.as_str() {
         "dtcg" => {
-            let cx =
-                Ctx { doc, roles: Roles::new(doc), paths: doc.variables.collections.iter().map(|c| (c.id.clone(), paths_for(doc, c))).collect() };
-            let mut files = Vec::new();
-            for c in &colls {
-                for m in c.modes.iter().filter(|m| mode_wanted(&only, m)) {
-                    let mut tree = Map::new();
-                    for v in doc.variables.variables.iter().filter(|v| v.collection == c.id) {
-                        if let (Some(tok), Some(path)) = (cx.token(c, v, m), cx.paths.get(&c.id).and_then(|h| h.get(&v.id))) {
-                            insert(&mut tree, path, tok);
-                        }
-                    }
-                    files.push(json!({"name": file_name(c, m), "collection": c.name, "mode": m.name, "tokens": Value::Object(tree)}));
-                }
-            }
+            let files: Vec<Value> = Ctx::new(doc, false).files(&colls, &only).iter().map(TokFile::json).collect();
             if files.is_empty() {
                 return Err(bad(cmd, "nothing to export: no collection with a matching mode"));
             }
-            let mut out = json!({"format": "dtcg", "files": files});
-            if let Some(dir) = string(p, "path") {
-                let dir = dir.trim_end_matches(['/', '\\']).to_string();
-                let mut written = Vec::new();
-                for f in &files {
-                    let name = f["name"].as_str().unwrap_or("tokens.json");
-                    let text = serde_json::to_string_pretty(&f["tokens"]).map_err(|e| crate::EngineError::Other(e.to_string()))?;
-                    let target = format!("{dir}/{name}");
-                    super::file::write(&target, text.as_bytes())?;
-                    written.push(target);
-                }
-                out["paths"] = json!(written);
+            finish(p, json!({"format": "dtcg", "files": files}))
+        }
+        "dtcg-styles" => {
+            let (tree, skipped) = tokens_export::styles(&Ctx::new(doc, false));
+            if tree.is_empty() {
+                return Err(bad(cmd, "nothing to export: the file has no text, effect or paint styles with a DTCG type"));
             }
-            Ok(out)
+            finish(p, json!({"format": "dtcg-styles", "files": [{"name": "Styles.tokens.json", "tokens": tree}], "skipped": skipped}))
+        }
+        "style-dictionary" | "resolver" => {
+            let cx = Ctx::new(doc, format == "style-dictionary");
+            let files = cx.files(&colls, &only);
+            let (styles, skipped) = tokens_export::styles(&Ctx::new(doc, false));
+            if files.is_empty() {
+                return Err(bad(cmd, "nothing to export: no collection with a matching mode"));
+            }
+            let out_files = if format == "style-dictionary" {
+                tokens_export::style_dictionary(&files, &styles)
+            } else {
+                let mut v = vec![json!({"name": "tokens.resolver.json",
+                                        "text": serde_json::to_string_pretty(&tokens_export::resolver(&files, !styles.is_empty())).map_err(|e| crate::EngineError::Other(e.to_string()))?})];
+                v.extend(files.iter().map(TokFile::json));
+                if !styles.is_empty() {
+                    v.push(json!({"name": "Styles.tokens.json", "tokens": styles}));
+                }
+                v
+            };
+            finish(p, json!({"format": format, "files": out_files, "skipped": skipped}))
+        }
+        "swift" | "kotlin" => {
+            let lang = if format == "swift" { tokens_export::Lang::Swift } else { tokens_export::Lang::Kotlin };
+            let text = tokens_export::native_source(&Ctx::new(doc, false), &colls, &only, lang);
+            write_to(&text)
+        }
+        "android" => {
+            let (files, notes) = tokens_export::android_files(&Ctx::new(doc, false), &colls, &only);
+            tokens_export::require_files(cmd, &files)?;
+            finish(p, json!({"format": "android", "files": files, "skipped": notes}))
         }
         "css" => {
             let text = super::variables_io::css_with(doc, &colls, false, Some("theme"), only.as_deref());
@@ -262,7 +350,8 @@ fn export_tokens(s: &mut Session, p: &Value) -> Result<Value> {
                     }
                 }
             }
-            let css = super::variables_io::css_with(doc, &colls, false, Some("theme"), only.as_deref());
+            // The theme names (`--color-*`...) the extension's `var()` values read, so text and theme agree.
+            let css = super::variables_io::css_with(doc, &colls, true, Some("theme"), only.as_deref());
             let mut out = write_to(&css)?;
             out["theme"] = json!({"extend": ext});
             out["format"] = json!("tailwind");
@@ -273,8 +362,36 @@ fn export_tokens(s: &mut Session, p: &Value) -> Result<Value> {
                 .map_err(|e| crate::EngineError::Other(e.to_string()))?;
             write_to(&text)
         }
-        _ => Err(bad(cmd, "format: dtcg|css|tailwind|json")),
+        _ => Err(bad(cmd, "format: dtcg|dtcg-styles|style-dictionary|resolver|css|tailwind|json|swift|kotlin|android")),
     }
+}
+
+/// Write a `files` result to the `path` folder when given: a file's `text`, else its `tokens` as JSON.
+fn finish(p: &Value, mut out: Value) -> Result<Value> {
+    if let Some(dir) = string(p, "path") {
+        let dir = dir.trim_end_matches(['/', '\\']).to_string();
+        let mut written = Vec::new();
+        for f in out["files"].as_array().map(Vec::as_slice).unwrap_or_default() {
+            let name = f["name"].as_str().unwrap_or("tokens.json");
+            // A name is a relative path inside the folder (`values/colors.xml`), never an escape from it.
+            if name.contains("..") || name.starts_with('/') || name.contains('\\') || name.contains(':') {
+                continue;
+            }
+            let text = match f["text"].as_str() {
+                Some(t) => t.to_string(),
+                None => serde_json::to_string_pretty(&f["tokens"]).map_err(|e| crate::EngineError::Other(e.to_string()))?,
+            };
+            let target = format!("{dir}/{name}");
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some((parent, _)) = target.rsplit_once('/') {
+                crate::file_access::create_dir_all(parent)?;
+            }
+            super::file::write(&target, text.as_bytes())?;
+            written.push(target);
+        }
+        out["paths"] = json!(written);
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -285,6 +402,8 @@ struct Tok {
     ty: Option<String>,
     value: Value,
     description: String,
+    /// The `com.figcraft` $extensions: scopes, codeSyntax, hiddenFromPublishing.
+    ext: Value,
 }
 
 fn walk(obj: &Map<String, Value>, path: &mut Vec<String>, inherited: Option<&str>, out: &mut Vec<Tok>, warnings: &mut Vec<String>, depth: usize) {
@@ -298,6 +417,7 @@ fn walk(obj: &Map<String, Value>, path: &mut Vec<String>, inherited: Option<&str
             ty: ty.map(str::to_string),
             value: value.clone(),
             description: obj.get("$description").and_then(Value::as_str).unwrap_or_default().to_string(),
+            ext: obj.get("$extensions").and_then(|e| e.get("com.figcraft")).cloned().unwrap_or(Value::Null),
         });
         return;
     }
@@ -470,6 +590,7 @@ fn import_tokens(s: &mut Session, p: &Value) -> Result<Value> {
     let mut order: Vec<String> = Vec::new();
     let mut kinds: BTreeMap<String, VariableType> = BTreeMap::new();
     let mut descriptions: BTreeMap<String, String> = BTreeMap::new();
+    let mut exts: BTreeMap<String, Value> = BTreeMap::new();
     let mut parsed: Vec<Vec<(String, Parsed)>> = Vec::new();
     for toks in &per_mode {
         let mut list = Vec::new();
@@ -489,6 +610,9 @@ fn import_tokens(s: &mut Session, p: &Value) -> Result<Value> {
                                 kinds.insert(t.path.clone(), *k);
                             }
                         }
+                    }
+                    if t.ext.is_object() {
+                        exts.insert(t.path.clone(), t.ext.clone());
                     }
                     if !t.description.is_empty() {
                         descriptions.insert(t.path.clone(), t.description.clone());
@@ -559,8 +683,9 @@ fn import_tokens(s: &mut Session, p: &Value) -> Result<Value> {
             id.clone(),
             json!({"id": id, "name": path, "key": id, "variableCollectionId": "c0", "resolvedType": kind,
                    "valuesByMode": values.get(path).cloned().unwrap_or_default(), "remote": false,
-                   "description": descriptions.get(*path).cloned().unwrap_or_default(), "hiddenFromPublishing": false,
-                   "scopes": ["ALL_SCOPES"], "codeSyntax": {}}),
+                   "description": descriptions.get(*path).cloned().unwrap_or_default(), "hiddenFromPublishing": exts.get(*path).and_then(|e| e.get("hiddenFromPublishing")).and_then(Value::as_bool).unwrap_or(false),
+                   "scopes": exts.get(*path).and_then(|e| e.get("scopes")).filter(|x| x.is_array()).cloned().unwrap_or_else(|| json!(["ALL_SCOPES"])),
+                   "codeSyntax": exts.get(*path).and_then(|e| e.get("codeSyntax")).filter(|x| x.is_object()).cloned().unwrap_or_else(|| json!({}))}),
         );
     }
     let mode_list: Vec<Value> = mode_ids.iter().zip(&modes).map(|(id, name)| json!({"modeId": id, "name": name})).collect();

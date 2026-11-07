@@ -168,7 +168,7 @@ const DART_BUILT_IN: &[&str] = &[
 
 /// `name` as a Dart identifier: its words (anything but ASCII letters and digits separates them)
 /// in camelCase, or PascalCase for a type; never empty, never starting with a digit or reserved.
-fn dart_ident(name: &str, pascal: bool) -> String {
+pub(super) fn dart_ident(name: &str, pascal: bool) -> String {
     let mut out = String::new();
     for w in name.split(|c: char| !c.is_ascii_alphanumeric()).filter(|w| !w.is_empty()) {
         let mut cs = w.chars();
@@ -190,7 +190,7 @@ fn dart_ident(name: &str, pascal: bool) -> String {
 }
 
 /// `base`, or `base2`, `base3`… when `taken` has it already; the result is taken.
-fn dart_unique(base: String, taken: &mut BTreeSet<String>) -> String {
+pub(super) fn dart_unique(base: String, taken: &mut BTreeSet<String>) -> String {
     let mut name = base.clone();
     let mut n = 2;
     while !taken.insert(name.clone()) {
@@ -219,7 +219,7 @@ fn dart_string(text: &str) -> String {
 
 /// `x` at full precision as a Dart literal: whole numbers as integers (`4`), the rest in Rust's
 /// shortest round-trip form (`0.125`, `1e21`), which Dart reads as the same double.
-fn dart_number(x: f64) -> String {
+pub(super) fn dart_number(x: f64) -> String {
     if x.fract() == 0.0 && x.abs() < 1e15 { format!("{x}") } else { format!("{x:?}") }
 }
 
