@@ -19,6 +19,7 @@ pub mod layername;
 pub mod layout;
 pub mod layout_preview;
 pub mod library;
+pub mod lintlayout;
 pub mod lists;
 pub mod page;
 pub mod props;
@@ -93,6 +94,7 @@ fn registry() -> &'static Registry {
         list.extend(adjust::specs());
         list.extend(family::specs());
         list.extend(tokencheck::specs());
+        list.extend(lintlayout::specs());
         list.extend(crate::selection_colors::specs());
         list.extend(arrange::specs());
         list.extend(structure::specs());

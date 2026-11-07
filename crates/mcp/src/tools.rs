@@ -218,6 +218,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "find_similar",
     "propagate_change",
     "audit_tokens",
+    "lint_layout",
     "get_code_connect_map",
     "add_code_connect_map",
 ];
@@ -268,6 +269,7 @@ const DOCUMENT_TOOLS: &[&str] = &[
     "find_similar",
     "propagate_change",
     "audit_tokens",
+    "lint_layout",
     "get_code_connect_map",
     "add_code_connect_map",
 ];
@@ -884,6 +886,16 @@ fn tools() -> Vec<Value> {
             true,
         ),
         tool(
+            "lint_layout",
+            "Find layout defects",
+            "Layout defects among sibling layers (engine `lint.layout`), so you can check a design without a screenshot: {total, listed, truncated?, findings: [{check, ids, message, fix?: {command, params}}]}. Checks: overlap (siblings that intersect, neither inside the other; auto-layout children and absolute-positioned layers are skipped), misaligned (edges or centres 0-4 px from a shared line), uneven-gap (a row or column of 3+ layers whose gaps differ by up to 4 px), tiny-target (button-like frames, components and instances, or layers with interactions, under 24x24, or 44x44 in frames up to 500 wide), off-grid (x/y not a multiple of `grid`; only when named). Run a finding's `fix` with run_command (align.*, distribute.*, node.set). Limited to `root` (a layer) or `page` (id, name or \"all\"; default the open page).",
+            obj(
+                json!({"root": id_schema("Only this layer and what is inside it"), "page": string("A page id or name, or \"all\" (default: the open page)"), "checks": json!({"type": "array", "items": {"type": "string", "enum": ["overlap", "misaligned", "uneven-gap", "tiny-target", "off-grid"]}, "description": "Checks to run (default: all but off-grid)"}), "grid": int("off-grid step in px (default 4)"), "limit": int("Findings to list (default 100, up to 5000)")}),
+                &[],
+            ),
+            true,
+        ),
+        tool(
             "get_code_connect_map",
             "Read Code Connect links",
             "Which code components the design components are linked to (Code Connect). With `id` (a component, a component set or an instance): the link for that layer, with the import line and the snippet an instance renders to (engine `inspect.componentCode`: {component, name, properties, connected: {importPath, name, template, import, code}, usage?}). Without `id`: every link in the file (`codeConnect.export`: {version, links: [{component, language, importPath, name, template}]}), filtered by `language` (react, leptos, vue, swiftui, compose, arkui, flutter). A component with no link is not connected: link it with add_code_connect_map. Use these snippets in generated code instead of rebuilding a linked component.",
@@ -1287,6 +1299,7 @@ fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, doc_target:
             exec(b, "codeConnect.set", pick(a, &["id", "language", "importPath", "name", "template"])).map(|v| ToolResult::json(&v))
         }
         "audit_tokens" => exec(b, "lint.tokens", pick(a, &["root", "page", "limit"])).map(|v| ToolResult::json(&v)),
+        "lint_layout" => exec(b, "lint.layout", pick(a, &["root", "page", "checks", "grid", "limit"])).map(|v| ToolResult::json(&v)),
         other => Err(format!("unknown tool `{other}` (tools/list has: {})", TOOL_NAMES.join(", "))),
     }
 }
