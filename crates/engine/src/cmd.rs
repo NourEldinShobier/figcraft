@@ -3,6 +3,7 @@
 pub mod a11y;
 pub mod adjust;
 pub mod family;
+pub mod tokencheck;
 pub mod arrange;
 pub mod comment;
 pub mod component;
@@ -91,6 +92,7 @@ fn registry() -> &'static Registry {
         list.extend(idlists::specs());
         list.extend(adjust::specs());
         list.extend(family::specs());
+        list.extend(tokencheck::specs());
         list.extend(crate::selection_colors::specs());
         list.extend(arrange::specs());
         list.extend(structure::specs());

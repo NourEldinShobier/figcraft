@@ -144,7 +144,7 @@ pub(super) fn reaches(r: Rect, w: f64, h: f64) -> [(&'static str, f64); 4] {
 }
 
 /// The pages a command searches: `page` (an id, a name or `all`), else the open page.
-pub(super) fn pages(s: &Session, cmd: &str, p: &Value) -> Result<Vec<NodeId>> {
+pub(in crate::cmd) fn pages(s: &Session, cmd: &str, p: &Value) -> Result<Vec<NodeId>> {
     let Some(v) = get(p, "page") else { return Ok(vec![s.page()?]) };
     let doc = s.doc()?;
     if v.as_str().is_some_and(|t| t.eq_ignore_ascii_case("all")) {

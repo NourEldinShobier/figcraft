@@ -17,7 +17,7 @@ mod clipboard;
 mod overflow;
 mod props;
 mod select;
-mod structure_find;
+pub(super) mod structure_find;
 
 pub use clipboard::{CLIP_CLOSE, CLIP_OPEN, copy_to_clipboard, design_clipboard_buffer, paste_into};
 use clipboard::{copy, copy_props, copy_props_of, cut, paste, paste_design_layers, paste_over, paste_props, paste_replace};

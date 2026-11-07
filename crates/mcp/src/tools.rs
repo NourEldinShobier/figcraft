@@ -217,6 +217,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "compare_version",
     "find_similar",
     "propagate_change",
+    "audit_tokens",
 ];
 
 /// The tools that take `documents`: one call per file (`"all"` or a list of ids), at most
@@ -264,6 +265,7 @@ const DOCUMENT_TOOLS: &[&str] = &[
     "compare_version",
     "find_similar",
     "propagate_change",
+    "audit_tokens",
 ];
 
 /// All tools, in `tools/list` order.
@@ -860,6 +862,16 @@ fn tools() -> Vec<Value> {
             ),
             false,
         ),
+        tool(
+            "audit_tokens",
+            "Find colours that should be variables",
+            "Visible solid fills and strokes that carry a literal colour a colour variable already holds (engine `lint.tokens`), so the design follows its tokens: {total, listed, hardcoded: [{id, name, field, color, variables}], fixes: [{variable, field, ids}], bound}. Each entry of `fixes` (hits with exactly one matching variable) is one run_command `variable.bind` {ids, field, variable}. Limited to `root` (a layer) or `page` (id, name or \"all\"; default the open page).",
+            obj(
+                json!({"root": id_schema("Only this layer and what is inside it"), "page": string("A page id or name, or \"all\" (default: the open page)"), "limit": int("Hits to list (default 200, up to 5000)")}),
+                &[],
+            ),
+            true,
+        ),
     ]
 }
 
@@ -1212,6 +1224,7 @@ fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, doc_target:
         "compare_version" => compare_version(b, a),
         "find_similar" => find_similar(b, a),
         "propagate_change" => propagate_change(b, a),
+        "audit_tokens" => exec(b, "lint.tokens", pick(a, &["root", "page", "limit"])).map(|v| ToolResult::json(&v)),
         other => Err(format!("unknown tool `{other}` (tools/list has: {})", TOOL_NAMES.join(", "))),
     }
 }
