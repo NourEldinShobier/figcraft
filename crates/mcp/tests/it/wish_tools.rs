@@ -269,7 +269,7 @@ fn headless_save_file_adds_no_unsaved_flags() {
 #[test]
 fn the_new_tools_are_registered_read_only_and_documented() {
     let mut c = Client::new();
-    assert_eq!(TOOL_NAMES.len(), 44);
+    assert_eq!(TOOL_NAMES.len(), 46);
     let tools = c.rpc("tools/list", json!({}))["result"]["tools"].clone();
     let tools = tools.as_array().unwrap();
     let tool = |name: &str| tools.iter().find(|t| t["name"] == name).unwrap_or_else(|| panic!("no tool {name}"));

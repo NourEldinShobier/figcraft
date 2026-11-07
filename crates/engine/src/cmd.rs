@@ -2,8 +2,6 @@
 
 pub mod a11y;
 pub mod adjust;
-pub mod family;
-pub mod tokencheck;
 pub mod arrange;
 pub mod comment;
 pub mod component;
@@ -11,6 +9,7 @@ pub mod create;
 pub mod docstatus;
 pub mod edit;
 pub mod facilitate;
+pub mod family;
 pub mod file;
 pub mod history;
 pub mod idlists;
@@ -29,6 +28,7 @@ pub mod section;
 pub mod structure;
 pub mod styles;
 pub mod text;
+pub mod tokencheck;
 pub mod tokens;
 pub mod variables;
 pub mod variables_io;

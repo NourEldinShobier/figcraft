@@ -109,6 +109,41 @@ pub const PROMPTS: &[PromptDef] = &[
 4. Stop after {minutes} minutes; summarize the threads you fixed and the ones still open (and why)."#,
         defaults: &[("minutes", "5")],
     },
+    PromptDef {
+        name: "apply_everywhere",
+        title: "Apply a change to every screen",
+        description: "After changing one layer, find the same element on the other screens and carry the change over, with a preview first.",
+        args: &[
+            PromptArg { name: "layer", description: "Id of the layer that was changed (default: the selection)", required: false },
+            PromptArg { name: "scope", description: "\"file\" (this document) or \"all\" (every open file; default \"file\")", required: false },
+        ],
+        template: r#"Carry the change made to layer {layer} over to the same element on the other screens.
+
+1. Find the twins: find_similar {"id": {layer}} (leave id out to use the selection). Each twin has a score, reasons (same family tag, same component, same structure, same name, same size) and the frame it sits on. With scope "all" call it once per open file, using documents or document.
+2. Judge them. Keep a twin when its reasons show it is the same element (a tag, a component, or structure plus name). Drop a layer that only matches by size. Ask the user when you cannot tell.
+3. Tag what you keep so the link survives: run_command family.set {"ids": [{layer}, <twin ids>], "family": "<short name>"}.
+4. Preview: propagate_change {"from": {layer}, "ids": [<twin ids>]} without confirm. Read the changed list and the skipped list; names, text, positions and sizes are never copied unless you list them in props.
+5. Apply: the same call with "confirm": true. It is one undo step.
+6. Verify with get_node on two twins and a screenshot of one changed frame. Report the ids changed and the ones left alone, with the reason."#,
+        defaults: &[("layer", "the selected layer"), ("scope", "file")],
+    },
+    PromptDef {
+        name: "design_to_code",
+        title: "Implement a frame as code",
+        description: "Turn a frame into code that reuses linked components and design tokens.",
+        args: &[
+            PromptArg { name: "frame", description: "Id of the frame to implement", required: true },
+            PromptArg { name: "framework", description: "Target, e.g. react, vue, swiftui, compose (default react)", required: false },
+        ],
+        template: r#"Implement frame {frame} as {framework} code.
+
+1. Structure: get_metadata {"nodeId": {frame}} for the layer tree, then screenshot {"ids": [{frame}]} and look at it.
+2. Linked components: get_code_connect_map {"language": "{framework}"} lists the design components that already have code. For each instance in the frame use its snippet (get_code_connect_map {"id": <instance>}) instead of rebuilding it.
+3. Tokens: get_variable_defs for the variables the frame uses, and audit_tokens {"root": {frame}} for literal colours that equal a variable; write those as the token, not the hex.
+4. Code: get_design_context {"nodeId": {frame}} returns reference code; adapt it to the project, keep its spacing, sizes and text, and replace the parts covered by steps 2 and 3.
+5. Check: lint_icons, and check_contrast on the text over its background. List anything in the design you could not express in code."#,
+        defaults: &[("framework", "react")],
+    },
 ];
 
 pub fn list() -> Value {

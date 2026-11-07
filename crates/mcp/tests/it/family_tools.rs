@@ -52,3 +52,12 @@ fn bad_arguments_are_errors() {
     assert!(!c.err("find_similar", json!({"id": 999_999})).is_empty());
     assert!(!c.err("find_similar", json!({"minScore": 3, "id": 1})).is_empty());
 }
+
+#[test]
+fn code_connect_tools_read_the_file_and_refuse_a_missing_layer() {
+    let mut c = Client::new();
+    let r = c.ok("get_code_connect_map", json!({}));
+    assert_eq!(r["links"], json!([]), "{r}");
+    assert!(!c.err("add_code_connect_map", json!({"id": 999_999, "name": "Button"})).is_empty());
+    assert!(!c.err("get_code_connect_map", json!({"id": 999_999})).is_empty());
+}

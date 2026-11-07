@@ -313,7 +313,9 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
         let Some(n) = doc.node(id) else { continue };
         if let Some(t) = tag_of(n) {
             tagged.entry(t.to_string()).or_default().push(id);
-        } else if matches!(n.kind, NodeKind::Frame | NodeKind::Group | NodeKind::Instance { .. } | NodeKind::Component { .. }) && !n.children.is_empty() {
+        } else if matches!(n.kind, NodeKind::Frame | NodeKind::Group | NodeKind::Instance { .. } | NodeKind::Component { .. })
+            && !n.children.is_empty()
+        {
             let name = fold_name(&n.name);
             if !name.is_empty() {
                 repeats.entry((name, n.kind.type_name(), shape(doc, id, 2))).or_default().push(id);
@@ -332,9 +334,11 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
     let mut suggested: Vec<(usize, Value)> = repeats
         .iter()
         .filter(|(_, ids)| ids.len() >= 2 && ids.iter().filter_map(|i| frame_and_page(doc, *i).0).collect::<BTreeSet<_>>().len() >= 2)
-        .map(|((name, ty, _), ids)| (ids.len(), json!({"name": name, "type": ty, "count": ids.len(), "ids": ids.iter().take(50).collect::<Vec<_>>(), "frames": frames(ids)})))
+        .map(|((name, ty, _), ids)| {
+            (ids.len(), json!({"name": name, "type": ty, "count": ids.len(), "ids": ids.iter().take(50).collect::<Vec<_>>(), "frames": frames(ids)}))
+        })
         .collect();
-    suggested.sort_by(|a, b| b.0.cmp(&a.0));
+    suggested.sort_by_key(|x| std::cmp::Reverse(x.0));
     let suggested: Vec<Value> = suggested.into_iter().take(limit).map(|(_, v)| v).collect();
     Ok(json!({"families": families, "suggested": suggested}))
 }
@@ -350,9 +354,11 @@ fn pair(doc: &Document, a: NodeId, b: NodeId, deep: bool, out: &mut Vec<(NodeId,
     if !deep || x.children.len() != y.children.len() {
         return;
     }
-    let same_types = x.children.iter().zip(&y.children).all(|(c, d)| {
-        matches!((doc.node(*c), doc.node(*d)), (Some(c), Some(d)) if c.kind.type_name() == d.kind.type_name())
-    });
+    let same_types = x
+        .children
+        .iter()
+        .zip(&y.children)
+        .all(|(c, d)| matches!((doc.node(*c), doc.node(*d)), (Some(c), Some(d)) if c.kind.type_name() == d.kind.type_name()));
     if same_types {
         for (c, d) in x.children.iter().zip(&y.children) {
             pair(doc, *c, *d, deep, out);
@@ -514,7 +520,9 @@ mod tests {
     fn junk_parameters_are_errors_not_panics() {
         let mut s = Session::new();
         for cmd in ["family.find", "family.set", "family.list", "family.propagate"] {
-            for junk in [json!({"id": "x"}), json!({"ids": 3}), json!({"minScore": 7, "from": -1}), json!({"props": 4, "from": 1}), json!({"limit": "a"})] {
+            for junk in
+                [json!({"id": "x"}), json!({"ids": 3}), json!({"minScore": 7, "from": -1}), json!({"props": 4, "from": 1}), json!({"limit": "a"})]
+            {
                 let _ = s.execute(cmd, &junk);
             }
         }

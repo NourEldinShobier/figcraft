@@ -218,6 +218,8 @@ pub const TOOL_NAMES: &[&str] = &[
     "find_similar",
     "propagate_change",
     "audit_tokens",
+    "get_code_connect_map",
+    "add_code_connect_map",
 ];
 
 /// The tools that take `documents`: one call per file (`"all"` or a list of ids), at most
@@ -266,6 +268,8 @@ const DOCUMENT_TOOLS: &[&str] = &[
     "find_similar",
     "propagate_change",
     "audit_tokens",
+    "get_code_connect_map",
+    "add_code_connect_map",
 ];
 
 /// All tools, in `tools/list` order.
@@ -872,6 +876,23 @@ fn tools() -> Vec<Value> {
             ),
             true,
         ),
+        tool(
+            "get_code_connect_map",
+            "Read Code Connect links",
+            "Which code components the design components are linked to (Code Connect). With `id` (a component, a component set or an instance): the link for that layer, with the import line and the snippet an instance renders to (engine `inspect.componentCode`: {component, name, properties, connected: {importPath, name, template, import, code}, usage?}). Without `id`: every link in the file (`codeConnect.export`: {version, links: [{component, language, importPath, name, template}]}), filtered by `language` (react, leptos, vue, swiftui, compose, arkui, flutter). A component with no link is not connected: link it with add_code_connect_map. Use these snippets in generated code instead of rebuilding a linked component.",
+            obj(json!({"id": id_schema("A component, component set or instance"), "language": string("react, leptos, vue, swiftui, compose, arkui or flutter")}), &[]),
+            true,
+        ),
+        tool(
+            "add_code_connect_map",
+            "Link a component to code",
+            "Link a design component (a variant links its set) to the code component it is built as (engine `codeConnect.set`, one undo step). `name` and `importPath` say what to import; `template` is the snippet an instance renders to, with `{property}` standing for the instance's value of that component property (e.g. <Button variant=\"{variant}\">{label}</Button>); `{prop ? \"a\" : \"b\"}` picks one of two strings. Fields left out keep their value; with no template the call passes every property. Returns {component, language, code, unknown} (`unknown` lists placeholders that are not properties).",
+            obj(
+                json!({"id": id_schema("The component or component set"), "language": string("react (default), leptos, vue, swiftui, compose, arkui or flutter"), "importPath": string("Module to import from, e.g. @acme/ui"), "name": string("The code component's name"), "template": string("Snippet with {property} placeholders")}),
+                &["id"],
+            ),
+            false,
+        ),
     ]
 }
 
@@ -1224,6 +1245,10 @@ fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, doc_target:
         "compare_version" => compare_version(b, a),
         "find_similar" => find_similar(b, a),
         "propagate_change" => propagate_change(b, a),
+        "get_code_connect_map" => get_code_connect_map(b, a),
+        "add_code_connect_map" => {
+            exec(b, "codeConnect.set", pick(a, &["id", "language", "importPath", "name", "template"])).map(|v| ToolResult::json(&v))
+        }
         "audit_tokens" => exec(b, "lint.tokens", pick(a, &["root", "page", "limit"])).map(|v| ToolResult::json(&v)),
         other => Err(format!("unknown tool `{other}` (tools/list has: {})", TOOL_NAMES.join(", "))),
     }
@@ -1466,7 +1491,9 @@ fn similar_on(b: &mut dyn Backend, ids: &[u64]) -> Option<Value> {
     if twins.is_empty() {
         return None;
     }
-    Some(json!({"from": ids[0], "total": found["total"], "twins": twins, "hint": "these layers look like the same element on other frames; propagate_change {from, confirm: true} copies this change to them (leave confirm out to preview)"}))
+    Some(
+        json!({"from": ids[0], "total": found["total"], "twins": twins, "hint": "these layers look like the same element on other frames; propagate_change {from, confirm: true} copies this change to them (leave confirm out to preview)"}),
+    )
 }
 
 /// The layers `where` (the `node.find` filters) names, with how many matched; `None` without it.
@@ -2156,6 +2183,22 @@ fn restore_version(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolRe
         ));
     }
     exec(b, "version.restore", json!({"id": id})).map(|v| ToolResult::json(&v))
+}
+
+/// `get_code_connect_map`: one layer's link and snippet, or every link in the file.
+fn get_code_connect_map(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    if a.get("id").is_some_and(|v| !v.is_null()) {
+        return exec(b, "inspect.componentCode", pick(a, &["id", "language"])).map(|v| ToolResult::json(&v));
+    }
+    // The export is a file's text: {version, links: [...]}.
+    let exported = exec(b, "codeConnect.export", json!({}))?;
+    let mut all = exported.get("text").and_then(Value::as_str).and_then(|t| serde_json::from_str::<Value>(t).ok()).unwrap_or(exported);
+    if let Some(lang) = s_arg(a, "language")?
+        && let Some(links) = all.get_mut("links").and_then(Value::as_array_mut)
+    {
+        links.retain(|l| l.get("language").and_then(Value::as_str).is_some_and(|x| x.eq_ignore_ascii_case(lang)));
+    }
+    Ok(ToolResult::json(&all))
 }
 
 /// `find_similar`: `family.find` with the arguments the engine validates.
