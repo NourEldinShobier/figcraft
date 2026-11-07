@@ -226,6 +226,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "summarize_document",
     "check_accessibility",
     "run_script",
+    "generate_diagram",
     "import_html",
 ];
 
@@ -283,6 +284,7 @@ const DOCUMENT_TOOLS: &[&str] = &[
     "summarize_document",
     "check_accessibility",
     "run_script",
+    "generate_diagram",
     "import_html",
 ];
 
@@ -981,6 +983,23 @@ fn tools() -> Vec<Value> {
             false,
         ),
         tool(
+            "generate_diagram",
+            "Draw a Mermaid diagram on a board",
+            "Draw Mermaid text on a board as shapes joined by connectors that stay attached (engine `board.fromMermaid`), inside one section, as one undo step; write the Mermaid yourself from the description. Supports flowchart/graph (TD, TB, LR, RL, BT; node shapes [text] (text) {text} ((text)) ([text]) [(text)] [[text]] {{text}} [/text/] [\\text\\]; links -->, ---, -.->, ==>, with |label| or -- label -->; chains; subgraph ... end, nested), sequenceDiagram (participant/actor with `as`, ->>, -->>, ->, -->, Note over/left of/right of, title, autonumber) and erDiagram (entities with attribute blocks, relationships such as ||--o{ with a label; cardinality goes in the connector label). The layout is layered (ranks by longest path, barycentre ordering); subgraph members stay together. Styling lines (style, classDef, class, linkStyle, click) are ignored and listed in `warnings`; every other unsupported construct (blocks like loop/alt in sequence diagrams, `&` in links, `--x` ends) is an error naming the line. At most 200 nodes and 500 edges. Only on board files (create one with run_command file.newBoard). Returns {rootId (the section), nodes: [{name, id}], edges: [{from, to, id}], warnings}. Check the result with screenshot.",
+            obj(
+                json!({
+                    "mermaid": string("The Mermaid source (at most 100 KB)"),
+                    "parent": id_schema("The page or a section to draw in (default: the open page)"),
+                    "x": num("Position of the section (default: beside the existing layers)"),
+                    "y": num("Position of the section (default: beside the existing layers)"),
+                    "direction": json!({"type": "string", "enum": ["TD", "TB", "LR", "RL", "BT"], "description": "Overrides the flowchart's direction (also sets the ER layout); ignored for sequence diagrams"}),
+                    "dryRun": boolean("Draw, report what would change and undo it"),
+                }),
+                &["mermaid"],
+            ),
+            false,
+        ),
+        tool(
             "import_html",
             "Import static HTML and CSS as layers",
             "Turn a static HTML page or fragment into editable layers (engine `import.html`), as one undo step: block flow becomes a vertical auto layout frame, `display: flex` an auto layout frame (flex-direction, gap, justify-content, align-items, flex-wrap, flex-grow), text a text layer (inline bold, colour and size become ranges), `<img>` with a `data:` URI an image, inline `<svg>` vector layers, and `<style>` blocks and `style` attributes apply (tag, .class, #id and descendant selectors, custom properties with var()). Supported properties: display (block, flex, inline, inline-block, none), width/height/min/max in px, % and em, margin (also auto to centre), padding, background and background-color, simple linear-gradient, border and border-radius, color, font and font-*, line-height, text-align, text-transform, letter-spacing, text-decoration, opacity, box-shadow, overflow. Best effort and bounded: nothing is fetched (other images, video, canvas and form controls become grey placeholder rectangles), grid, positioning, transforms, media queries and pseudo-selectors are not supported, and each is listed once in `warnings`. At most 5000 layers and 2 MB of input. Returns {rootId, created, warnings, truncated?}; the root is a frame as wide as `width` named after the page title. Check the result with screenshot or get_node. Pass `html` (the source) or `path` (an .html file inside the allowed read roots).",
@@ -1390,6 +1409,9 @@ fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, doc_target:
         "diff_documents" => exec(b, "doc.diff", pick(a, &["a", "b", "version", "limit"])).map(|v| ToolResult::json(&v)),
         "check_accessibility" => exec(b, "a11y.audit", pick(a, &["root", "page", "limit"])).map(|v| ToolResult::json(&v)),
         "run_script" => exec(b, "script.run", pick(a, &["code", "maxOperations", "dryRun"])).map(|v| ToolResult::json(&v)),
+        "generate_diagram" => {
+            exec(b, "board.fromMermaid", pick(a, &["mermaid", "parent", "x", "y", "direction", "dryRun"])).map(|v| ToolResult::json(&v))
+        }
         "import_html" => exec(b, "import.html", pick(a, &["html", "path", "parent", "x", "y", "width", "dryRun"])).map(|v| ToolResult::json(&v)),
         "summarize_document" => exec(b, "inspect.summary", pick(a, &["budgetTokens"])).map(|v| ToolResult::json(&v)),
         other => Err(format!("unknown tool `{other}` (tools/list has: {})", TOOL_NAMES.join(", "))),

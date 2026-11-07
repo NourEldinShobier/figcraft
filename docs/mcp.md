@@ -413,6 +413,7 @@ The SVG icon preset (`iconPreset: true` on `export` and `export_many`, with `cur
 | `lint_layout {root?, page?, checks?, grid?, limit?}` | Layout defects among sibling layers (`lint.layout`): `{total, listed, truncated?, findings: [{check, ids, message, fix?: {command, params}}]}`. Checks: `overlap`, `misaligned` (edges 0-4 px off a shared line; fix `align.*`), `uneven-gap` (rows/columns of 3+; fix `distribute.*`), `tiny-target` (under 24x24, 44x44 in frames up to 500 wide; fix `node.set`), `off-grid` (opt-in; fix `node.set`). Auto-layout children are skipped. Run a `fix` with `run_command`. Read-only. Takes `document`. |
 | `check_accessibility {root?, page?, limit?}` | Accessibility audit beyond contrast (`a11y.audit`): `{issues, checks: {contrast, targets, nonText, alt, readingOrder}, details: {contrast, targets, nonText, alt}}`. Contrast as `check_contrast`; targets: layers with interactions and frames/components/instances named like a button, link, tab, input under 24x24 (44x44 in frames up to 500 wide); nonText: a control's boundary (when it has no text label, or is a field) and its icons need 3:1 (WCAG 1.4.11); alt: images, vectors and groups named icon/logo/image/photo without alt text. Alt text is `set_properties {props: {alt}}` (stored as plugin data `figcraft.alt`, shown by `get_node` as `alt`; `""` marks decorative, `null` clears). Single checks and the full reading order: `run_command` `a11y.checkTargets`, `a11y.checkNonText`, `a11y.checkAlt`, `a11y.readingOrder`. Read-only. Takes `document`. |
 | `run_script {code, maxOperations?, dryRun?}` | Write to the canvas by code (`script.run`): runs a Rhai script with loops and conditions as one undo step; if it throws or a command fails, nothing changes. Host functions `cmd(id, #{params})`, `find(#{filters})`, `get(id)`, `log(text)`. Returns `{value, logs, created: [ids], changed, deleted, commands, operations}`; with `dryRun`, `{dryRun, wouldChange, created, deleted, count, result}` and the file untouched. Errors name the line and column. See [Scripts](#scripts). Takes `document`. |
+| `generate_diagram {mermaid, parent?, x?, y?, direction?, dryRun?}` | Mermaid text drawn on a board (`board.fromMermaid`) as shapes joined by attached connectors inside one section, one undo step. Flowchart/graph (TD TB LR RL BT; shapes `[] () {} (()) ([]) [()] [[]] {{}} [//] [\]`; links `-->`, `---`, `-.->`, `==>` with `|label|` or `-- label -->`; chains; nested `subgraph`), `sequenceDiagram` (participants, `->>`, `-->>`, `->`, `-->`, notes, title, autonumber) and `erDiagram` (entities with attributes, relationships). Returns `{rootId, nodes: [{name, id}], edges: [{from, to, id}], warnings}`. Styling lines are ignored with a warning; other unsupported syntax is an error naming the line. At most 200 nodes and 500 edges. Boards only. See [Mermaid diagrams](#mermaid-diagrams). Takes `document`. |
 | `import_html {html | path, parent?, x?, y?, width?, dryRun?}` | Static HTML + CSS to editable layers (`import.html`), best effort and bounded, as one undo step. Block flow becomes a vertical auto layout frame, `display: flex` an auto layout frame (direction, gap, justify-content, align-items, wrap, flex-grow), text a text layer (inline bold, colour, size as ranges), `<img>` with a `data:` URI an image, inline `<svg>` vector layers. Returns `{rootId, created, warnings, truncated?}`; `warnings` lists each unsupported property, tag or selector once. Nothing is fetched. At most 5000 layers and 2 MB. `path` is read inside the allowed read roots. See [Import HTML](#import-html). Takes `document`. |
 | `get_design_guidelines {}` | The Markdown design rules stored with the file (`library.guidelines`): `{text, bytes}`. Read-only. Takes `document`. Write them with `run_command` `library.setGuidelines {text}` (up to 20 KB, `""` clears; one undo step); `get_design_context` puts them first in its `hints`. The `create_design_system_rules {target?}` prompt reads variables, styles and components, writes a rules file for the project and offers to store the summary with `library.setGuidelines`. |
 | `get_code_connect_map {id?, language?}` | The Code Connect link of a component, set or instance with the import line and the snippet it renders to (`inspect.componentCode`), or without `id` every link in the file (`codeConnect.export`), filtered by `language`. Read-only. Takes `document`. |
@@ -1884,6 +1885,43 @@ Rhai counts each expression and statement), 10000 commands, arrays of up to 1000
 up to 250 entries, strings of 1 MB, call depth 32, `code` of 100 KB. An error reads `script error at
 line 3, column 5: <message>` followed by that line of the script and the logs written before it, and
 says nothing was changed.
+
+### Mermaid diagrams
+
+`board.fromMermaid {mermaid, parent?, x?, y?, direction?}` (MCP: `generate_diagram`) draws Mermaid text on a
+board file. Write the Mermaid yourself from a description; the command only parses and draws it. The
+result is one section named "Diagram" (or the sequence diagram's `title`) holding board shapes; the
+connectors are page-level board connectors attached to the shapes, so moving a shape re-routes its
+lines. `subgraph` blocks become nested sections around their members.
+
+- **Flowchart:** `graph`/`flowchart` with `TD`/`TB`/`LR`/`RL`/`BT`. Shapes: `A[text]` rectangle,
+  `A(text)` and `A([text])` rounded, `A((text))` ellipse, `A{text}` diamond, `A[(text)]` database,
+  `A[[text]]` predefined process, `A{{text}}` hexagon, `A[/text/]` and `A[\text\]` parallelograms; quoted
+  labels and `<br/>` work. Links: `-->`, `---`, `-.->`, `-.-`, `==>`, `===` (longer runs too), labels as
+  `-->|text|`, `-- text -->`, `-. text .->`, `== text ==>`; chains `A --> B --> C`. Dotted links are
+  dashed, thick links 4 px, open links have no arrowhead. A link from a node to itself is skipped with a
+  warning.
+- **Sequence diagram:** `participant`/`actor` (with `as`), `->>` and `-)` (arrow), `-->>` (dashed
+  arrow), `->` and `-->` (no arrowhead), `Note over A,B:`, `Note left of A:`, `Note right of A:`,
+  `title`, `autonumber`. Lifelines and messages are connectors on free points, so they do not follow a
+  participant you move later. `loop`, `alt`, `opt`, `par` and the other blocks are errors.
+- **ER diagram:** entities with `NAME { type name PK }` blocks, relationships `A ||--o{ B : label`
+  (`||`, `|o`, `o|`, `}o`, `o{`, `}|`, `|{`; `..` is dashed). Cardinality is written into the label as
+  `label (1 : 0..N)`.
+- **Layout:** layered: cycles are broken by depth-first search, ranks by longest path, order by
+  barycentre sweeps with subgraph members kept together, fixed spacing. An edge across several ranks can
+  pass behind a node in between; a subgraph whose box meets a foreign node adds a warning.
+- **Unsupported:** styling (`style`, `classDef`, `class`, `linkStyle`, `click`, `:::class`) is ignored and
+  listed in `warnings`; anything else outside the subset (`&` in links, `--x`/`--o` ends, node `@{}`
+  attributes, other diagram types, sequence blocks) is an error of the form `line N: <why>: <the line>`. At most 200
+  nodes, 500 edges and 100 KB of source.
+
+```json
+{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"generate_diagram","arguments":{"mermaid":"flowchart LR
+  A[Start] -->|go| B{Ok?}
+  B -->|no| A
+  B --> C((End))"}}}
+```
 
 ### Import HTML
 

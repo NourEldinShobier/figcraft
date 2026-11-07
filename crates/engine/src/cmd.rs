@@ -25,6 +25,7 @@ pub mod layout_preview;
 pub mod library;
 pub mod lintlayout;
 pub mod lists;
+pub mod mermaid;
 pub mod page;
 pub mod props;
 pub mod proto;
@@ -101,6 +102,7 @@ fn registry() -> &'static Registry {
         list.extend(adjust::specs());
         list.extend(family::specs());
         list.extend(import_html::specs());
+        list.extend(mermaid::specs());
         list.extend(guidelines::specs());
         list.extend(tokencheck::specs());
         list.extend(script::specs());
