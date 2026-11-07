@@ -302,7 +302,14 @@ fn tools() -> Vec<Value> {
             "list_commands",
             "List commands",
             "List FigCraft commands: id, label, menu path, shortcut, whether it is undoable, and a parameter description. Every menu item, panel action and shortcut is a command; run one with run_command (or several as one undo step with batch). Most commands act on `ids` when given, else on the selection. Use `filter` to narrow (e.g. \"align\", \"layout\", \"variable\", \"style\", \"component\", \"proto\").",
-            obj(json!({"filter": string("Case-insensitive substring matched against id, label, menu path and parameter docs")}), &[]),
+            obj(
+                json!({
+                    "filter": string("Case-insensitive substring matched against id, label, menu path and parameter docs"),
+                    "limit": int("Most commands to list (default 400, up to 2000)"),
+                    "offset": int("Skip this many matching commands, to read the next page")
+                }),
+                &[],
+            ),
             true,
         ),
         tool(
@@ -1082,6 +1089,9 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
         return ToolResult::error(e);
     }
     let mut r = dispatch(b, name, &mut a).unwrap_or_else(ToolResult::error);
+    if let Some(too_big) = oversize(name, &r) {
+        r = ToolResult::error(too_big);
+    }
     // A detached copy beside an open app: the result carries the warning, not only the tool list.
     if name != "list_commands"
         && let Some(note) = b.detached()
@@ -1092,6 +1102,33 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
         r.content.push(json!({"type": "text", "text": note}));
     }
     r
+}
+
+/// Most text one tool result may carry, and most image bytes (base64).
+const MAX_RESULT_TEXT: usize = 8 << 20;
+const MAX_RESULT_IMAGE: usize = 16 << 20;
+
+/// The error that replaces a result no client could read: it names the size and the ways to ask for less.
+pub(crate) fn oversize(name: &str, r: &ToolResult) -> Option<String> {
+    let len = |key: &str, kind: &str| -> usize {
+        r.content
+            .iter()
+            .filter(|c| c.get("type").and_then(Value::as_str) == Some(kind))
+            .filter_map(|c| c.get(key).and_then(Value::as_str))
+            .map(str::len)
+            .sum()
+    };
+    let (text, image) = (len("text", "text"), len("data", "image"));
+    if text <= MAX_RESULT_TEXT && image <= MAX_RESULT_IMAGE {
+        return None;
+    }
+    let mib = |n: usize| n.div_ceil(1 << 20);
+    Some(format!(
+        "{name} produced {} MiB of {}, more than one result can carry ({} MiB). Ask for less: get_node with a smaller depth or `fields`, find_nodes with a lower `limit`, export or screenshot with a lower `scale`/`maxSize` or a `path` to write a file.",
+        mib(text.max(image)),
+        if text > MAX_RESULT_TEXT { "text" } else { "image data" },
+        mib(if text > MAX_RESULT_TEXT { MAX_RESULT_TEXT } else { MAX_RESULT_IMAGE }),
+    ))
 }
 
 /// Whether `d` can name an open file: an id, or a path or name.
@@ -1274,9 +1311,22 @@ fn list_commands(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResu
     if list.is_empty() {
         return Ok(ToolResult::text(format!("no command matches `{filter}`")));
     }
+    let count = |key: &str, default: usize| -> Result<usize, String> {
+        match a.get(key) {
+            None | Some(Value::Null) => Ok(default),
+            Some(v) => v.as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(|| format!("`{key}` must be a whole number")),
+        }
+    };
+    let limit = count("limit", 400)?.clamp(1, 2000);
+    let offset = count("offset", 0)?;
+    let total = list.len();
+    let end = (offset + limit).min(total);
+    if offset >= total {
+        return Err(format!("`offset` {offset} is past the {total} matching commands"));
+    }
     // One compact line per command keeps this readable for agents.
-    let mut out = format!("{} commands (id — label [menu] (shortcut) params; * = undoable):\n", list.len());
-    for c in &list {
+    let mut out = format!("{total} commands (id — label [menu] (shortcut) params; * = undoable):\n");
+    for c in &list[offset..end] {
         let g = |k: &str| c.get(k).and_then(Value::as_str).unwrap_or("");
         out.push_str(g("id"));
         if c.get("undoable").and_then(Value::as_bool) == Some(true) {
@@ -1293,6 +1343,9 @@ fn list_commands(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResu
         out.push(' ');
         out.push_str(g("params"));
         out.push('\n');
+    }
+    if end < total || offset > 0 {
+        out.push_str(&format!("showing {}-{end} of {total}; pass offset (and limit) or a filter for the rest\n", offset + 1));
     }
     Ok(ToolResult::text(out))
 }

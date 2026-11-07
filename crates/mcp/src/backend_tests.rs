@@ -43,6 +43,31 @@ fn ok_reply(text: &str) -> Vec<u8> {
     format!("{}\n", json!({"id": 1, "ok": true, "result": text})).into_bytes()
 }
 
+/// A restarted app makes a new token: the next request carries it, and the restart is counted.
+#[test]
+fn a_new_token_is_counted_as_a_restart_and_sent_with_the_next_request() {
+    use figcraft_collab_net::control_auth::ControlToken;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let app = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let mut out = stream.try_clone().unwrap();
+        let mut line = String::new();
+        BufReader::new(stream).read_line(&mut line).unwrap();
+        out.write_all(&ok_reply("fine")).unwrap();
+        serde_json::from_str::<serde_json::Value>(&line).unwrap()["token"].clone()
+    });
+    let (old, new) = ("a".repeat(22), "b".repeat(22));
+    let mut a = Attached::connect_with_token(&format!("127.0.0.1:{port}"), ControlToken::new(&old).unwrap()).unwrap();
+    assert_eq!(a.restarts(), 0);
+    a.adopt_token(ControlToken::new(&old).unwrap());
+    assert_eq!(a.restarts(), 0, "the same token is not a restart");
+    a.adopt_token(ControlToken::new(&new).unwrap());
+    assert_eq!(a.restarts(), 1);
+    a.call("engine.commands", json!({})).unwrap();
+    assert_eq!(app.join().unwrap(), json!(new), "the request carries the new token");
+}
+
 /// #1696: a raised timeout goes with every request; without one the line is as it always was.
 #[test]
 fn a_raised_timeout_is_asked_for_on_each_request() {

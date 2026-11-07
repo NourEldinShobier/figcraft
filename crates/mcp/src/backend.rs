@@ -113,9 +113,25 @@ pub struct Attached {
     timeout: Option<Duration>,
     /// [`Backend::target`].
     target: Option<Value>,
+    /// How many times the app was found restarted (it makes a new token at every start): ids and
+    /// the target document from before are void.
+    restarts: u64,
 }
 
 impl Attached {
+    /// Use `token` from now on. A different one means the app restarted: count it.
+    fn adopt_token(&mut self, token: figcraft_collab_net::control_auth::ControlToken) {
+        if token.as_str() != self.token.as_str() {
+            self.restarts += 1;
+        }
+        self.token = token;
+    }
+
+    /// How many times the app was found restarted since this connection was made.
+    pub fn restarts(&self) -> u64 {
+        self.restarts
+    }
+
     /// Connect to `addr` (e.g. `127.0.0.1:7979`), failing fast when nothing is listening.
     pub fn connect(addr: &str) -> std::io::Result<Self> {
         let port = addr
@@ -128,7 +144,7 @@ impl Attached {
 
     /// Connect with an explicit validated token.
     pub fn connect_with_token(addr: &str, token: figcraft_collab_net::control_auth::ControlToken) -> std::io::Result<Self> {
-        let mut r = Self { addr: addr.to_string(), token, conn: None, next_id: 1, max_reply: MAX_REPLY, timeout: None, target: None };
+        let mut r = Self { addr: addr.to_string(), token, conn: None, next_id: 1, max_reply: MAX_REPLY, timeout: None, target: None, restarts: 0 };
         r.reconnect()?;
         Ok(r)
     }
@@ -221,11 +237,6 @@ impl Backend for Attached {
     fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
         let id = self.next_id;
         self.next_id += 1;
-        let mut line = json!({"id": id, "method": method, "params": params, "token": self.token.as_str()});
-        if let (Some(t), Some(fields)) = (self.timeout, line.as_object_mut()) {
-            fields.insert("timeoutMs".into(), json!(u64::try_from(t.as_millis()).unwrap_or(u64::MAX)));
-        }
-        let line = line.to_string();
         if self.conn.is_none() || self.stale() {
             // The app makes a new token at every start: one that restarted needs the new one.
             if let Some(token) = self
@@ -235,12 +246,18 @@ impl Backend for Attached {
                 .and_then(|p| p.parse::<u16>().ok())
                 .and_then(|p| figcraft_collab_net::control_auth::ControlToken::for_client(p).ok())
             {
-                self.token = token;
+                self.adopt_token(token);
             }
             self.reconnect().map_err(|e| {
                 format!("FigCraft app at {} is not reachable: {e} (request was not sent; start it with `figcraft --control PORT`)", self.addr)
             })?;
         }
+        // Built after the token was refreshed: a restarted app refuses the old one.
+        let mut line = json!({"id": id, "method": method, "params": params, "token": self.token.as_str()});
+        if let (Some(t), Some(fields)) = (self.timeout, line.as_object_mut()) {
+            fields.insert("timeoutMs".into(), json!(u64::try_from(t.as_millis()).unwrap_or(u64::MAX)));
+        }
+        let line = line.to_string();
         // A lost reply does not mean the app failed to apply the request.
         let reply = self.roundtrip(&line).map_err(|e| {
             self.conn = None;

@@ -82,8 +82,32 @@ pub fn bool_of(v: &Value) -> Option<bool> {
 pub fn id_of(v: &Value) -> Option<NodeId> {
     match v {
         Value::Number(n) => n.as_u64().map(NodeId),
-        Value::String(s) => s.parse().ok(),
+        // "12", " 12 ", "#12" and a resource link ("figcraft://node/12") all name layer 12.
+        Value::String(s) => {
+            let t = s.trim();
+            t.strip_prefix("figcraft://node/").or_else(|| t.strip_prefix('#')).unwrap_or(t).parse().ok()
+        }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod id_tests {
+    use serde_json::json;
+
+    use super::id_of;
+
+    #[test]
+    fn ids_are_read_from_numbers_digits_hashes_and_resource_links() {
+        let id = |v| id_of(&v).map(|i| i.0);
+        assert_eq!(id(json!(12)), Some(12));
+        assert_eq!(id(json!("12")), Some(12));
+        assert_eq!(id(json!(" 12 ")), Some(12));
+        assert_eq!(id(json!("#12")), Some(12));
+        assert_eq!(id(json!("figcraft://node/12")), Some(12));
+        for junk in [json!(""), json!("#"), json!("figcraft://node/"), json!("-1"), json!("##3"), json!(1.5), json!(null), json!([1])] {
+            assert_eq!(id(junk.clone()), None, "{junk}");
+        }
     }
 }
 

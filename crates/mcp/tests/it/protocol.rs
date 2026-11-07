@@ -260,6 +260,30 @@ fn wait_for_changes_reads_comment_events_headless() {
 }
 
 #[test]
+fn list_commands_pages() {
+    let mut c = Client::new();
+    let first = c.ok("list_commands", json!({"limit": 5}));
+    let first = first.as_str().unwrap();
+    assert_eq!(first.lines().count(), 1 + 5 + 1, "{first}");
+    assert!(first.lines().last().unwrap().starts_with("showing 1-5 of "), "{first}");
+    let second = c.ok("list_commands", json!({"limit": 5, "offset": 5}));
+    let second = second.as_str().unwrap();
+    assert!(second.contains("showing 6-10 of "), "{second}");
+    assert_ne!(first.lines().nth(1), second.lines().nth(1));
+    assert!(c.err("list_commands", json!({"offset": 100_000})).contains("past the"));
+    assert!(c.err("list_commands", json!({"limit": "x"})).contains("whole number"));
+}
+
+#[test]
+fn ids_may_be_written_with_a_hash_or_as_a_resource_link() {
+    let mut c = Client::new();
+    let id = c.create(json!({"type": "rectangle", "name": "Tolerant"}));
+    for form in [json!(format!("#{id}")), json!(format!("figcraft://node/{id}")), json!(format!(" {id} "))] {
+        assert_eq!(c.ok("get_node", json!({"id": form.clone(), "depth": 0}))["name"], "Tolerant", "{form}");
+    }
+}
+
+#[test]
 fn list_commands_filters() {
     let mut c = Client::new();
     let all = c.ok("list_commands", json!({}));

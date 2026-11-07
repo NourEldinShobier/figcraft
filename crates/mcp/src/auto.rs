@@ -90,6 +90,9 @@ impl Auto {
     }
 }
 
+/// What the next result says after the app restarted under a live connection.
+const RESTART_NOTE: &str = "FigCraft was restarted: layer ids and the target document from before are void and the target is cleared. Read the document again (diagnostics, inspect_document) before editing.";
+
 /// The port `FIGCRAFT_MCP_PORT` names; the default when it is unset, not a number or 0.
 fn port_from_env(value: Option<&str>) -> u16 {
     value.and_then(|v| v.trim().parse::<u16>().ok()).filter(|p| *p != 0).unwrap_or(DEFAULT_CONTROL_PORT)
@@ -109,7 +112,16 @@ fn listening(port: u16) -> bool {
 impl Backend for Auto {
     fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
         self.look();
+        let before = self.attached.as_ref().map(Attached::restarts);
         let r = self.current().call(method, params);
+        // The app restarted under this connection: layer ids and the target document from before
+        // mean nothing now.
+        if let (Some(b), Some(a)) = (before, self.attached.as_ref().map(Attached::restarts))
+            && a != b
+        {
+            self.target = None;
+            self.note = Some(RESTART_NOTE.into());
+        }
         // The app went away (its connection could not be made again): carry on in a headless copy
         // until it is back, and say so.
         match r {

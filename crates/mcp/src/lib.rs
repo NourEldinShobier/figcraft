@@ -24,6 +24,8 @@ mod tools;
 
 #[cfg(test)]
 mod gradient_tests;
+#[cfg(test)]
+mod oversize_tests;
 
 pub use auto::Auto;
 pub use backend::{Attached, Backend, decode_data, page_children};
