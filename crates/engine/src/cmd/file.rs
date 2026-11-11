@@ -32,7 +32,7 @@ pub use export::{
     ExportJob, copy_png, drawn_layers, export_area, export_bytes, export_bytes_with, export_jobs, export_scale, exportable_layers, fig_bytes,
     frames_pdf, jobs_for, penpot_bytes, safe_file_name,
 };
-use export::{export, export_frames_pdf, export_layers, export_many, pdf_bytes};
+use export::{export, export_assets, export_frames_pdf, export_layers, export_many, pdf_bytes};
 use load::font_report;
 pub use load::{MAX_DOCUMENT_FILE, load, load_bytes, load_path};
 #[cfg(test)]
@@ -133,6 +133,13 @@ pub fn specs() -> Vec<CommandSpec> {
             "{ids? (default the selection, else every layer on the page with export settings), assets? (true: the Inspect tab's assets in and under them instead: layers with export settings, icons as SVG, images as PNG), dir? (folder to write into; else each file comes back as base64 `data`), zip? (no dir: the files come back together as one base64 zip `data` instead), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options): for every PDF instead of each setting's own, vdCompat? (bestEffort|exact|ignore: for every XML instead of each setting's own), colorProfile? (sameAsFile|srgb|displayP3: for every PNG, JPG and WebP instead of each setting's own)}  every layer once per export setting, named `<layer><suffix>.<format>` (\"@2x\" when a scaled export has no suffix; repeats get \" 2\"; slashes in a layer name make folders). Returns {files: [{name, id, bytes, path | data, warnings (XML only)}], skipped (layers without settings), data? (zip)}",
             false,
             export_layers
+        ),
+        spec!(
+            "export.assets",
+            "Export layers with export settings",
+            "{dir (folder to write into), root? (a layer: only it and its descendants; default the page), overwrite? (default false: an existing file of the same name is an error and nothing is written), limit? (files, at most 200)}  writes every layer with saved export settings (once per setting, named as file.exportLayers does) and a manifest.json of what was written → {dir, written, files: [{name, id, format, scale, bytes, path}], manifest}. Paths must lie inside the allowed write root",
+            false,
+            export_assets
         ),
         spec!(
             "file.exportMany",

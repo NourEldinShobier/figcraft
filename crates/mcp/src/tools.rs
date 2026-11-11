@@ -188,6 +188,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "contact_sheet",
     "export",
     "export_many",
+    "export_assets",
     "export_source",
     "screenshot",
     "open_file",
@@ -205,6 +206,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "lint_icons",
     "export_tokens",
     "check_contrast",
+    "fix_contrast",
     "history",
     "auto_name_layers",
     "wait_for_changes",
@@ -275,7 +277,9 @@ const DOCUMENT_TOOLS: &[&str] = &[
     "get_nodes",
     "contact_sheet",
     "export",
+    "export_assets",
     "screenshot",
+    "fix_contrast",
     "save_file",
     "undo",
     "redo",
@@ -581,6 +585,21 @@ fn tools() -> Vec<Value> {
             false,
         ),
         tool(
+            "export_assets",
+            "Export assets",
+            "Write every layer that has saved export settings (set with `run_command export.add`) under `root` (default the page) to `dir` in one call (engine `export.assets`), each once per setting, named like the setting says (`<layer><suffix>.<format>`; `/` in a layer name makes folders), plus a `manifest.json` listing what was written. An existing file of the same name is an error (nothing is written) unless `overwrite: true`. At most 200 files. `dir` must be inside the allowed write root. Returns `{dir, written, files: [{name, id, format, scale, bytes, path}], manifest}`.",
+            obj(
+                json!({
+                    "dir": string("Folder to write into (absolute path recommended)"),
+                    "root": id_schema("A layer: only it and its descendants (default the whole page)"),
+                    "overwrite": boolean("Replace files that already exist (default false)"),
+                    "limit": num("Most files to write, 1 to 200 (default 200); more is an error, not a partial export"),
+                }),
+                &["dir"],
+            ),
+            false,
+        ),
+        tool(
             "export_source",
             "Export plain-text source",
             "The whole document as canonical plain text for diffs and version control (engine `file.exportSource`; format in docs/source-format.md): JSON Lines, one object per line with sorted keys and no volatile fields, so exporting twice gives identical text and changing one fill changes one line. Layers keep their ids and keys. Without `path` the text comes back as `source`; with a `path` that has a file extension it is written there, and with a folder path (no extension) `design.jsonl` and `images/<hash>` are written. Read it back with run_command file.importSource.",
@@ -777,6 +796,22 @@ fn tools() -> Vec<Value> {
                 &[],
             ),
             true,
+        ),
+        tool(
+            "fix_contrast",
+            "Fix contrast",
+            "Fix text that fails `check_contrast` (engine `a11y.fixContrast`): each failing text layer gets the nearest colour, by lightness with hue and saturation kept, that reaches the required ratio in every variable mode, as one undo step. `prefer: \"background\"` changes the plain opaque solid layer behind the text instead (falls back to the text colour when the background is not one such layer). Colours bound to a variable are never unbound: they come back in `skipped` with the `variable` to change. `dryRun` returns the plan only. Returns `{level, dryRun, changed: [{id, name, changed: text|background, layer, from, to, ratio, required}], skipped: [{id, name, reason, variable?}], unknown, remaining?}`.",
+            obj(
+                json!({
+                    "ids": ids_schema("Layers whose text is fixed (default: the whole current page); not with `root`"),
+                    "root": id_schema("A layer: fix the text under it"),
+                    "level": {"type": "string", "enum": ["AA", "AAA"], "description": "WCAG level (default AA)"},
+                    "prefer": {"type": "string", "enum": ["text", "background"], "description": "What to change (default text)"},
+                    "dryRun": boolean("Report what would change without changing it"),
+                }),
+                &[],
+            ),
+            false,
         ),
         tool(
             "history",
@@ -1517,6 +1552,8 @@ fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, doc_target:
         "export" => export(b, a),
         "export_source" => export_source(b, a),
         "export_many" => export_many(b, a),
+        "export_assets" => export_assets(b, a),
+        "fix_contrast" => fix_contrast(b, a),
         "screenshot" => screenshot(b, a),
         "open_file" => open_file(b, a),
         "save_file" => save_file(b, a, doc_target),
@@ -2705,6 +2742,21 @@ fn auto_name_layers(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolR
         params.insert("ids".into(), json!(ids));
     }
     exec(b, "layer.autoName", Value::Object(params)).map(|v| ToolResult::json(&v))
+}
+
+fn export_assets(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let mut params = a.clone();
+    params.retain(|_, v| !v.is_null());
+    exec(b, "export.assets", Value::Object(params)).map(|v| ToolResult::json(&v))
+}
+
+fn fix_contrast(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let mut params = a.clone();
+    params.retain(|_, v| !v.is_null());
+    if let Some(ids) = ids_arg(a, "ids")? {
+        params.insert("ids".into(), json!(ids));
+    }
+    exec(b, "a11y.fixContrast", Value::Object(params)).map(|v| ToolResult::json(&v))
 }
 
 fn export_many(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {

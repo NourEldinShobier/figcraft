@@ -17,6 +17,8 @@ mod board_selection_tools;
 mod cancel_progress;
 #[allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod common;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::disallowed_methods)]
+mod contrast_assets_tools;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod design_context_extras;
 mod design_system_index_tool;

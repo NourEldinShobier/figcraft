@@ -397,6 +397,87 @@ pub(super) fn export_layers(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(r)
 }
 
+const MAX_ASSET_FILES: usize = 200;
+
+/// Every layer under a root with saved export settings, written to `dir` in one call, with a `manifest.json`.
+pub(super) fn export_assets(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "export.assets";
+    const KEYS: &[&str] = &["root", "dir", "overwrite", "limit"];
+    if let Some(o) = p.as_object()
+        && let Some(k) = o.keys().find(|k| !KEYS.contains(&k.as_str()))
+    {
+        return Err(bad(cmd, format!("unknown key `{k}` (known: {})", KEYS.join(", "))));
+    }
+    let dir = match get(p, "dir") {
+        Some(Value::String(d)) if !d.trim().is_empty() => d.clone(),
+        _ => return Err(bad(cmd, "`dir` (the folder to write into, a string) is required")),
+    };
+    let overwrite = match get(p, "overwrite") {
+        None | Some(Value::Null) => false,
+        Some(v) => bool_of(v).ok_or_else(|| bad(cmd, "`overwrite` must be true or false"))?,
+    };
+    let limit = match get(p, "limit") {
+        None | Some(Value::Null) => MAX_ASSET_FILES,
+        Some(v) => v
+            .as_u64()
+            .filter(|n| (1..=MAX_ASSET_FILES as u64).contains(n))
+            .ok_or_else(|| bad(cmd, format!("`limit` must be an integer from 1 to {MAX_ASSET_FILES}")))? as usize,
+    };
+    let doc = s.doc()?;
+    let root = match crate::params::opt_id(cmd, p, "root")? {
+        Some(r) if doc.node(r).is_some() => r,
+        Some(_) => return Err(bad(cmd, "`root` is not a layer of the document")),
+        None => s.page()?,
+    };
+    let ids: Vec<NodeId> = doc.subtree(root).into_iter().filter(|i| doc.node(*i).is_some_and(|n| !n.is_page() && !n.exports.is_empty())).collect();
+    let jobs = export_jobs(doc, &ids);
+    if jobs.is_empty() {
+        return Err(EngineError::Disabled(cmd.into(), "no layer under the root has export settings (add one with export.add)".into()));
+    }
+    if jobs.len() > limit {
+        return Err(bad(cmd, format!("{} files would be written, over the limit of {limit}: pass a smaller `root`", jobs.len())));
+    }
+    let base = std::path::Path::new(&dir);
+    let target = |name: &str| base.join(name).to_string_lossy().to_string();
+    if !overwrite {
+        let clash: Vec<String> = jobs
+            .iter()
+            .map(|j| j.file.as_str())
+            .chain(["manifest.json"])
+            .filter(|n| crate::file_access::exists(target(n)))
+            .map(str::to_string)
+            .take(5)
+            .collect();
+        if !clash.is_empty() {
+            return Err(bad(cmd, format!("already in `dir`: {} (pass overwrite: true)", clash.join(", "))));
+        }
+    }
+    let mut files = Vec::with_capacity(jobs.len());
+    let mut outputs = Vec::with_capacity(jobs.len());
+    for job in &jobs {
+        let scale = export_scale(doc, &[job.id], &job.setting);
+        let (bytes, _) = export_file(doc, &[job.id], &job.setting, scale)?;
+        files.push(json!({"name": job.file, "id": job.id, "format": job.setting.format.ext(), "scale": scale, "bytes": bytes.len()}));
+        outputs.push(bytes);
+    }
+    crate::file_access::create_dir_all(base)?;
+    for (job, bytes) in jobs.iter().zip(&outputs) {
+        let path = target(&job.file);
+        // A layer name with slashes exports into folders.
+        if let Some(parent) = std::path::Path::new(&path).parent() {
+            crate::file_access::create_dir_all(parent)?;
+        }
+        write(&path, bytes)?;
+    }
+    let manifest = serde_json::to_vec_pretty(&json!({"files": files})).map_err(|e| EngineError::Other(e.to_string()))?;
+    let manifest_path = target("manifest.json");
+    write(&manifest_path, &manifest)?;
+    for (f, job) in files.iter_mut().zip(&jobs) {
+        f["path"] = json!(target(&job.file));
+    }
+    Ok(json!({"dir": dir, "written": files.len(), "files": files, "manifest": manifest_path}))
+}
+
 /// The SVG icon preset (`iconPreset: true`): baked transforms, no needless groups or view clips,
 /// numbers to 3 decimals, the frame's box as the view box, and `currentColor` for the colour
 /// `currentColor` names (`true`: the icon's only colour; or a hex colour).

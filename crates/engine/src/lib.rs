@@ -331,6 +331,8 @@ mod events_tests;
 #[cfg(test)]
 mod exec_params_tests;
 #[cfg(test)]
+mod export_assets_tests;
+#[cfg(test)]
 mod export_behaviour_tests;
 #[cfg(test)]
 mod export_bench_tests;
