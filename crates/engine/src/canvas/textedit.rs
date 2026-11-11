@@ -179,7 +179,9 @@ fn edit(s: &mut Session, f: impl FnOnce(&mut TextData, &mut TextEdit)) -> Result
 /// in-progress composition.
 fn edit_if(s: &mut Session, f: impl FnOnce(&mut TextData, &mut TextEdit) -> bool) -> Result<bool> {
     let ds = s.ds_mut()?;
-    let Some(mut te) = ds.text_edit.clone() else { return Err(EngineError::Other("not editing text".into())) };
+    let Some(mut te) = ds.text_edit.clone() else {
+        return Err(EngineError::Other("not editing text: start with text.edit.begin {id} (or double-click a text layer)".into()));
+    };
     let before = ds.doc.clone();
     let doc = ds.doc_mut();
     let n = doc.get_mut(te.id)?;
@@ -431,7 +433,9 @@ fn word_right(chars: &[char], mut i: usize) -> usize {
 /// [`crate::keymap::text_motion`] gives them for the platform's keys. `ArrowLeft` etc. also work.
 pub fn key(s: &mut Session, key: &str, shift: bool, word: bool, line: bool) -> Result<()> {
     let key = key.strip_prefix("Arrow").unwrap_or(key);
-    let Some(te) = s.ds()?.text_edit.clone() else { return Err(EngineError::Other("not editing text".into())) };
+    let Some(te) = s.ds()?.text_edit.clone() else {
+        return Err(EngineError::Other("not editing text: start with text.edit.begin {id} (or double-click a text layer)".into()));
+    };
     let t = text_of(s, te.id)?;
     let chars: Vec<char> = t.characters.chars().collect();
     let n = chars.len();
@@ -708,7 +712,9 @@ pub fn ime_surrounding(s: &Session) -> std::result::Result<ImeSurrounding, ImeSu
 /// [`insert`]; an empty `text` cancels it. Starting to compose over a selection deletes it, as
 /// typing would.
 pub fn preedit(s: &mut Session, text: &str, cursor: Option<usize>) -> Result<()> {
-    let Some(te) = s.ds()?.text_edit.clone() else { return Err(EngineError::Other("not editing text".into())) };
+    let Some(te) = s.ds()?.text_edit.clone() else {
+        return Err(EngineError::Other("not editing text: start with text.edit.begin {id} (or double-click a text layer)".into()));
+    };
     let text: String = text.chars().filter(|c| !c.is_control()).take(MAX_PREEDIT).collect();
     if text.is_empty() && te.preedit.is_none() {
         return Ok(()); // IMEs send empty compositions when idle

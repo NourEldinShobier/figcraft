@@ -398,7 +398,8 @@ fn analyze(doc: &Document, roots: &[NodeId], aaa: bool) -> Result<Report> {
         Some(r) => doc.page_of(*r).or_else(|| doc.node(*r).filter(|n| n.is_page()).map(|n| n.id)),
         None => doc.pages.first().copied(),
     };
-    let page = page.ok_or_else(|| EngineError::Other("no page".into()))?;
+    let page = page
+        .ok_or_else(|| EngineError::Other(roots.first().map_or("the file has no page".into(), |r| format!("no layer or page {r} in this file"))))?;
     let order = doc.subtree(page);
     let position: BTreeMap<NodeId, usize> = order.iter().enumerate().map(|(i, id)| (*id, i)).collect();
     let shown = |id: NodeId| doc.ancestors(id).iter().all(|a| doc.node(*a).is_none_or(|n| n.visible)) && doc.node(id).is_some_and(|n| n.visible);

@@ -277,3 +277,17 @@ fn edge_forms_parse() {
         parse(src).unwrap_or_else(|e| panic!("{src:?}: {e}"));
     }
 }
+
+#[test]
+fn deeply_nested_subgraphs_are_refused_not_laid_out_forever() {
+    let mut s = board();
+    let started = std::time::Instant::now();
+    let nested = format!("graph TD\n{}x\n{}", "subgraph s\n".repeat(5_000), "end\n".repeat(5_000));
+    let msg = err(&mut s, &nested);
+    assert!(msg.contains("subgraph"), "{msg}");
+    let many = format!("graph TD\nx\n{}", "subgraph s\nend\n".repeat(5_000));
+    assert!(err(&mut s, &many).contains("subgraph"));
+    assert!(started.elapsed().as_secs() < 5, "took {:?}", started.elapsed());
+    // A reasonable diagram still draws.
+    draw(&mut s, "graph TD\nsubgraph a\nsubgraph b\nx --> y\nend\nend");
+}

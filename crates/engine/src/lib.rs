@@ -617,6 +617,8 @@ mod sketch_import_tests;
 #[cfg(test)]
 mod slot_tests;
 #[cfg(test)]
+mod stability_tests;
+#[cfg(test)]
 mod staged_open_tests;
 #[cfg(test)]
 mod stored_ids_tests;

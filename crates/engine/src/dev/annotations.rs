@@ -225,7 +225,7 @@ fn check(cmd: &str, a: &Annotation) -> crate::Result<()> {
 /// The layer an annotation command acts on: `id`, else the first selected layer.
 fn layer(cmd: &str, s: &crate::Session, p: &Value) -> crate::Result<NodeId> {
     let id = targets(s, p).first().copied().ok_or_else(|| bad(cmd, "select a layer or pass `id`"))?;
-    let n = s.doc()?.node(id).ok_or_else(|| bad(cmd, "no such layer"))?;
+    let n = s.doc()?.node(id).ok_or_else(|| bad(cmd, format!("no layer {id}")))?;
     if n.is_page() {
         return Err(bad(cmd, "pages can't be annotated"));
     }

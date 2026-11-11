@@ -62,7 +62,7 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             let doc = s.doc()?;
             if !doc.contains(id) {
-                return Err(bad(cmd, "no such layer"));
+                return Err(bad(cmd, format!("no layer {id}")));
             }
             let connected = crate::code_connect::link(doc, id, lang).is_some();
             let mobile = match get(p, "mobile") {

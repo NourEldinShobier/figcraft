@@ -143,7 +143,7 @@ fn layer(cmd: &str, s: &crate::Session, p: &Value, page_default: bool) -> crate:
         None => targets(s, p).first().copied().ok_or_else(|| bad(cmd, "select a layer or pass `id`"))?,
     };
     if !s.doc()?.contains(id) {
-        return Err(bad(cmd, "no such layer"));
+        return Err(bad(cmd, format!("no layer {id}")));
     }
     Ok(id)
 }
@@ -251,7 +251,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 let depth = depth_arg(cmd, p, 3)?;
                 let include = crate::design_extras::include_arg(cmd, p)?;
                 let doc = s.doc()?;
-                let n = doc.node(id).ok_or_else(|| bad(cmd, "no such layer"))?;
+                let n = doc.node(id).ok_or_else(|| bad(cmd, format!("no layer {id}")))?;
                 let mut code = code_for(doc, id, lang);
                 let code_truncated = match code.char_indices().nth(MAX_CODE_CHARS) {
                     Some((cut, _)) => {

@@ -2,7 +2,7 @@ use super::NodeId;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
-    #[error("unknown command `{0}`")]
+    #[error("unknown command `{0}` (list_commands with a filter finds ids; they look like shape.rectangle)")]
     UnknownCommand(String),
     #[error("command `{0}` is not available right now: {1}")]
     Disabled(String, String),

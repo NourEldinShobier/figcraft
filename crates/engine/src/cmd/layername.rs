@@ -206,8 +206,8 @@ fn auto_name(s: &mut Session, p: &Value) -> Result<Value> {
         "document" => doc.pages.clone(),
         _ => return Err(bad(CMD, "`scope` must be selection, page or document")),
     };
-    if roots.iter().any(|r| !doc.contains(*r)) {
-        return Err(bad(CMD, "no such layer"));
+    if let Some(r) = roots.iter().find(|r| !doc.contains(**r)) {
+        return Err(bad(CMD, format!("no layer {r}")));
     }
     let renames = propose(doc, &roots);
     // Touching the document with nothing to rename would still record an undo step.

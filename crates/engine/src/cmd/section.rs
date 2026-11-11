@@ -111,7 +111,7 @@ fn compare(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let ds = s.ds()?;
     let doc = &ds.doc;
-    let n = doc.node(id).ok_or_else(|| bad(cmd, "no such layer"))?;
+    let n = doc.node(id).ok_or_else(|| bad(cmd, format!("no layer {id}")))?;
     if !has_status(doc, id) {
         return Err(bad(cmd, "compare a top-level frame or a section"));
     }

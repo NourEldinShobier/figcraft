@@ -43,7 +43,7 @@ pub fn req_num(cmd: &str, p: &Value, key: &str) -> Result<f64> {
 pub fn req_index(cmd: &str, p: &Value, key: &str) -> Result<usize> {
     let k = req_num(cmd, p, key)?;
     if !(0.0..1e9).contains(&k) || k.fract() != 0.0 {
-        return Err(bad(cmd, format!("`{key}` out of range")));
+        return Err(bad(cmd, format!("`{key}` must be a whole number from 0 up (an index counts from 0), got {k}")));
     }
     Ok(k as usize)
 }
@@ -302,11 +302,22 @@ pub fn blend(p: &Value, key: &str) -> Option<BlendMode> {
     string(p, key).and_then(|s| BlendMode::from_name(&s))
 }
 
+/// A serde error, with a pointer for the ones that name a Rust type (`expected struct LayoutGrid`)
+/// or a field the caller left out: the caller can't see either.
+pub fn explain_serde(e: &serde_json::Error) -> String {
+    let m = e.to_string();
+    if m.contains("expected struct ") || m.contains("missing field") {
+        format!("{m} (it takes an object: list_commands with a filter on the command shows its fields)")
+    } else {
+        m
+    }
+}
+
 /// Serde-deserialize `key` leniently into `T`.
 pub fn parse<T: serde::de::DeserializeOwned>(cmd: &str, p: &Value, key: &str) -> Result<Option<T>> {
     match get(p, key) {
         None => Ok(None),
-        Some(v) => serde_json::from_value(v.clone()).map(Some).map_err(|e| bad(cmd, format!("`{key}`: {e}"))),
+        Some(v) => serde_json::from_value(v.clone()).map(Some).map_err(|e| bad(cmd, format!("`{key}`: {}", explain_serde(&e)))),
     }
 }
 

@@ -32,6 +32,8 @@ fn a_stale_ifrev_changes_nothing_and_says_what_changed() {
         ("create_node", json!({"type": "rectangle", "ifRev": seen})),
         ("batch", json!({"commands": [{"command": "edit.undo"}], "ifRev": seen})),
         ("run_script", json!({"code": "1", "ifRev": seen})),
+        ("undo", json!({"ifRev": seen})),
+        ("redo", json!({"ifRev": seen})),
     ] {
         let e = c.err(tool, args);
         assert!(e.contains(&format!("you read revision {seen}")) && e.contains("nothing was changed"), "{tool}: {e}");
@@ -64,4 +66,17 @@ fn ifrev_must_be_an_integer_and_not_combine_with_documents() {
     let e = c.err("set_properties", json!({"where": {"name": "x"}, "props": {"name": "y"}, "ifRev": 1, "documents": "all"}));
     assert!(e.contains("documents"), "{e}");
     c.err("get_node", json!({"id": 1, "ifRev": 1}));
+}
+
+#[test]
+fn undo_with_a_current_ifrev_undoes_and_with_a_stale_one_leaves_the_other_agents_step() {
+    let mut c = Client::new();
+    let id = c.create(json!({"type": "rectangle", "name": "Box", "width": 10, "height": 10}));
+    let seen = rev(&c.ok("get_node", json!({"id": id, "depth": 0})));
+    c.ok("set_properties", json!({"ids": [id], "props": {"name": "Theirs"}}));
+    c.err("undo", json!({"ifRev": seen}));
+    assert_eq!(c.ok("get_node", json!({"id": id, "depth": 0}))["name"], "Theirs");
+    let now = rev(&c.ok("get_node", json!({"id": id, "depth": 0})));
+    assert_eq!(c.ok("undo", json!({"ifRev": now}))["undone"], true);
+    assert_eq!(c.ok("get_node", json!({"id": id, "depth": 0}))["name"], "Box");
 }

@@ -4,8 +4,9 @@
 //! step and leaves the document untouched when it fails.
 //!
 //! The sandbox: no modules (`import`), no `eval`, no clock, no files (the commands a plugin may
-//! not call are closed to scripts too), and four budgets: operations, commands, data size and
-//! call depth. None of them depends on wall-clock time, so they behave the same on every platform.
+//! not call are closed to scripts too), and five budgets: operations, commands, data size, call depth
+//! and the seconds the commands may take together (a script that loops over a large file would
+//! otherwise freeze the app: commands past it fail). The other four do not depend on wall-clock time.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -25,6 +26,8 @@ const MAX_OPERATIONS: u64 = 5_000_000;
 const MAX_CODE_BYTES: usize = 100_000;
 /// Commands one script may run.
 const MAX_COMMANDS: u32 = 10_000;
+/// Seconds a script may spend in its commands before they fail (one second in tests).
+const MAX_SECONDS: u64 = if cfg!(test) { 1 } else { 20 };
 /// Log lines kept, and the longest one in characters.
 const MAX_LOG_LINES: usize = 200;
 const MAX_LOG_CHARS: usize = 1_000;
@@ -78,6 +81,7 @@ struct Host {
     logs: Vec<String>,
     logs_dropped: usize,
     commands: u32,
+    started: web_time::Instant,
 }
 
 type Shared = Rc<RefCell<Host>>;
@@ -99,6 +103,12 @@ impl Host {
         if self.commands >= MAX_COMMANDS {
             return Err(format!("a script may run at most {MAX_COMMANDS} commands"));
         }
+        if self.started.elapsed().as_secs() >= MAX_SECONDS {
+            return Err(format!(
+                "the script ran for {MAX_SECONDS} seconds ({} commands): its commands are slow on this file; run fewer commands per call: one command.each call, or a narrower find()",
+                self.commands
+            ));
+        }
         self.commands += 1;
         let ui_before = self.s.ui_requests.len();
         self.s
@@ -117,7 +127,13 @@ impl Host {
 /// Run `code` on the document as one group (the caller's), and report what it did.
 fn execute(s: &mut Session, code: &str, max_ops: u64) -> Result<Value> {
     let before = s.ds()?.doc.clone();
-    let host = Rc::new(RefCell::new(Host { s: std::mem::replace(s, Session::empty()), logs: Vec::new(), logs_dropped: 0, commands: 0 }));
+    let host = Rc::new(RefCell::new(Host {
+        s: std::mem::replace(s, Session::empty()),
+        logs: Vec::new(),
+        logs_dropped: 0,
+        commands: 0,
+        started: web_time::Instant::now(),
+    }));
     let outcome = guard::run(CMD, || Ok(eval(&host, code, max_ops)));
     // Back to its owner, also after a panic.
     if let Ok(mut h) = host.try_borrow_mut() {
@@ -451,6 +467,19 @@ mod tests {
         assert!(err.contains("more than 1000 operations") && err.contains("maxOperations"), "{err}");
         let err = run(&mut s, "let i = 0; while true { i += 1; }").unwrap_err().to_string();
         assert!(err.contains("200000 operations"), "{err}");
+    }
+
+    #[test]
+    fn slow_commands_stop_the_script_after_the_time_budget() {
+        let mut s = Session::new();
+        let made = s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 5, "height": 5})).unwrap();
+        for _ in 0..600 {
+            s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 5, "height": 5})).unwrap();
+        }
+        let err = run(&mut s, "for i in 0..9000 { cmd(\"a11y.audit\"); } 1").unwrap_err().to_string();
+        assert!(err.contains("seconds") && err.contains("slow"), "{err}");
+        assert!(err.contains("nothing was changed"), "{err}");
+        assert!(s.doc().unwrap().contains(figcraft_doc::NodeId(made["id"].as_u64().unwrap())));
     }
 
     #[test]

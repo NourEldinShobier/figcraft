@@ -253,6 +253,8 @@ const REV_GUARDED_TOOLS: &[&str] = &[
     "create_node",
     "propagate_change",
     "run_script",
+    "undo",
+    "redo",
     "apply_text",
     "fill_instances",
     "swap_component",
@@ -1275,7 +1277,7 @@ fn tools() -> Vec<Value> {
         tool(
             "generate_diagram",
             "Draw a Mermaid diagram on a board",
-            "Draw Mermaid text on a board as shapes joined by connectors that stay attached (engine `board.fromMermaid`), inside one section, as one undo step; write the Mermaid yourself from the description. Supports flowchart/graph (TD, TB, LR, RL, BT; node shapes [text] (text) {text} ((text)) ([text]) [(text)] [[text]] {{text}} [/text/] [\\text\\]; links -->, ---, -.->, ==>, with |label| or -- label -->; chains; subgraph ... end, nested), sequenceDiagram (participant/actor with `as`, ->>, -->>, ->, -->, Note over/left of/right of, title, autonumber) and erDiagram (entities with attribute blocks, relationships such as ||--o{ with a label; cardinality goes in the connector label). The layout is layered (ranks by longest path, barycentre ordering); subgraph members stay together. Styling lines (style, classDef, class, linkStyle, click) are ignored and listed in `warnings`; every other unsupported construct (blocks like loop/alt in sequence diagrams, `&` in links, `--x` ends) is an error naming the line. At most 200 nodes and 500 edges. Only on board files (create one with run_command file.newBoard). Returns {rootId (the section), nodes: [{name, id}], edges: [{from, to, id}], warnings}. Check the result with screenshot.",
+            "Draw Mermaid text on a board as shapes joined by connectors that stay attached (engine `board.fromMermaid`), inside one section, as one undo step; write the Mermaid yourself from the description. Supports flowchart/graph (TD, TB, LR, RL, BT; node shapes [text] (text) {text} ((text)) ([text]) [(text)] [[text]] {{text}} [/text/] [\\text\\]; links -->, ---, -.->, ==>, with |label| or -- label -->; chains; subgraph ... end, nested), sequenceDiagram (participant/actor with `as`, ->>, -->>, ->, -->, Note over/left of/right of, title, autonumber) and erDiagram (entities with attribute blocks, relationships such as ||--o{ with a label; cardinality goes in the connector label). The layout is layered (ranks by longest path, barycentre ordering); subgraph members stay together. Styling lines (style, classDef, class, linkStyle, click) are ignored and listed in `warnings`; every other unsupported construct (blocks like loop/alt in sequence diagrams, `&` in links, `--x` ends) is an error naming the line. At most 200 nodes, 500 edges and 200 subgraphs nested 16 deep. Only on board files (create one with run_command file.newBoard). Returns {rootId (the section), nodes: [{name, id}], edges: [{from, to, id}], warnings}. Check the result with screenshot.",
             obj(
                 json!({
                     "mermaid": string("The Mermaid source (at most 100 KB)"),

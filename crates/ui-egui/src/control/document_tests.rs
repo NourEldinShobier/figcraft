@@ -73,3 +73,25 @@ fn doc_revision_reads_without_moving_and_follows_the_named_file() {
     assert_eq!(rev(&mut app, json!({})), front0, "the file in front is untouched");
     assert_eq!(app.session.active, 1, "Front stays in front");
 }
+
+#[test]
+fn node_get_answers_like_the_headless_backend_for_a_missing_layer_and_a_huge_depth() {
+    let (mut app, _) = two_files();
+    let e = handle(&mut app, "node.get", json!({"id": 999_999})).unwrap_err();
+    assert!(e.contains("no such node 999999"), "{e}");
+    // 100 frames inside each other: a depth of a billion reads at most 64 levels.
+    let doc = app.session.doc_mut().unwrap();
+    let mut parent = doc.pages[0];
+    let mut top = None;
+    for i in 0..100 {
+        parent = doc.create(parent, figcraft_doc::NodeKind::Frame, &format!("F{i}"), 0.0, 0.0, 10.0, 10.0).unwrap();
+        top = top.or(Some(parent));
+    }
+    let v = handle(&mut app, "node.get", json!({"id": top.unwrap().0, "depth": 1_000_000_000u64})).unwrap();
+    let (mut levels, mut at) = (0, &v);
+    while let Some(child) = at["children"].get(0) {
+        levels += 1;
+        at = child;
+    }
+    assert_eq!(levels, 64, "depth is capped at 64, as headless does");
+}

@@ -8,6 +8,10 @@ use super::{Diagram, Dir, FEdge, FNode, Flow, Group, Msg, Seq, SeqItem, Shape};
 /// Source accepted, in bytes.
 pub const MAX_INPUT: usize = 100_000;
 
+/// Subgraphs per flowchart and how deep they nest: the layout is quadratic in both.
+const MAX_GROUPS: usize = 200;
+const MAX_GROUP_DEPTH: usize = 16;
+
 type Res<T> = Result<T, String>;
 
 #[derive(Default)]
@@ -118,6 +122,9 @@ fn flow_stmt(st: &mut FlowState, s: &str, n: usize, w: &mut Warnings) -> Res<()>
             };
             if title.is_empty() {
                 return Err(at(n, s, "subgraph needs a title"));
+            }
+            if st.f.groups.len() >= MAX_GROUPS || st.stack.len() >= MAX_GROUP_DEPTH {
+                return Err(at(n, s, format!("at most {MAX_GROUPS} subgraphs, nested {MAX_GROUP_DEPTH} deep")));
             }
             st.f.groups.push(Group { title, parent: st.stack.last().copied() });
             st.stack.push(st.f.groups.len() - 1);

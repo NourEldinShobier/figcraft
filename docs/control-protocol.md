@@ -213,7 +213,7 @@ changing document metadata (see below).
 
 ### `node.get {id, depth?, fields?, outline?}`
 
-One layer (children to `depth`, default 1). Fields: id, name, type, x, y, width, height, rotation,
+One layer (children to `depth`, default 1, at most 64; an id that is not in the file is an error, `no such node N`). Fields: id, name, type, x, y, width, height, rotation,
 absoluteBounds, visible, locked, opacity, blend, fills, strokes, strokeWeight, effects, cornerRadius,
 layout (including grid `columnTracks` / `rowTracks`), sizing, `minWidth` / `maxWidth` /
 `minHeight` / `maxHeight`, `absolute`, constraints (children of plain frames and absolute

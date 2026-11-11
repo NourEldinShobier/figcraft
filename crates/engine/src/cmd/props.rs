@@ -94,17 +94,23 @@ pub fn snake(v: &Value) -> Value {
 /// `v` as an effect list, refusing keys an effect doesn't read: serde dropped them without a word,
 /// so a shadow given `offsetY` kept the default offset.
 pub fn effects_from(cmd: &str, v: &Value) -> Result<Vec<Effect>> {
-    let effects: Vec<Effect> = serde_json::from_value(snake(v)).map_err(|e| bad(cmd, format!("effects: {e}")))?;
+    let effects: Vec<Effect> = serde_json::from_value(snake(v)).map_err(|e| bad(cmd, format!("effects: {}", effect_error(&e))))?;
     for (i, given) in v.as_array().into_iter().flatten().enumerate() {
         refuse_ignored_effect_keys(cmd, &format!("effects[{i}]"), given, |v| serde_json::from_value(snake(v)).ok())?;
     }
     Ok(effects)
 }
 
+/// A serde error on an effect, with what the caller needs: effects are objects with a `type`.
+fn effect_error(e: &serde_json::Error) -> String {
+    let types: Vec<&str> = Effect::TYPES.iter().map(|(_, t)| *t).collect();
+    format!("{e} (an effect is an object with a `type`: {})", types.join(", "))
+}
+
 /// `p[key]` as one effect, read as serde reads it (its aliases too), refusing keys it doesn't read.
 pub fn effect_from(cmd: &str, p: &Value, key: &str) -> Result<Option<Effect>> {
     let Some(v) = get(p, key) else { return Ok(None) };
-    let effect: Effect = serde_json::from_value(v.clone()).map_err(|e| bad(cmd, format!("`{key}`: {e}")))?;
+    let effect: Effect = serde_json::from_value(v.clone()).map_err(|e| bad(cmd, format!("`{key}`: {}", effect_error(&e))))?;
     refuse_ignored_effect_keys(cmd, &format!("`{key}`"), v, |v| serde_json::from_value(v.clone()).ok())?;
     Ok(Some(effect))
 }

@@ -50,7 +50,7 @@ fn fill(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let (width, base) = {
         let doc = s.doc()?;
-        let n = doc.node(src).ok_or_else(|| bad(CMD, "no such layer"))?;
+        let n = doc.node(src).ok_or_else(|| bad(CMD, format!("no layer {src}")))?;
         (n.width, n.name.clone())
     };
     let formats = formats(p)?;

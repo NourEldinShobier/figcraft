@@ -1501,10 +1501,14 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
         "doc.revision" => in_document(app, p, |s| s.ds().map(|d| json!({"revision": d.revision})).map_err(|e| e.to_string())),
         "node.get" => {
             let id = p.get("id").and_then(figcraft_engine::params::id_of).ok_or("`id` required")?;
-            let depth = p.get("depth").and_then(Value::as_u64).unwrap_or(1) as usize;
+            let depth = p.get("depth").and_then(Value::as_u64).unwrap_or(1).min(64) as usize;
             let options = figcraft_engine::inspect::InspectOptions::parse(p)?;
             in_document(app, p, |s| {
-                s.doc().map(|d| figcraft_engine::inspect::node_json_with_options(d, id, depth, &options)).map_err(|e| e.to_string())
+                let doc = s.doc().map_err(|e| e.to_string())?;
+                if !doc.contains(id) {
+                    return Err(format!("no such node {id}"));
+                }
+                Ok(figcraft_engine::inspect::node_json_with_options(doc, id, depth, &options))
             })
         }
         "window.new" => {

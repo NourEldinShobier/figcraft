@@ -331,7 +331,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     None => ColorFormat::Hex,
                 };
                 let doc = s.doc()?;
-                doc.node(id).ok_or_else(|| crate::bad(cmd, "no such layer"))?;
+                doc.node(id).ok_or_else(|| crate::bad(cmd, format!("no layer {id}")))?;
                 Ok(json!({"sections": serde_json::to_value(properties_with(doc, id, fmt)).unwrap_or(Value::Null)}))
             }
         ),

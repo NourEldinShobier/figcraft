@@ -101,7 +101,7 @@ pub fn list_json(doc: &Document, id: NodeId) -> Value {
 fn layer(cmd: &str, s: &Session, p: &Value) -> Result<NodeId> {
     let id = targets(s, p).first().copied().ok_or_else(|| bad(cmd, "select a layer or pass `id`"))?;
     let doc = s.doc()?;
-    let n = doc.node(id).ok_or_else(|| bad(cmd, "no such layer"))?;
+    let n = doc.node(id).ok_or_else(|| bad(cmd, format!("no layer {id}")))?;
     if n.is_page() {
         return Err(bad(cmd, "pages can't have dev resources"));
     }
@@ -212,7 +212,7 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, p| {
                 let id = targets(s, p).first().copied().ok_or_else(|| bad("devResource.list", "select a layer or pass `id`"))?;
                 let doc = s.doc()?;
-                doc.node(id).ok_or_else(|| bad("devResource.list", "no such layer"))?;
+                doc.node(id).ok_or_else(|| bad("devResource.list", format!("no layer {id}")))?;
                 Ok(list_json(doc, id))
             }
         ),

@@ -16,6 +16,31 @@ fn command_carries_import_bytes(id: &str, params: &Value) -> bool {
     }
 }
 
+/// Parameters over this many bytes (a pasted page, a long script) are logged as null: the log keeps
+/// up to 5000 entries and nothing reads their parameters but tests.
+const JOURNAL_PARAMS_BYTES: usize = 16 * 1024;
+
+fn journal_params(params: &Value) -> Value {
+    // Strings count their length, everything else a few bytes; stops as soon as the budget is gone.
+    fn within(v: &Value, left: &mut usize) -> bool {
+        let cost = match v {
+            Value::String(s) => s.len(),
+            _ => 8,
+        };
+        *left = left.saturating_sub(cost);
+        *left > 0
+            && match v {
+                Value::Array(a) => a.iter().all(|x| within(x, left)),
+                Value::Object(o) => o.iter().all(|(k, x)| {
+                    *left = left.saturating_sub(k.len());
+                    within(x, left)
+                }),
+                _ => true,
+            }
+    }
+    if within(params, &mut { JOURNAL_PARAMS_BYTES }) { params.clone() } else { Value::Null }
+}
+
 /// The layers `check_finite_geometry` looks at: only those the command added or changed. The diff
 /// skips what the two versions share, so the check costs about the size of the edit, not of the
 /// document (#1672).
@@ -152,7 +177,7 @@ impl Session {
                 // Imported bytes already live in the document: a Base64 copy in the log would stay
                 // for the whole session.
                 if !command_carries_import_bytes(id, params) {
-                    self.journal.push((id.to_string(), params.clone()));
+                    self.journal.push((id.to_string(), journal_params(params)));
                     if self.journal.len() > 5000 {
                         self.journal.drain(..1000);
                     }

@@ -588,7 +588,7 @@ impl Document {
         let parent = node.parent;
         if node.is_page() {
             if self.pages.len() <= 1 {
-                return Err(DocError::Invalid("a file needs at least one page".into()));
+                return Err(DocError::Invalid("a file needs at least one page: add another page first".into()));
             }
             self.pages.retain(|p| *p != id);
             if self.current_page == Some(id) {

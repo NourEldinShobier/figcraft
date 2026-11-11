@@ -45,6 +45,8 @@ mod garbage;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod generate_diagram_tool;
 mod guidelines_tool;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod hostile_args;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::disallowed_methods)]
 mod import_html_tool;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
