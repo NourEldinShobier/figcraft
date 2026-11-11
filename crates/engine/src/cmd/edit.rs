@@ -289,7 +289,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "edit.replaceColor",
             "Replace colour",
-            "{from, to (colours like \"#RRGGBB\" or \"#RRGGBBAA\"), scope? (selection|page|file; default page; selection takes ids or the selection), fills? (bool, default true), strokes? (bool, default true), tolerance? (0-1 per-channel distance; default 0: exact match)}  recolours every visible solid fill and stroke equal to `from`, keeping its opacity and blend (an alpha in `to` sets the opacity); gradients, images and paints bound to a colour variable are left alone → {changed: [ids], paints: N, skippedBound: [ids of layers with a matching variable-bound paint]}",
+            "{from, to | variable, scope? (selection|page|file; default page; selection takes ids or the selection), fills? (bool, default true), strokes? (bool, default true), effects? (bool, default true: shadows), styles? (bool, default true for scope file, else false: colour and effect styles holding the colour are recoloured and re-applied to their layers; not with `variable`), tolerance? (0-1 per-channel distance; default 0: exact match)}  `to` is a colour like \"#RRGGBB\" or \"#RRGGBBAA\"; `variable` (id or name of a colour variable) binds the paints and shadows to it instead. Recolours every visible solid fill and stroke and every drop or inner shadow equal to `from`, keeping its opacity and blend (an alpha in `to` sets the opacity; a shadow keeps its own alpha unless `to` has one); gradients, images and paints bound to a colour variable are left alone. Use `dryRun` to see which layers change → {changed: [ids], paints: N, effects: N, styles: [ids of the styles recoloured], skippedBound: [ids of layers with a matching variable-bound paint]}",
             true,
             replace_color
         ),
@@ -650,18 +650,13 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "command.batch",
             "Run several commands",
-            "{label?, onError?, preview?, commands: [{command, params, as?} | {assert: {noOverflow?, noOverlap?, contrast?, count?, exists?, none?}}]} (one undo step). An `assert` step checks the document after the steps before it (see batch.assert) and fails the batch, rolling it back, when false. `preview: true` runs the batch, returns {preview, results, diff} (the doc.diff of what it changed) and rolls everything back",
+            "{label?, onError?, continueOnError?, from?, limit?, preview?, commands: [{command, params, as?} | {assert: {noOverflow?, noOverlap?, contrast?, count?, exists?, none?}}]} (one undo step). `continueOnError: true` is `onError: \"continue\"`. `from` and `limit` run only a window of the steps (references reach only steps inside the window) and the result becomes {results, from, processed, total, done, next?}: call again with from: next to go on, each call one undo step. An `assert` step checks the document after the steps before it (see batch.assert) and fails the batch, rolling it back, when false. `preview: true` runs the batch, returns {preview, results, diff} (the doc.diff of what it changed) and rolls everything back",
             false,
             |s, p| {
                 // `continue` rolls back only the failed steps and returns one outcome per step.
-                let continue_on_error = match get(p, "onError") {
-                    None => false,
-                    Some(Value::String(mode)) if mode == "abort" => false,
-                    Some(Value::String(mode)) if mode == "continue" => true,
-                    Some(_) => return Err(bad("command.batch", "`onError` must be \"abort\" or \"continue\"")),
-                };
+                let continue_on_error = crate::cmd::each::continue_on_error("command.batch", p)?;
                 let label = string(p, "label").unwrap_or_else(|| "Batch".into());
-                let cmds: Vec<BatchStep> = match get(p, "commands") {
+                let mut cmds: Vec<BatchStep> = match get(p, "commands") {
                     Some(Value::Array(a)) => {
                         let mut out = Vec::new();
                         for (i, c) in a.iter().enumerate() {
@@ -689,10 +684,39 @@ pub fn specs() -> Vec<CommandSpec> {
                     Some(Value::Bool(b)) => *b,
                     Some(_) => return Err(bad("command.batch", "`preview` must be a boolean (true or false)")),
                 };
+                // `from` and `limit` run a window of the steps and report where to go on.
+                let total = cmds.len();
+                let from = crate::cmd::each::count_param("command.batch", p, "from", 0, usize::MAX >> 12)?;
+                let limit = crate::cmd::each::count_param("command.batch", p, "limit", 1, 10_000)?;
+                let windowed = from.is_some() || limit.is_some();
+                let from = from.unwrap_or(0);
+                if windowed {
+                    if from >= total && total > 0 {
+                        return Err(bad("command.batch", format!("`from` {from} is past the last of the {total} steps")));
+                    }
+                    let mut window = cmds.split_off(from.min(total));
+                    window.truncate(limit.unwrap_or(window.len().max(1)));
+                    cmds = window;
+                }
                 if preview {
                     return s.preview_batch(&label, &cmds, continue_on_error);
                 }
-                Ok(Value::Array(if continue_on_error { s.batch_continue(&label, &cmds)? } else { s.batch(&label, &cmds)? }))
+                let mut results = if continue_on_error { s.batch_continue(&label, &cmds)? } else { s.batch(&label, &cmds)? };
+                if !windowed {
+                    return Ok(Value::Array(results));
+                }
+                let end = from + cmds.len();
+                for r in &mut results {
+                    // Step numbers count from the first step of the whole batch.
+                    if let Some(n) = r.get("step").and_then(Value::as_u64) {
+                        r["step"] = json!(n + from as u64);
+                    }
+                }
+                let mut out = json!({"results": results, "from": from, "processed": cmds.len(), "total": total, "done": end >= total});
+                if end < total {
+                    out["next"] = json!(end);
+                }
+                Ok(out)
             }
         ),
         spec!("edit.repeat", "Repeat last command", "{}", true, |s, _| {

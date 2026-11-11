@@ -221,6 +221,9 @@ pub const TOOL_NAMES: &[&str] = &[
     "visual_diff",
     "find_similar",
     "propagate_change",
+    "fill_instances",
+    "swap_component",
+    "replace_color",
     "get_design_guidelines",
     "design_system_index",
     "audit_tokens",
@@ -242,13 +245,36 @@ pub const TOOL_NAMES: &[&str] = &[
 /// The tools that take `documents`: one call per file (`"all"` or a list of ids), at most
 /// [`MAX_DOCUMENTS`] files.
 /// Write tools that take `ifRev`.
-const REV_GUARDED_TOOLS: &[&str] = &["set_properties", "run_command", "batch", "create_node", "propagate_change", "run_script", "apply_text"];
+const REV_GUARDED_TOOLS: &[&str] = &[
+    "set_properties",
+    "run_command",
+    "batch",
+    "create_node",
+    "propagate_change",
+    "run_script",
+    "apply_text",
+    "fill_instances",
+    "swap_component",
+    "replace_color",
+];
 /// Read tools whose result carries the document's `rev`.
 const REV_STAMPED_TOOLS: &[&str] = &["get_node", "inspect_document", "find_nodes", "get_selection"];
 
 /// Write tools that take `maxAffected`, `confirm` and `as`, and carry a `changed` summary in their result.
-const SAFETY_TOOLS: &[&str] =
-    &["run_command", "batch", "create_node", "set_properties", "propagate_change", "run_script", "apply_text", "import_html", "generate_diagram"];
+const SAFETY_TOOLS: &[&str] = &[
+    "run_command",
+    "batch",
+    "create_node",
+    "set_properties",
+    "propagate_change",
+    "run_script",
+    "apply_text",
+    "import_html",
+    "generate_diagram",
+    "fill_instances",
+    "swap_component",
+    "replace_color",
+];
 
 const MULTI_DOCUMENT_TOOLS: &[&str] = &["find_nodes", "set_properties", "run_command", "get_nodes"];
 
@@ -297,6 +323,9 @@ const DOCUMENT_TOOLS: &[&str] = &[
     "visual_diff",
     "find_similar",
     "propagate_change",
+    "fill_instances",
+    "swap_component",
+    "replace_color",
     "get_design_guidelines",
     "audit_tokens",
     "extract_text",
@@ -383,7 +412,13 @@ fn tools() -> Vec<Value> {
             "Run command",
             "Execute one FigCraft command by id with JSON params (ids and params from list_commands). Mutating commands are one undo step each; a failing command leaves the document unchanged. Examples: {\"command\":\"align.left\",\"params\":{\"ids\":[3,4]}}, {\"command\":\"layout.add\",\"params\":{\"ids\":[2],\"direction\":\"vertical\"}}, {\"command\":\"style.create\",\"params\":{\"type\":\"paint\",\"name\":\"Brand/Primary\",\"from\":5}}. Returns the command's result (creation commands return {\"id\"}). Every command also takes the generic params `where` (node.find filters: act on the matching layers), `list` (act on a saved list), `dryRun` (change nothing, return {dryRun, wouldChange, created, deleted, count, result}) and `keepSelection` (leave the user's selection and view alone); list.save / list.get / list.delete / list.all manage the lists. Programmatic calls never open dialogs.",
             obj(
-                json!({"command": string("Command id, e.g. node.create, align.left, component.create, file.export"), "params": command_params_schema()}),
+                json!({
+                    "command": string("Command id, e.g. node.create, align.left, component.create, file.export"),
+                    "params": command_params_schema(),
+                    "continueOnError": boolean("Run the command once per target layer (ids, where or list in params, else the selection) as one undo step and return {command, processed, ok, failed, remaining, done, items: [{id, ok, result | error}], nextCursor?} (engine command.each). true rolls back a failing layer alone and goes on; false (default) stops at the first failure and changes nothing"),
+                    "limit": int("With continueOnError, cursor or limit: layers per call (default 200, up to 5000); when more remain the result has nextCursor"),
+                    "cursor": string("The nextCursor of the previous call: continue with the layers it left (give the same command and params)"),
+                }),
                 &["command"],
             ),
             false,
@@ -399,6 +434,9 @@ fn tools() -> Vec<Value> {
                     "preview": boolean("Run the batch, return {preview, rolledBack, results, diff} (a doc.diff of what it changed) and roll everything back"),
                     "quiet": boolean("Terse result: {ok, count, failures?} with only the failed steps (use with onError continue); step results are left out"),
                     "onError": {"type": "string", "enum": ["abort", "continue"], "description": "abort (default) rolls back the whole batch on the first failure; continue rolls back only the failed step, runs the rest and returns one {step, command, ok, result|error} object per step"},
+                    "continueOnError": boolean("The same as onError: \"continue\""),
+                    "from": int("Run only a window of the steps, starting at this step (0-based). The result becomes {results, from, processed, total, done, next?}; call again with from: next to go on (each call is one undo step; references reach only steps inside the window)"),
+                    "limit": int("The most steps this call runs (with or without from); see from"),
                 }),
                 &["commands"],
             ),
@@ -1004,6 +1042,70 @@ fn tools() -> Vec<Value> {
                     "minScore": json!({"type": "number", "description": "Lowest twin score when `ids` is not given, 0-1 (default 0.8)"}),
                     "deep": boolean("Pair and copy children too (default true)"),
                     "confirm": boolean("true applies the change; without it the call only previews")
+                }),
+                &["from"],
+            ),
+            false,
+        ),
+        tool(
+            "fill_instances",
+            "Fill instances from data",
+            "A data merge (engine `instances.fill`): make an instance of a component for each row of JSON or CSV data, or update the instances that exist, one undo step for all rows (up to 2000). Each column is read by its own name unless `map` says otherwise: a text, boolean, instance swap or variant property of the component, else a layer inside it (its text, or for a layer that is no text layer its visibility); `map` is {column: property or layer name | {layer, field: text|visible} | null to skip}. A boolean or variant cell may be a string (\"true\", \"Large\"), an instance swap cell the id or the name of a component; an empty cell leaves anything but text alone. `mode: update` finds each row's instance by `keyColumn` (the instance's name, or its layer key with matchBy: key) among the instances of `component` or in `ids`; `mode: create` (default) names each new instance by its keyColumn value and stacks them down from x/y (or in `parent`; auto layout places them itself). A row that fails (a bad value, no such layer) is put back and reported while the others apply, unless continueOnError is false. Returns {mode, rows, created | updated, ids, failed: [{row, error}], unmatchedRows?, unmatchedColumns?, truncated?}; rows count from 0 after the CSV header. Use dryRun to see which layers change.",
+            obj(
+                json!({
+                    "component": id_schema("The component or component set to make instances of (update mode: the one whose instances are updated)"),
+                    "rows": json!({"type": "array", "maxItems": 2000, "items": {"type": "object", "additionalProperties": true}, "description": "Rows as objects, column name → value (give this or csv)"}),
+                    "csv": string("CSV text whose first line names the columns (comma or tab separated, RFC 4180 quoting), up to 2000 rows"),
+                    "map": json!({"type": "object", "additionalProperties": true, "description": "Column → component property or layer name, {layer, field?: text|visible}, or null to skip the column"}),
+                    "mode": json!({"type": "string", "enum": ["create", "update"], "description": "create (default) makes instances, update changes existing ones"}),
+                    "ids": ids_schema("Update mode: the instances to update (instead of component)"),
+                    "keyColumn": string("Update: the column holding the name (or key) of the instance each row updates. Create: the column whose value names the new instance"),
+                    "matchBy": json!({"type": "string", "enum": ["name", "key"], "description": "What a row's key is compared with: the instance's layer name (default) or its layer key"}),
+                    "parent": id_schema("Create: a frame to put the instances in (default: the page)"),
+                    "x": num("Create: left of the first instance, in the parent (default: right of the component)"),
+                    "y": num("Create: top of the first instance"),
+                    "gap": num("Create: space between instances (default 16)"),
+                    "direction": json!({"type": "string", "enum": ["vertical", "horizontal"], "description": "Create: how instances stack (default vertical)"}),
+                    "continueOnError": boolean("Default true: a failing row is reported and the rest apply; false stops at the first failure and changes nothing"),
+                    "dryRun": boolean("Change nothing; return {dryRun, wouldChange, created, deleted, count, result}"),
+                }),
+                &[],
+            ),
+            false,
+        ),
+        tool(
+            "swap_component",
+            "Swap a component everywhere",
+            "Swap every instance of the component `from` (a set: of every variant) to the component `to` (a set: its default variant) in one undo step (engine `component.swapAll`). Instances keep their size, property values and layer overrides where names match, as instance.swap does; `mapOverrides` {old name: new name} carries overrides and property values to layers and properties the new component names differently. Instances inside other instances are left alone (skippedNested); `ids` limits the swap to instances that are, or are inside, those layers. Returns {from, to, swapped, ids, skippedNested?, failed: [{id, error}], unmatched: {layers: [{name, count, id}] (overridden layers the new component has no layer for: those overrides are gone), props: [{name, count, id}] (property values it has no property for)}, truncated?}. Use dryRun to see which instances change.",
+            obj(
+                json!({
+                    "from": id_schema("The component (or set) whose instances are swapped"),
+                    "to": id_schema("The component (or set) they become"),
+                    "ids": ids_schema("Only instances that are, or are inside, these layers (default: the whole file)"),
+                    "mapOverrides": json!({"type": "object", "additionalProperties": {"type": "string"}, "description": "{old layer or property name: new name}"}),
+                    "dryRun": boolean("Change nothing; return {dryRun, wouldChange, created, deleted, count, result}"),
+                }),
+                &["from", "to"],
+            ),
+            false,
+        ),
+        tool(
+            "replace_color",
+            "Replace a colour everywhere",
+            "Replace a colour across fills, strokes, shadows and styles (engine `edit.replaceColor`): every visible solid fill and stroke and every drop or inner shadow equal to `from` takes the colour `to`, or is bound to the colour variable `variable`. Opacity and blend stay (an alpha in `to` sets the opacity; a shadow keeps its own alpha unless `to` has one). Gradients, images and paints already bound to a variable are left alone (their layers are listed in skippedBound). `scope` is page (default), file, or selection (`ids` or the selection, with everything inside). `styles` (default true for scope file) also recolours the colour and effect styles that hold the colour and re-applies them, so the layers using them follow; not with `variable`. Returns {changed: [ids], paints, effects, styles: [ids], skippedBound}. Use dryRun to see which layers change.",
+            obj(
+                json!({
+                    "from": string("The colour to replace, \"#RRGGBB\" or \"#RRGGBBAA\" (with an alpha it matches that alpha)"),
+                    "to": string("The new colour"),
+                    "variable": string("Instead of `to`: the id or name of a colour variable to bind the matches to"),
+                    "scope": json!({"type": "string", "enum": ["selection", "page", "file"], "description": "Where to look (default page)"}),
+                    "ids": ids_schema("scope selection: the layers (with their descendants)"),
+                    "fills": boolean("Replace in fills (default true)"),
+                    "strokes": boolean("Replace in strokes (default true)"),
+                    "effects": boolean("Replace in shadows (default true)"),
+                    "styles": boolean("Also recolour colour and effect styles (default true for scope file)"),
+                    "tolerance": num("Per-channel distance, 0-1, that still counts as the same colour (default 0: exact)"),
+                    "dryRun": boolean("Change nothing; return {dryRun, wouldChange, created, deleted, count, result}"),
                 }),
                 &["from"],
             ),
@@ -1721,6 +1823,35 @@ fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, doc_target:
         "visual_diff" => visual_diff(b, a),
         "find_similar" => find_similar(b, a),
         "propagate_change" => propagate_change(b, a),
+        "fill_instances" => exec_tool(
+            b,
+            "instances.fill",
+            a,
+            &[
+                "component",
+                "rows",
+                "csv",
+                "map",
+                "mode",
+                "ids",
+                "keyColumn",
+                "matchBy",
+                "parent",
+                "x",
+                "y",
+                "gap",
+                "direction",
+                "continueOnError",
+                "dryRun",
+            ],
+        ),
+        "swap_component" => exec_tool(b, "component.swapAll", a, &["from", "to", "ids", "mapOverrides", "dryRun"]),
+        "replace_color" => exec_tool(
+            b,
+            "edit.replaceColor",
+            a,
+            &["from", "to", "variable", "scope", "ids", "fills", "strokes", "effects", "styles", "tolerance", "dryRun"],
+        ),
         "get_code_connect_map" => get_code_connect_map(b, a),
         "add_code_connect_map" => {
             exec(b, "codeConnect.set", pick(a, &["id", "language", "importPath", "name", "template"])).map(|v| ToolResult::json(&v))
@@ -1811,6 +1942,23 @@ fn run_command(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult
     };
     let mut params = params;
     friendly_params(&mut params);
+    // `continueOnError`, `limit` or `cursor`: one run per target layer, with a result for each.
+    let each = ["continueOnError", "limit", "cursor"].iter().any(|k| a.get(*k).is_some_and(|v| !v.is_null()));
+    if each {
+        let mut outer = pick(a, &["continueOnError", "limit", "cursor"]);
+        outer["command"] = json!(cmd);
+        if let Some(inner) = params.as_object_mut() {
+            // The layers and the generic dry run belong to the call as a whole.
+            for k in ["ids", "id", "where", "list", "dryRun", "keepSelection"] {
+                if let Some(v) = inner.remove(k) {
+                    outer[k] = v;
+                }
+            }
+            outer["params"] = Value::Object(std::mem::take(inner));
+        }
+        guard_params(a, &mut outer, true)?;
+        return exec_mutating(b, "command.each", outer);
+    }
     guard_params(a, &mut params, true)?;
     exec_mutating(b, cmd, params)
 }
@@ -1852,6 +2000,11 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Stri
     if let Some(mode) = a.get("onError") {
         params["onError"] = mode.clone();
     }
+    for k in ["continueOnError", "from", "limit"] {
+        if let Some(v) = a.get(k).filter(|v| !v.is_null()) {
+            params[k] = v.clone();
+        }
+    }
     match a.get("preview") {
         None | Some(Value::Null) => {}
         Some(Value::Bool(p)) => params["preview"] = json!(p),
@@ -1860,16 +2013,27 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Stri
     let quiet = a.get("quiet").and_then(Value::as_bool).unwrap_or(false);
     guard_params(a, &mut params, true)?;
     let (v, changed) = exec_changed(b, "command.batch", params)?;
-    Ok(with_changed(if quiet && v.is_array() { quiet_batch(&v) } else { v }, changed))
+    Ok(with_changed(if quiet { quiet_batch(&v) } else { v }, changed))
 }
 
 /// `{ok, count, failures?}` for a batch result: only the `ok: false` outcomes of `onError: continue` are kept.
-fn quiet_batch(results: &Value) -> Value {
+fn quiet_batch(whole: &Value) -> Value {
+    // A window of steps answers {results, from, processed, total, done, next?}: the progress stays.
+    let windowed = whole.get("processed").is_some() && whole.get("results").is_some_and(Value::is_array);
+    if !whole.is_array() && !windowed {
+        return whole.clone();
+    }
+    let results = if windowed { &whole["results"] } else { whole };
     let all = results.as_array().map(Vec::as_slice).unwrap_or_default();
     let failures: Vec<&Value> = all.iter().filter(|r| r.get("ok") == Some(&Value::Bool(false))).collect();
     let mut out = json!({"ok": failures.is_empty(), "count": all.len()});
     if !failures.is_empty() {
         out["failures"] = json!(failures);
+    }
+    for k in ["from", "total", "done", "next"] {
+        if let Some(v) = whole.get(k) {
+            out[k] = v.clone();
+        }
     }
     out
 }

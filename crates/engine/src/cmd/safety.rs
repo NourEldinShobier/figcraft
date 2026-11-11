@@ -217,7 +217,7 @@ pub(crate) fn summary(before: &Document, after: &Document, targets: &[NodeId], s
 /// or a batch that is not a preview.
 pub(crate) fn mutates(id: &str, params: &Value) -> bool {
     match id {
-        "script.run" => true,
+        "script.run" | "command.each" | "instances.fill" => true,
         "command.batch" => params.get("preview").and_then(Value::as_bool) != Some(true),
         _ => find_command(id).is_some_and(|s| s.history),
     }

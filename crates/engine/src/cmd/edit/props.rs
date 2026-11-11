@@ -89,19 +89,44 @@ pub(super) fn find_replace(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"matches": hits}))
 }
 
-/// `edit.replaceColor`: every visible solid fill and stroke equal to `from` (per-channel within
-/// `tolerance`) takes the colour `to`. A paint bound to a colour variable keeps its colour and its
-/// layer is reported in `skippedBound`. Text runs keep their own fills (only the layer's paints change).
+/// What `edit.replaceColor` writes: a colour, or a colour variable (its id) the paints get bound to.
+enum To {
+    Colour(figcraft_color::Color),
+    Variable(String),
+}
+
+/// `edit.replaceColor`: every visible solid fill and stroke, and every shadow, equal to `from` (per
+/// channel within `tolerance`) takes the colour `to`, or is bound to the colour variable
+/// `variable`. A paint bound to a colour variable keeps its colour and its layer is reported in
+/// `skippedBound`. Text runs keep their own fills (only the layer's paints change). Colour styles
+/// and effect styles that hold the colour are recoloured too (`styles`), so the layers using them follow.
 pub(super) fn replace_color(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "edit.replaceColor";
     let colour = |key: &str| color(p, key).ok_or_else(|| bad(CMD, format!("`{key}` must be a colour like \"#RRGGBB\"")));
-    let (from, to) = (colour("from")?, colour("to")?);
+    let from = colour("from")?;
+    let to = match (get(p, "to"), get(p, "variable")) {
+        (Some(_), Some(_)) => return Err(bad(CMD, "give `to` or `variable`, not both")),
+        (Some(_), None) => To::Colour(colour("to")?),
+        (None, Some(v)) => {
+            let name = v.as_str().ok_or_else(|| bad(CMD, "`variable` must be the id or name of a colour variable"))?;
+            let var = s.doc()?.variables.get(name).ok_or_else(|| bad(CMD, format!("no variable \"{name}\"")))?;
+            if var.kind != figcraft_doc::VariableType::Color {
+                return Err(bad(CMD, format!("\"{name}\" is a {} variable: a colour variable is required", var.kind.id())));
+            }
+            To::Variable(var.id.clone())
+        }
+        (None, None) => return Err(bad(CMD, "give `to` (a colour) or `variable` (a colour variable)")),
+    };
     let tolerance = match get(p, "tolerance") {
         None | Some(Value::Null) => 0.0,
         Some(v) => f64_of(v).filter(|t| (0.0..=1.0).contains(t)).ok_or_else(|| bad(CMD, "`tolerance` must be a number from 0 to 1"))?,
     };
     let (fills, strokes) = (boolean(p, "fills").unwrap_or(true), boolean(p, "strokes").unwrap_or(true));
-    let starts = match string(p, "scope").as_deref().unwrap_or("page") {
+    let effects = boolean(p, "effects").unwrap_or(true);
+    let scope = string(p, "scope").unwrap_or_else(|| "page".into());
+    // The styles are shared by the whole file: they follow a file-wide recolour, or when asked for.
+    let styles = boolean(p, "styles").unwrap_or(scope == "file") && matches!(to, To::Colour(_));
+    let starts = match scope.as_str() {
         "selection" => req_targets(CMD, s, p)?,
         "page" => vec![s.page()?],
         "file" => s.doc()?.pages.clone(),
@@ -116,27 +141,72 @@ pub(super) fn replace_color(s: &mut Session, p: &Value) -> Result<Value> {
         }
         _ => false,
     };
+    let shadow_is_target = |e: &Effect| match &e.kind {
+        figcraft_doc::EffectKind::DropShadow(sh) | figcraft_doc::EffectKind::InnerShadow(sh) if e.visible => {
+            sh.color.to_rgba8().iter().zip(&want).take(3).all(|(a, b)| near(*a, *b)) && (from.a >= 1.0 || near(sh.color.to_rgba8()[3], want[3]))
+        }
+        _ => false,
+    };
     let doc = s.doc_mut()?;
+    let mut recoloured_styles = Vec::new();
+    if styles && let To::Colour(c) = &to {
+        recoloured_styles = recolour_styles(doc, *c, &is_target, &shadow_is_target, (fills || strokes, effects));
+    }
     let mut seen = std::collections::BTreeSet::new();
     let ids: Vec<NodeId> = starts.into_iter().flat_map(|r| doc.subtree(r)).filter(|i| seen.insert(*i)).collect();
-    let (mut changed, mut skipped, mut paints) = (Vec::new(), Vec::new(), 0usize);
+    let (mut changed, mut skipped, mut paints, mut shadows) = (Vec::new(), Vec::new(), 0usize, 0usize);
     for id in ids {
         let Some(n) = doc.node(id) else { continue };
         let hits = target_paints(n, fills, strokes, &is_target);
-        if hits.is_empty() {
+        let shadow_hits: Vec<(usize, bool)> = if effects {
+            (n.effects.iter().enumerate())
+                .filter(|(_, e)| shadow_is_target(e))
+                .map(|(i, _)| (i, n.bound.contains_key(&format!("effects/{i}/color"))))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if hits.is_empty() && shadow_hits.is_empty() {
             continue;
         }
-        if hits.iter().any(|h| h.2) {
+        if hits.iter().any(|h| h.2) || shadow_hits.iter().any(|h| h.1) {
             skipped.push(id);
         }
-        let n = doc.get_mut(id)?;
-        let done = hits.iter().filter(|h| !h.2 && recolour_paint(n, h.0, h.1, to)).count();
+        let mut done = 0usize;
+        for (is_fill, i, _) in hits.iter().filter(|h| !h.2) {
+            match &to {
+                To::Colour(c) => done += usize::from(recolour_paint(doc.get_mut(id)?, *is_fill, *i, *c)),
+                To::Variable(v) => {
+                    let field = format!("{}/{i}/color", if *is_fill { "fills" } else { "strokes" });
+                    super::super::styles::bind_variable(CMD, doc, &[id], &field, Some(v))?;
+                    let n = doc.get_mut(id)?;
+                    if *is_fill {
+                        n.styles.fill = None;
+                    } else {
+                        n.styles.stroke = None;
+                    }
+                    done += 1;
+                }
+            }
+        }
         paints += done;
-        if done > 0 {
+        let mut shadow_done = 0usize;
+        for (i, _) in shadow_hits.iter().filter(|h| !h.1) {
+            match &to {
+                To::Colour(c) => shadow_done += usize::from(recolour_shadow(doc.get_mut(id)?, *i, *c)),
+                To::Variable(v) => {
+                    super::super::styles::bind_variable(CMD, doc, &[id], &format!("effects/{i}/color"), Some(v))?;
+                    doc.get_mut(id)?.styles.effect = None;
+                    shadow_done += 1;
+                }
+            }
+        }
+        shadows += shadow_done;
+        if done + shadow_done > 0 {
             changed.push(id);
         }
     }
-    Ok(json!({"changed": changed, "paints": paints, "skippedBound": skipped}))
+    Ok(json!({"changed": changed, "paints": paints, "effects": shadows, "styles": recoloured_styles, "skippedBound": skipped}))
 }
 
 /// The paints of `n` that `is_target` picks, as (is a fill, index, bound to a colour variable).
@@ -170,6 +240,78 @@ fn recolour_paint(n: &mut Node, is_fill: bool, index: usize, to: figcraft_color:
         n.styles.stroke = None;
     }
     true
+}
+
+/// The colour of a shadow after taking `to`: its own alpha stays unless `to` has one.
+fn shadow_colour(old: figcraft_color::Color, to: figcraft_color::Color) -> figcraft_color::Color {
+    to.with_alpha(if to.a < 1.0 { to.a } else { old.a })
+}
+
+/// Make shadow `index` of `n`'s effects take the colour `to`. False when it is no shadow.
+fn recolour_shadow(n: &mut Node, index: usize, to: figcraft_color::Color) -> bool {
+    let Some(e) = n.effects.get_mut(index) else { return false };
+    match &mut e.kind {
+        figcraft_doc::EffectKind::DropShadow(sh) | figcraft_doc::EffectKind::InnerShadow(sh) => sh.color = shadow_colour(sh.color, to),
+        _ => return false,
+    }
+    n.styles.effect = None;
+    true
+}
+
+/// Recolour the file's own colour styles and effect styles that hold the colour (`paints`: colour
+/// styles, `effects`: effect styles) and re-apply them to the layers that use them. A paint or
+/// shadow whose colour a variable drives is left alone. The ids of the styles changed.
+fn recolour_styles(
+    doc: &mut figcraft_doc::Document,
+    to: figcraft_color::Color,
+    is_target: &dyn Fn(&figcraft_color::Paint) -> bool,
+    shadow_is_target: &dyn Fn(&Effect) -> bool,
+    (paints, effects): (bool, bool),
+) -> Vec<String> {
+    use figcraft_doc::StyleKind;
+    let mut changed = Vec::new();
+    for idx in 0..doc.styles.len() {
+        let remote = doc.styles.get(idx).is_some_and(|st| crate::library::is_remote_style(doc, &st.id));
+        let Some(st) = doc.styles.get_mut(idx).filter(|_| !remote) else { continue };
+        let driven = st.bound.keys().cloned().collect::<std::collections::BTreeSet<String>>();
+        let hit = match &mut st.kind {
+            StyleKind::Paint { paints: list } if paints => {
+                let mut hit = false;
+                for (i, p) in list.iter_mut().enumerate() {
+                    if is_target(p) && !driven.contains(&format!("fills/{i}/color")) {
+                        p.kind = figcraft_color::PaintKind::Solid { color: to.with_alpha(1.0) };
+                        if to.a < 1.0 {
+                            p.opacity = to.a;
+                            p.color_alpha = to.a;
+                        }
+                        hit = true;
+                    }
+                }
+                hit
+            }
+            StyleKind::Effect { effects: list } if effects => {
+                let mut hit = false;
+                for (i, e) in list.iter_mut().enumerate() {
+                    if shadow_is_target(e)
+                        && !driven.contains(&format!("effects/{i}/color"))
+                        && let figcraft_doc::EffectKind::DropShadow(sh) | figcraft_doc::EffectKind::InnerShadow(sh) = &mut e.kind
+                    {
+                        sh.color = shadow_colour(sh.color, to);
+                        hit = true;
+                    }
+                }
+                hit
+            }
+            _ => false,
+        };
+        if hit {
+            changed.push(st.id.clone());
+        }
+    }
+    for sid in &changed {
+        crate::cmd::styles::propagate_style(doc, sid);
+    }
+    changed
 }
 
 /// Keys only some layer types take, the test for those layers, and why the others skip them.

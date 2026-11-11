@@ -55,6 +55,14 @@ fn dry_run_refusal(id: &str, params: &Value) -> Option<String> {
     if id == "script.run" {
         return None;
     }
+    // Each layer's run is a step of a group: it can be rolled back when its command can.
+    if id == "instances.fill" {
+        return None;
+    }
+    if id == "command.each" {
+        let inner = params.get("command").and_then(Value::as_str);
+        return inner.and_then(|c| dry_run_refusal(c, params.get("params").unwrap_or(&Value::Null)));
+    }
     if id == "command.batch" {
         for step in params.get("commands").and_then(Value::as_array).into_iter().flatten() {
             let Some(step_id) = step.get("command").and_then(Value::as_str) else { continue };
@@ -209,7 +217,7 @@ impl Session {
         }
         let changed = before.and_then(|(uid, b)| {
             let ds = self.docs.iter().find(|d| d.uid == uid)?;
-            with.then(|| safety::summary(&b, &ds.doc, &targets, !matches!(id, "command.batch" | "script.run")))
+            with.then(|| safety::summary(&b, &ds.doc, &targets, !matches!(id, "command.batch" | "command.each" | "instances.fill" | "script.run")))
         });
         Ok((value, changed))
     }
@@ -247,6 +255,7 @@ impl Session {
         let clipboard = self.clipboard.clone();
         let ui_requests = self.ui_requests.len();
         let mut report = None;
+        let was = std::mem::replace(&mut self.rolling_back, true);
         let outcome = self.grouped::<()>("Dry run", |s| {
             let before = s.ds()?.doc.clone();
             let result = s.execute(id, params)?;
@@ -254,6 +263,7 @@ impl Session {
             // The group rolls back on an error: this one only stops it.
             Err(EngineError::Other("dry run".into()))
         });
+        self.rolling_back = was;
         self.last_command = last_command;
         self.clipboard = clipboard;
         self.ui_requests.truncate(ui_requests);
@@ -287,12 +297,14 @@ impl Session {
         let clipboard = self.clipboard.clone();
         let ui_requests = self.ui_requests.len();
         let mut report = None;
+        let was = std::mem::replace(&mut self.rolling_back, true);
         let outcome = self.grouped::<()>("Preview", |s| {
             let before = s.ds()?.doc.clone();
             let results = if keep_going { s.batch_continue(label, steps)? } else { s.batch(label, steps)? };
             report = Some((results, before, s.ds()?.doc.clone()));
             Err(EngineError::Other("preview".into()))
         });
+        self.rolling_back = was;
         self.last_command = last_command;
         self.clipboard = clipboard;
         self.ui_requests.truncate(ui_requests);

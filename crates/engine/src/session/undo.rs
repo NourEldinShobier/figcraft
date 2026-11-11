@@ -276,7 +276,7 @@ impl Session {
 
     /// Without a label, only roll back failures: leave successful steps' history to the outer group.
     /// A checkpoint also works between closing the last tab and opening another one.
-    fn checkpointed<T>(&mut self, label: Option<&str>, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+    pub(crate) fn checkpointed<T>(&mut self, label: Option<&str>, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
         let before = self.group_checkpoint(label.is_some());
         // A panic in `f` ends the group like a failure, then goes on to the caller's guard (#1085);
         // the stand-in error only drives the rollback and is never returned.

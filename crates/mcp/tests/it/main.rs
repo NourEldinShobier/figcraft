@@ -14,6 +14,8 @@ mod automation_roots;
 mod batch_assert_tool;
 mod board_selection_tools;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod bulk_ops_tools;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod bulk_safety_tool;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod cancel_progress;

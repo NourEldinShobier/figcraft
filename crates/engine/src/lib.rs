@@ -167,6 +167,9 @@ pub struct Session {
     pub agent: Option<String>,
     /// The owner label (`as`) of the call that is running: who edits a layer locked by an owner.
     pub(crate) actor: String,
+    /// Whether a dry run or a preview is executing: what it does is rolled back, so a command that
+    /// keeps state outside the document (a run's cursor) leaves it alone.
+    pub(crate) rolling_back: bool,
     /// Where an attached AI agent last worked ([`Session::agent_presence_at`]): display only.
     pub agent_presence: Option<agent::AgentPresence>,
 }
@@ -255,6 +258,8 @@ mod branch_versions_tests;
 mod breakpoint_modes_tests;
 #[cfg(test)]
 mod brush_tests;
+#[cfg(test)]
+mod bulk_ops_tests;
 #[cfg(test)]
 mod bulk_safety_tests;
 #[cfg(test)]

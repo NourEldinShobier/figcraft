@@ -35,6 +35,7 @@ impl Session {
             pending_events: Vec::new(),
             agent: None,
             actor: String::new(),
+            rolling_back: false,
             agent_presence: None,
         }
     }

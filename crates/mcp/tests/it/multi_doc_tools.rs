@@ -316,7 +316,7 @@ fn the_new_tools_are_registered_documented_and_in_the_instructions() {
         "| `list_versions {limit?}` |",
         "| `restore_version {id, confirm}` |",
         "| `compare_version {id, node?}` |",
-        "| `run_command {command, params, documents?}` |",
+        "| `run_command {command, params, continueOnError?, limit?, cursor?, documents?}` |",
         "| `open_file {path, variables?, reload?, focus?}`",
     ] {
         assert!(docs.contains(row), "docs/mcp.md has no row {row}");

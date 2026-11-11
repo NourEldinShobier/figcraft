@@ -42,6 +42,10 @@ impl Session {
     pub(crate) fn restore_after_internal_error(&mut self, group_depth: usize, pending_events: usize) {
         self.group_depth = group_depth;
         self.pending_events.truncate(pending_events);
+        // A panic inside a dry run does not come back to clear this.
+        if group_depth == 0 {
+            self.rolling_back = false;
+        }
     }
 
     /// Commit events buffered by a successful group.
