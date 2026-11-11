@@ -33,6 +33,7 @@ pub mod page;
 pub mod props;
 pub mod proto;
 pub mod proto_actions;
+pub mod safety;
 pub mod script;
 pub mod section;
 pub mod selctx;
@@ -116,6 +117,7 @@ fn registry() -> &'static Registry {
         list.extend(textinv::specs());
         list.extend(dsindex::specs());
         list.extend(script::specs());
+        list.extend(safety::specs());
         list.extend(lintlayout::specs());
         list.extend(docdiff::specs());
         list.extend(summary::specs());

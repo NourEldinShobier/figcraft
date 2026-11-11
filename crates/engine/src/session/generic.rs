@@ -3,12 +3,17 @@
 //! - `list`: the name of a saved list ([`crate::cmd::idlists`]); its layers are the command's `ids`.
 //! - `dryRun`: run the command, report which layers it changed, created and deleted, and roll back.
 //! - `keepSelection`: leave the selection and the current page as they were.
+//! - `maxAffected`, `confirm`: refuse a mutating command that would change more layers than that
+//!   (counted by a dry run first) unless `confirm` is true ([`crate::cmd::safety`]).
+//! - `as`: the owner label the call edits locked layers as ([`crate::cmd::safety`]).
+//! - `withChanged`: wrap the result as `{result, "$changed": {count, ids, props, noop?}}`.
 
-use super::{Document, EngineError, NodeId, Result, Session, Value, bad, cmd, find_command, guard, params};
+use super::{Arc, Document, EngineError, NodeId, Result, Session, Value, bad, cmd, find_command, guard, params};
+use crate::cmd::safety;
 
 /// The generic parameter names. A command whose own doc lists one keeps it (`layer.autoName` has
 /// a `dryRun` of its own).
-const GENERIC: [&str; 4] = ["where", "list", "dryRun", "keepSelection"];
+const GENERIC: [&str; 8] = ["where", "list", "dryRun", "keepSelection", "maxAffected", "confirm", "as", "withChanged"];
 
 /// Most layers `dryRun` names in each of its lists.
 const MAX_LISTED: usize = 10_000;
@@ -67,12 +72,32 @@ impl Session {
     /// command runs with those removed, and `ids` set when `where` or `list` named its layers.
     pub(super) fn execute_generic(&mut self, id: &str, params: &Value) -> Result<Value> {
         let mut inner = params.as_object().cloned().unwrap_or_default();
-        let [filter, list, dry, keep] = GENERIC.map(|k| if takes_own(id, k) { None } else { inner.remove(k).filter(|v| !v.is_null()) });
+        // A command that documents its own `confirm` keeps it; a `true` there also lifts the guard.
+        let own_confirm = takes_own(id, "confirm") && params::get(params, "confirm").and_then(Value::as_bool) == Some(true);
+        let [filter, list, dry, keep, max, confirm, actor, with] =
+            GENERIC.map(|k| if takes_own(id, k) { None } else { inner.remove(k).filter(|v| !v.is_null()) });
         let flag = |name: &str, v: Option<Value>| match v {
             None => Ok(false),
             Some(v) => v.as_bool().ok_or_else(|| bad(id, format!("`{name}` must be a boolean (true or false)"))),
         };
-        let (dry, keep) = (flag("dryRun", dry)?, flag("keepSelection", keep)?);
+        let (dry, keep, with) = (flag("dryRun", dry)?, flag("keepSelection", keep)?, flag("withChanged", with)?);
+        let confirm = flag("confirm", confirm)? || own_confirm;
+        let max = match max {
+            None => None,
+            Some(v) => Some(
+                v.as_u64()
+                    .filter(|n| *n >= 1)
+                    .and_then(|n| usize::try_from(n).ok())
+                    .ok_or_else(|| bad(id, "`maxAffected` must be a whole number of 1 or more"))?,
+            ),
+        };
+        let actor = match actor {
+            None => None,
+            Some(v) => match v.as_str().map(str::trim) {
+                Some(a) if !a.is_empty() && a.chars().count() <= 100 => Some(a.to_string()),
+                _ => return Err(bad(id, "`as` must be an owner label (1 to 100 characters)")),
+            },
+        };
 
         let mut given = Vec::new();
         if params::get(params, "ids").is_some() || params::get(params, "id").is_some() {
@@ -115,7 +140,23 @@ impl Session {
 
         let inner = Value::Object(inner);
         let kept = if keep { self.ds().ok().map(|d| (d.uid, d.selection.clone(), d.page)) } else { None };
-        let result = if dry { self.dry_run(id, &inner) } else { self.execute(id, &inner) };
+        // The guard and the summary are for edits; a read command just drops them.
+        let guarded = !dry && safety::mutates(id, &inner) && (max.is_some() || with);
+        let was_actor = actor.map(|a| std::mem::replace(&mut self.actor, a));
+        let mut changed = None;
+        let result = if dry {
+            self.dry_run(id, &inner)
+        } else if guarded {
+            self.run_guarded(id, &inner, max, confirm, with).map(|(v, c)| {
+                changed = c;
+                v
+            })
+        } else {
+            self.execute(id, &inner)
+        };
+        if let Some(was) = was_actor {
+            self.actor = was;
+        }
         // Also after an error: the command may have moved the selection before it failed.
         if let Some((uid, selection, page)) = kept
             && let Some(ds) = self.docs.iter_mut().find(|d| d.uid == uid)
@@ -135,7 +176,31 @@ impl Session {
             let key = if o.contains_key("ids") { "matchedIds" } else { "ids" };
             o.insert(key.into(), serde_json::json!(ids));
         }
-        Ok(value)
+        Ok(match changed {
+            Some(c) => serde_json::json!({"result": value, "$changed": c}),
+            None => value,
+        })
+    }
+
+    /// Run a mutating command under `maxAffected` (a dry run counts the layers first; more than
+    /// `max` is refused unless `confirm`) and, with `with`, summarise what it changed.
+    fn run_guarded(&mut self, id: &str, params: &Value, max: Option<usize>, confirm: bool, with: bool) -> Result<(Value, Option<Value>)> {
+        // A batch with a step that cannot be rolled back (a save, say) is not run twice.
+        if let Some(max) = max.filter(|_| !confirm && dry_run_refusal(id, params).is_none()) {
+            let (_, before, after) = self.dry_run_docs(id, params)?;
+            let a = safety::affected(&before, &after);
+            if a.count() > max {
+                return Err(safety::over_limit(id, &a, max));
+            }
+        }
+        let before = self.ds().ok().map(|d| (d.uid, d.doc.clone()));
+        let targets = params::targets(self, params);
+        let value = self.execute(id, params)?;
+        let changed = before.and_then(|(uid, b)| {
+            let ds = self.docs.iter().find(|d| d.uid == uid)?;
+            with.then(|| safety::summary(&b, &ds.doc, &targets, !matches!(id, "command.batch" | "script.run")))
+        });
+        Ok((value, changed))
     }
 
     /// The layers `node.find` finds for `filter` (the current page unless it names a `root`),
@@ -166,7 +231,7 @@ impl Session {
 
     /// Run `id` with `params`, then put everything back like a failed batch does (the document,
     /// selection, page, undo and redo steps, journal, events) and report what it changed.
-    fn dry_run(&mut self, id: &str, params: &Value) -> Result<Value> {
+    fn dry_run_docs(&mut self, id: &str, params: &Value) -> Result<(Value, Arc<Document>, Arc<Document>)> {
         let last_command = self.last_command.clone();
         let clipboard = self.clipboard.clone();
         let ui_requests = self.ui_requests.len();
@@ -174,16 +239,19 @@ impl Session {
         let outcome = self.grouped::<()>("Dry run", |s| {
             let before = s.ds()?.doc.clone();
             let result = s.execute(id, params)?;
-            report = Some((result, changes(&before, &s.ds()?.doc)));
+            report = Some((result, before, s.ds()?.doc.clone()));
             // The group rolls back on an error: this one only stops it.
             Err(EngineError::Other("dry run".into()))
         });
         self.last_command = last_command;
         self.clipboard = clipboard;
         self.ui_requests.truncate(ui_requests);
-        let Some((result, c)) = report else {
-            return Err(outcome.err().unwrap_or_else(|| EngineError::Other("the dry run did not finish".into())));
-        };
+        report.ok_or_else(|| outcome.err().unwrap_or_else(|| EngineError::Other("the dry run did not finish".into())))
+    }
+
+    fn dry_run(&mut self, id: &str, params: &Value) -> Result<Value> {
+        let (result, before, after) = self.dry_run_docs(id, params)?;
+        let c = changes(&before, &after);
         let count = c.changed.len() + c.created.len() + c.deleted.len();
         let truncated = [&c.changed, &c.created, &c.deleted].iter().any(|l| l.len() > MAX_LISTED);
         let cap = |mut v: Vec<NodeId>| {

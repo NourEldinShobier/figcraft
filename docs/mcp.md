@@ -480,6 +480,42 @@ Siblings never end up with the same proposed name: the second gets `-2`, the thi
 
 These four mirror the read tools of the Figma MCP server (`nodeId` is a FigCraft layer id, an integer). `screenshot` is Figma's `get_screenshot`; writes go through `run_command` / `batch`. Not provided: Code Connect map tools, `whoami`.
 
+### Bulk-edit safety
+
+Every write tool (`run_command`, `batch`, `create_node`, `set_properties`, `propagate_change`,
+`run_script`, `apply_text`, `import_html`, `generate_diagram`) takes `maxAffected`, `as` and (all
+but `propagate_change`, whose `confirm` applies the change) `confirm`. The checks hold for AI
+agents (calls through the MCP server or `engine.execute {agent}`), not for the person in the
+window.
+
+- **`maxAffected` guard.** A call that would change more layers than `maxAffected` (default 200,
+  or the server's `FIGCRAFT_MAX_AFFECTED`) is refused with the count, a sample of 10 ids and the
+  hint to narrow the target (`ids`, `where`) or pass `confirm: true`; nothing is changed. The
+  engine counts with a dry run first, so the command runs twice; a layer counts when it was
+  created, deleted or edited (a parent that only gained or lost children does not). A batch or
+  script counts everything it does. A batch with a step that cannot be dry-run (a file save) is
+  not pre-counted. `propagate_change {confirm: true}` is refused over the limit too: pass a larger
+  `maxAffected`. Previews and `dryRun` calls change nothing and are not guarded. The generic
+  parameters also work inside `run_command` params: `maxAffected`, `confirm`, `as`, `withChanged`.
+- **`changed` summary.** The result of every write carries `changed: {count, ids (up to 10),
+  more?, props?, created?, deleted?, noop?}`: how many layers it affected, which fields differ
+  (file-format names: `opacity`, `fills`, `transform`, ...), and `noop` for the layers it
+  targeted and left as they were, so an agent knows an update did nothing. A command result that
+  already has a `changed` field (`propagate_change`, `run_script`) gets the summary as `affected`,
+  and a result that is an array (`batch`) gets it as a second text block `{"changed": {...}}`.
+- **Scope fence** (`run_command`): `scope.set {ids?, pages?}` limits an agent's edits to those
+  layers (and what is inside them) and pages; an edit that touches a layer outside, alone or in a
+  batch or script (rolled back whole), is refused naming the fence. A fenced container may gain
+  and lose children. `scope.get` reads it, `scope.clear` lifts it. Off by default, kept per file
+  tab for the session, not saved in the file.
+- **Locks by owner** (`run_command`): `lock.set {ids?, owner?}` locks layers (the `locked` flag
+  plus `figcraft.lockOwner` in plugin data, so it is saved with the file); `lock.release
+  {ids?, owner?}` releases the ones the owner holds (with `owner` and no `ids`: all of them);
+  `lock.list {owner?, limit?}` shows them. An agent's edit to a layer locked by another owner is
+  refused naming the owner, unless the call's `as` is that owner's label; `as` is also the default
+  `owner` of `lock.set` and `lock.release`. Layers locked without an owner (by hand) are as
+  before. Only the person can release another owner's lock (`lock.release {force: true}`).
+
 ### Compact layer trees
 
 `inspect_document` and `get_node` accept `fields`, an array of exact, case-sensitive top-level node

@@ -34,6 +34,7 @@ impl Session {
             events: Arc::new(events::EventLog::default()),
             pending_events: Vec::new(),
             agent: None,
+            actor: String::new(),
             agent_presence: None,
         }
     }

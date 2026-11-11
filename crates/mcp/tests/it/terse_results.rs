@@ -9,11 +9,12 @@ fn set_properties_on_several_layers_returns_only_ids() {
     let a = c.create(json!({"type": "rectangle"}));
     let b = c.create(json!({"type": "rectangle"}));
     let r = c.ok("set_properties", json!({"ids": [a, b], "props": {"opacity": 0.5}}));
-    assert_eq!(r, json!({"ok": true, "ids": [a, b]}));
+    assert_eq!((&r["ok"], &r["ids"]), (&json!(true), &json!([a, b])));
+    assert_eq!(r["changed"]["count"], 2, "the summary rides along: {r}");
     let r = c.ok("set_properties", json!({"ids": [a], "props": {"opacity": 0.4}}));
     assert!(r["nodes"].is_array(), "{r}");
     let r = c.ok("set_properties", json!({"ids": [a], "props": {"opacity": 0.3}, "quiet": true}));
-    assert_eq!(r, json!({"ok": true, "ids": [a]}));
+    assert_eq!((&r["ok"], &r["ids"]), (&json!(true), &json!([a])));
 }
 
 #[test]
@@ -40,5 +41,6 @@ fn quiet_batch_lists_only_failures() {
     assert_eq!(r["failures"].as_array().map(Vec::len), Some(1));
     assert_eq!(r["failures"][0]["step"], 2);
     let r = c.ok("batch", json!({"commands": [steps[0].clone(), steps[1].clone()], "quiet": true}));
-    assert_eq!(r, json!({"ok": true, "count": 2}));
+    assert_eq!((&r["ok"], &r["count"]), (&json!(true), &json!(2)));
+    assert_eq!(r["changed"]["count"], 0, "the same write again: {r}");
 }

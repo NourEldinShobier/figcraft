@@ -244,6 +244,10 @@ const REV_GUARDED_TOOLS: &[&str] = &["set_properties", "run_command", "batch", "
 /// Read tools whose result carries the document's `rev`.
 const REV_STAMPED_TOOLS: &[&str] = &["get_node", "inspect_document", "find_nodes", "get_selection"];
 
+/// Write tools that take `maxAffected`, `confirm` and `as`, and carry a `changed` summary in their result.
+const SAFETY_TOOLS: &[&str] =
+    &["run_command", "batch", "create_node", "set_properties", "propagate_change", "run_script", "apply_text", "import_html", "generate_diagram"];
+
 const MULTI_DOCUMENT_TOOLS: &[&str] = &["find_nodes", "set_properties", "run_command", "get_nodes"];
 
 /// Most files one `documents` call works on.
@@ -321,6 +325,15 @@ pub fn tool_definitions() -> Vec<Value> {
         "type": "integer", "minimum": 0,
         "description": "The `rev` of an earlier read (get_node, inspect_document, find_nodes, get_selection) or of the previous guarded write. When the document has changed since (any command, undo or redo, by you, the user or another agent), the call changes nothing and fails with what changed, so you re-read first. A successful call returns the new `rev`. Not together with `documents`"
     });
+    let max_affected = json!({
+        "type": "integer", "minimum": 1,
+        "description": "Most layers this call may change (default 200, or the server's FIGCRAFT_MAX_AFFECTED). A call that would change more is refused with the count and a sample of ids, and nothing is changed: narrow the target or pass `confirm: true` (propagate_change: a larger maxAffected)"
+    });
+    let confirm = json!({"type": "boolean", "description": "Apply even when more than `maxAffected` layers would change"});
+    let owner = json!({
+        "type": "string", "minLength": 1, "maxLength": 100,
+        "description": "Your owner label. An edit to a layer that lock.set locked for another owner is refused naming that owner; pass the owner's label here to edit it. Also the default owner of lock.set and lock.release"
+    });
     for t in &mut tools {
         let Some(name) = t.get("name").and_then(Value::as_str).map(str::to_string) else { continue };
         let Some(props) = t.pointer_mut("/inputSchema/properties").and_then(Value::as_object_mut) else { continue };
@@ -332,6 +345,13 @@ pub fn tool_definitions() -> Vec<Value> {
         }
         if REV_GUARDED_TOOLS.contains(&name.as_str()) {
             props.insert("ifRev".into(), if_rev.clone());
+        }
+        if SAFETY_TOOLS.contains(&name.as_str()) {
+            props.insert("maxAffected".into(), max_affected.clone());
+            props.insert("as".into(), owner.clone());
+            if name != "propagate_change" {
+                props.insert("confirm".into(), confirm.clone());
+            }
         }
     }
     tools
@@ -1179,6 +1199,74 @@ fn exec(b: &mut dyn Backend, cmd: &str, params: Value) -> Result<Value, String> 
     b.call("engine.execute", json!({"command": cmd, "params": params}))
 }
 
+/// The most layers a mutating call may change without `confirm`: the server's FIGCRAFT_MAX_AFFECTED, else 200.
+fn default_max_affected() -> u64 {
+    std::env::var("FIGCRAFT_MAX_AFFECTED").ok().and_then(|v| v.trim().parse::<u64>().ok()).filter(|n| *n >= 1).unwrap_or(200)
+}
+
+/// Add the engine's bulk-safety parameters to the params of a mutating call: `maxAffected` (the
+/// tool's, else [`default_max_affected`]), `confirm` (when `with_confirm`), the owner label `as`
+/// and `withChanged`, which asks for the `changed` summary. Params that already hold one keep it;
+/// a call the command only previews (its own `dryRun`) gets none.
+fn guard_params(a: &Map<String, Value>, params: &mut Value, with_confirm: bool) -> Result<(), String> {
+    let confirm = if with_confirm { flag(a, "confirm")? } else { false };
+    let Some(o) = params.as_object_mut() else { return Ok(()) };
+    if o.get("dryRun") == Some(&Value::Bool(true)) {
+        return Ok(());
+    }
+    let max = a.get("maxAffected").filter(|v| !v.is_null()).cloned().unwrap_or_else(|| json!(default_max_affected()));
+    o.entry("maxAffected").or_insert(max);
+    if confirm {
+        o.entry("confirm").or_insert(json!(true));
+    }
+    if let Some(owner) = a.get("as").filter(|v| !v.is_null()) {
+        o.entry("as").or_insert(owner.clone());
+    }
+    o.entry("withChanged").or_insert(json!(true));
+    Ok(())
+}
+
+/// `exec`, taking the `changed` summary out of the engine's answer when `withChanged` got one.
+fn exec_changed(b: &mut dyn Backend, cmd: &str, params: Value) -> Result<(Value, Option<Value>), String> {
+    let mut v = exec(b, cmd, params)?;
+    let taken = v.as_object_mut().filter(|o| o.contains_key("$changed")).map(|o| (o.remove("$changed"), o.remove("result")));
+    Ok(match taken {
+        Some((changed, result)) => (result.unwrap_or(Value::Null), changed),
+        None => (v, None),
+    })
+}
+
+/// A mutating tool's result with its `changed` summary: a field of an object result (`affected`
+/// when the command's own result already has a `changed`, like `family.propagate` and
+/// `script.run`), else a second text block (a batch answers with an array).
+fn with_changed(mut v: Value, changed: Option<Value>) -> ToolResult {
+    let Some(changed) = changed else { return ToolResult::json(&v) };
+    match v.as_object_mut() {
+        Some(o) => {
+            let key = if o.contains_key("changed") { "affected" } else { "changed" };
+            o.insert(key.into(), changed);
+            ToolResult::json(&v)
+        }
+        None => {
+            let mut r = ToolResult::json(&v);
+            r.content.push(json!({"type": "text", "text": json!({"changed": changed}).to_string()}));
+            r
+        }
+    }
+}
+
+/// [`exec_changed`] as a tool result.
+fn exec_mutating(b: &mut dyn Backend, cmd: &str, params: Value) -> Result<ToolResult, String> {
+    exec_changed(b, cmd, params).map(|(v, changed)| with_changed(v, changed))
+}
+
+/// A tool that runs one mutating command with the listed arguments.
+fn exec_tool(b: &mut dyn Backend, cmd: &str, a: &Map<String, Value>, keys: &[&str]) -> Result<ToolResult, String> {
+    let mut params = pick(a, keys);
+    guard_params(a, &mut params, true)?;
+    exec_mutating(b, cmd, params)
+}
+
 /// Run a read command with the tool's arguments; Figma's `nodeId` is the engine's `id`.
 fn read_command(b: &mut dyn Backend, cmd: &str, a: &Map<String, Value>) -> Result<Value, String> {
     let mut params = a.clone();
@@ -1602,17 +1690,15 @@ fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, doc_target:
         "design_system_index" => read_command(b, "ds.index", a).map(|v| ToolResult::json(&v)),
         "audit_tokens" => exec(b, "lint.tokens", pick(a, &["root", "page", "limit"])).map(|v| ToolResult::json(&v)),
         "extract_text" => exec(b, "text.extract", pick(a, &["root", "page", "limit"])).map(|v| ToolResult::json(&v)),
-        "apply_text" => exec(b, "text.apply", pick(a, &["changes", "flatten", "dryRun"])).map(|v| ToolResult::json(&v)),
+        "apply_text" => exec_tool(b, "text.apply", a, &["changes", "flatten", "dryRun"]),
         "lint_layout" => exec(b, "lint.layout", pick(a, &["root", "page", "checks", "grid", "limit"])).map(|v| ToolResult::json(&v)),
         "get_board" => exec(b, "board.read", pick(a, &["page", "limit"])).map(|v| ToolResult::json(&v)),
         "get_selection_context" => exec(b, "selection.context", pick(a, &["limit", "siblings"])).map(|v| ToolResult::json(&v)),
         "diff_documents" => exec(b, "doc.diff", pick(a, &["a", "b", "version", "limit"])).map(|v| ToolResult::json(&v)),
         "check_accessibility" => exec(b, "a11y.audit", pick(a, &["root", "page", "limit"])).map(|v| ToolResult::json(&v)),
-        "run_script" => exec(b, "script.run", pick(a, &["code", "maxOperations", "dryRun"])).map(|v| ToolResult::json(&v)),
-        "generate_diagram" => {
-            exec(b, "board.fromMermaid", pick(a, &["mermaid", "parent", "x", "y", "direction", "dryRun"])).map(|v| ToolResult::json(&v))
-        }
-        "import_html" => exec(b, "import.html", pick(a, &["html", "path", "parent", "x", "y", "width", "dryRun"])).map(|v| ToolResult::json(&v)),
+        "run_script" => exec_tool(b, "script.run", a, &["code", "maxOperations", "dryRun"]),
+        "generate_diagram" => exec_tool(b, "board.fromMermaid", a, &["mermaid", "parent", "x", "y", "direction", "dryRun"]),
+        "import_html" => exec_tool(b, "import.html", a, &["html", "path", "parent", "x", "y", "width", "dryRun"]),
         "summarize_document" => exec(b, "inspect.summary", pick(a, &["budgetTokens"])).map(|v| ToolResult::json(&v)),
         other => Err(format!("unknown tool `{other}` (tools/list has: {})", TOOL_NAMES.join(", "))),
     }
@@ -1686,7 +1772,8 @@ fn run_command(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult
     };
     let mut params = params;
     friendly_params(&mut params);
-    exec(b, cmd, params).map(|v| ToolResult::json(&v))
+    guard_params(a, &mut params, true)?;
+    exec_mutating(b, cmd, params)
 }
 
 fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
@@ -1732,7 +1819,9 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Stri
         Some(_) => return Err("`preview` must be a boolean".into()),
     }
     let quiet = a.get("quiet").and_then(Value::as_bool).unwrap_or(false);
-    exec(b, "command.batch", params).map(|v| ToolResult::json(&if quiet && v.is_array() { quiet_batch(&v) } else { v }))
+    guard_params(a, &mut params, true)?;
+    let (v, changed) = exec_changed(b, "command.batch", params)?;
+    Ok(with_changed(if quiet && v.is_array() { quiet_batch(&v) } else { v }, changed))
 }
 
 /// `{ok, count, failures?}` for a batch result: only the `ok: false` outcomes of `onError: continue` are kept.
@@ -1760,7 +1849,7 @@ fn create_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult
     let dry = flag(a, "dryRun")?;
     flag(a, "keepSelection")?;
     let mut params = Map::new();
-    const KNOWN: [&str; 18] = [
+    const KNOWN: [&str; 21] = [
         "type",
         "x",
         "y",
@@ -1779,6 +1868,9 @@ fn create_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult
         "absolute",
         "dryRun",
         "keepSelection",
+        "maxAffected",
+        "confirm",
+        "as",
     ];
     for k in KNOWN {
         if let Some(v) = a.get(k).filter(|v| !v.is_null()) {
@@ -1797,13 +1889,15 @@ fn create_node(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult
         normalize_props(&mut props);
         params.insert("props".into(), Value::Object(props));
     }
-    let r = exec(b, "node.create", Value::Object(params))?;
+    let mut params = Value::Object(params);
+    guard_params(a, &mut params, true)?;
+    let (r, changed) = exec_changed(b, "node.create", params)?;
     if dry {
         return Ok(ToolResult::json(&r));
     }
     let id = r.get("id").cloned().ok_or("node.create returned no id")?;
     let node = b.call("node.get", json!({"id": id, "depth": 0}))?;
-    Ok(ToolResult::json(&json!({"id": id, "node": node})))
+    Ok(with_changed(json!({"id": id, "node": node}), changed))
 }
 
 fn set_properties(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
@@ -1833,7 +1927,8 @@ fn set_properties(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolRes
         }
         params["ids"] = json!(ids);
     }
-    let result = exec(b, "node.set", params)?;
+    guard_params(a, &mut params, true)?;
+    let (result, changed) = exec_changed(b, "node.set", params)?;
     if dry {
         let mut out = if result.is_object() { result } else { json!({"dryRun": true, "result": result}) };
         if let Some(m) = matched {
@@ -1873,7 +1968,7 @@ fn set_properties(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolRes
     if !quiet && let Some(similar) = similar_on(b, &ids) {
         out["similarOn"] = similar;
     }
-    Ok(ToolResult::json(&out))
+    Ok(with_changed(out, changed))
 }
 
 /// Where else the edited layer has twins: up to 5 close matches on other frames, with the call that
@@ -2610,11 +2705,13 @@ fn propagate_change(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolR
     if !confirm {
         params["dryRun"] = json!(true);
     }
-    let mut out = exec(b, "family.propagate", params)?;
     if !confirm {
-        out = json!({"preview": true, "note": "nothing was changed; pass confirm: true to apply", "result": out});
+        let out = exec(b, "family.propagate", params)?;
+        return Ok(ToolResult::json(&json!({"preview": true, "note": "nothing was changed; pass confirm: true to apply", "result": out})));
     }
-    Ok(ToolResult::json(&out))
+    // `confirm` applies the change here; more twins than `maxAffected` need a larger limit.
+    guard_params(a, &mut params, false)?;
+    exec_mutating(b, "family.propagate", params)
 }
 
 /// The listed keys of `a` that are set, as a params object.

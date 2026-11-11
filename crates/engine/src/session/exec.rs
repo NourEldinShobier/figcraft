@@ -130,6 +130,7 @@ impl Session {
             .and_then(|v| self.check_loading(id, &before).map(|()| v))
             .and_then(|v| self.check_live_access(id, &before).map(|()| v))
             .and_then(|v| self.check_finite_geometry(id, &before).map(|()| v))
+            .and_then(|v| self.check_safety(id, &before).map(|()| v))
             // Normalising is part of the command: a panic in it rolls the edit back too (#1085).
             .and_then(|v| {
                 guard::run(id, || {
