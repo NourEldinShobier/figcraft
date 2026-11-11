@@ -218,6 +218,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "find_similar",
     "propagate_change",
     "get_design_guidelines",
+    "design_system_index",
     "audit_tokens",
     "lint_layout",
     "get_code_connect_map",
@@ -282,6 +283,7 @@ const DOCUMENT_TOOLS: &[&str] = &[
     "propagate_change",
     "get_design_guidelines",
     "audit_tokens",
+    "design_system_index",
     "lint_layout",
     "get_code_connect_map",
     "add_code_connect_map",
@@ -704,7 +706,7 @@ fn tools() -> Vec<Value> {
         tool(
             "search_design_system",
             "Search design system",
-            "Search the file's components, variables and styles by name or description (engine `inspect.searchDesignSystem`). Returns `{components, variables, styles, total}`; components are ids to place with `instance.place`, variables and styles to apply with `variable.bind` / `style.apply`. Same name as the Figma MCP tool.",
+            "Search the file's components, variables and styles by name or description (engine `inspect.searchDesignSystem`). Returns `{components, variables, styles, total}` (design_system_index lists the whole system with usage counts and unused assets instead); components are ids to place with `instance.place`, variables and styles to apply with `variable.bind` / `style.apply`. Same name as the Figma MCP tool.",
             obj(
                 json!({
                     "query": string("Case-insensitive text to find in names and descriptions; empty lists everything"),
@@ -911,6 +913,22 @@ fn tools() -> Vec<Value> {
             "Read the design guidelines",
             "The Markdown design rules stored with the file (engine `library.guidelines`): {text, bytes}. Read them before building or changing UI. To store new rules call run_command `library.setGuidelines` {text} (up to 20 KB).",
             obj(json!({}), &[]),
+            true,
+        ),
+        tool(
+            "design_system_index",
+            "Design-system index",
+            "Compact index of the file's design system (engine `ds.index`): components (sets list their variant property names), styles and variables with `usageCount` (instances of a component, layers using a style or variable), `unused`, variable collection and modes, plus per enabled library how many of the assets copied into this file are used. Read-only; names and counts only, `limit` per kind with a `truncated` flag. Use `unusedOnly` to find clean-up candidates; use search_design_system to look an asset up by name.",
+            obj(
+                json!({
+                    "kinds": {"type": "array", "items": {"type": "string", "enum": ["components", "styles", "variables"]}, "description": "Kinds to list (default all)"},
+                    "usage": boolean("Count the layers using each asset (default true)"),
+                    "unusedOnly": boolean("List only assets nothing uses"),
+                    "query": string("Case-insensitive text in names and descriptions"),
+                    "limit": int("Most entries per kind (default 50, max 500)"),
+                }),
+                &[],
+            ),
             true,
         ),
         tool(
@@ -1497,6 +1515,7 @@ fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, doc_target:
             exec(b, "codeConnect.set", pick(a, &["id", "language", "importPath", "name", "template"])).map(|v| ToolResult::json(&v))
         }
         "get_design_guidelines" => exec(b, "library.guidelines", json!({})).map(|v| ToolResult::json(&v)),
+        "design_system_index" => read_command(b, "ds.index", a).map(|v| ToolResult::json(&v)),
         "audit_tokens" => exec(b, "lint.tokens", pick(a, &["root", "page", "limit"])).map(|v| ToolResult::json(&v)),
         "lint_layout" => exec(b, "lint.layout", pick(a, &["root", "page", "checks", "grid", "limit"])).map(|v| ToolResult::json(&v)),
         "diff_documents" => exec(b, "doc.diff", pick(a, &["a", "b", "version", "limit"])).map(|v| ToolResult::json(&v)),

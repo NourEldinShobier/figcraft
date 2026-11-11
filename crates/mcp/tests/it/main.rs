@@ -16,6 +16,7 @@ mod cancel_progress;
 mod common;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod design_context_extras;
+mod design_system_index_tool;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod diff_tools;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

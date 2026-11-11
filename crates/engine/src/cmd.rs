@@ -9,6 +9,7 @@ pub mod component;
 pub mod create;
 pub mod docdiff;
 pub mod docstatus;
+pub mod dsindex;
 pub mod edit;
 pub mod facilitate;
 pub mod family;
@@ -105,6 +106,7 @@ fn registry() -> &'static Registry {
         list.extend(mermaid::specs());
         list.extend(guidelines::specs());
         list.extend(tokencheck::specs());
+        list.extend(dsindex::specs());
         list.extend(script::specs());
         list.extend(lintlayout::specs());
         list.extend(docdiff::specs());
