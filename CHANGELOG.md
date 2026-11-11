@@ -2,7 +2,39 @@
 
 What changed in FigCraft's agent surface (the MCP server, the engine commands behind it, and the Claude Code plugin). Newest first. The full per-feature history is in the revision table of [ROADMAP.md](ROADMAP.md); tool parameters are in [docs/mcp.md](docs/mcp.md).
 
-To use a new build: quit and restart the FigCraft app, then restart the agent session so its MCP server reloads. `diagnostics` shows `attached: true` when the app is driven, and `tools/list` should show 54 tools.
+To use a new build: quit and restart the FigCraft app, then restart the agent session so its MCP server reloads. `diagnostics` shows `attached: true` when the app is driven, and `tools/list` should show 67 tools (full profile).
+
+## 2026-11-11: upstream merge and bulk-edit release (54 to 67 tools)
+
+The tree now includes upstream/main (644 commits merged).
+
+New MCP tools:
+
+- `design_system_index` (engine `ds.index`): components, styles and variables with id, name, description, `usageCount` and `unused`; `variantProperties` for component sets. Takes `limit`; says when truncated.
+- `extract_text` and `apply_text` (engine `text.extract`, `text.apply`, `text.pseudoLocalize`): the text layers of a scope as an inventory, and the edited strings written back in one undo step.
+- `get_board` (engine `board.read`) and `get_selection_context` (engine `selection.context`): board contents with connectors, and the selected layers with their parents and siblings. Read-only.
+- `fix_contrast` (engine `a11y.fixContrast`) and `export_assets` (engine `export.assets`).
+- `check_changes` (engine `check.changes`; `since`, `root`, `page`, `checks`, `limit`) and `visual_diff` (engine `visual.diff`; `since`, `frames`, `threshold`, `scale`): verify a bulk edit against a saved version. Read-only.
+- `fill_instances` (data merge from `rows` or `csv`), `swap_component` (`mapOverrides`) and `replace_color` (`tolerance`, `variable`): bulk operations, each with `dryRun`.
+- `changesets` (engine `changeset.begin`, `end`, `list`, `revert`): a change journal; a revert is one undo step, and `changed` summaries carry the open changeset label.
+
+Changed:
+
+- `batch` accepts `{"assert": {...}}` steps and `preview: true` (runs, reports, undoes).
+- `figcraft-cli mcp --profile core|full` and `FIGCRAFT_MCP_PROFILE` (the flag wins, default `full`): core lists 21 tools plus `more_tools`, with short descriptions.
+- Bulk writes take `maxAffected` (default 200), return a `changed` summary and honour the scope fence and owner locks. `ifRev` also guards `undo` and `redo`.
+- `import_html` handles CSS grid, `position:absolute`, stretched flex rows, `@media` and `:first-child`/`:last-child`/`:nth-child(n)`.
+- Stability: `run_script` stops after 20 s of command time; `generate_diagram` limits Mermaid subgraphs to 200, nested 16 deep; the session command log drops parameters over 16 KB; ten refusal texts say what to do.
+
+To use it: quit and restart the FigCraft app, then restart the agent session. An older app that is still running rejects the new parameters (for example `maxAffected`) with "unknown parameters", so the app must be the new build.
+
+Known limits:
+
+- `cargo test -p figcraft-cli` attaches to a running FigCraft app on port 7979; with an older app open, `mcp_over_stdio` fails. Set `FIGCRAFT_MCP_PORT` to an unused port to run it headless.
+- Boolean-group corner smoothing follows the merged upstream profile, so its area change is smaller than before (test threshold lowered from 1.0 to 0.5).
+- `figcraft-web` tests were not run (excluded from the release gates).
+
+Deferred: prototype flows (out of scope), a `description` input for `generate_diagram`.
 
 ## 2026-11-08: agent-tooling release (46 to 54 tools)
 
