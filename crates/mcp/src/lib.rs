@@ -16,6 +16,7 @@
 mod auto;
 mod backend;
 mod headless;
+mod profile;
 mod prompts;
 mod resources;
 mod server;
@@ -30,6 +31,7 @@ mod oversize_tests;
 pub use auto::Auto;
 pub use backend::{AttachError, Attached, Backend, decode_data, page_children};
 pub use headless::Headless;
+pub use profile::{CORE_TOOLS, PROFILE_ENV, Profile};
 pub use prompts::{PROMPTS, PromptArg, PromptDef};
 pub use resources::{COMMAND_TEMPLATE, COMMANDS_URI, DOC_URI, NODE_TEMPLATE};
 pub use server::{INSTRUCTIONS, PROTOCOL_VERSION, SUPPORTED_VERSIONS, Server};

@@ -92,7 +92,7 @@ fn run(cli: Cli) -> CliResult<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         // `--attach` conflicts with the roots: the app runs the commands, only its own roots can confine them.
-        Command::Mcp(a) => mcp(a.attach.as_deref(), a.timeout, roots_of(&a.roots)?),
+        Command::Mcp(a) => mcp(a.attach.as_deref(), a.timeout, roots_of(&a.roots)?, a.profile.as_deref()),
         Command::Plugin { command: PluginCommand::Publish(a) } => publish_plugin(&a.folder, &a.server),
         Command::Connect { command: ConnectCommand::Publish(a) } => confined(&a.roots, || files::connect_publish(&a.file, &a.mappings, a.dry_run)),
         Command::Perf(a) => {
@@ -149,7 +149,8 @@ fn publish_plugin(folder: &str, server: &str) -> CliResult<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn mcp(attach: Option<&str>, timeout: Option<u64>, roots: Option<figcraft_engine::file_access::Roots>) -> CliResult<ExitCode> {
+fn mcp(attach: Option<&str>, timeout: Option<u64>, roots: Option<figcraft_engine::file_access::Roots>, profile: Option<&str>) -> CliResult<ExitCode> {
+    let profile = figcraft_mcp::Profile::resolve(profile, std::env::var(figcraft_mcp::PROFILE_ENV).ok().as_deref())?;
     let backend: Box<dyn figcraft_mcp::Backend> = match attach {
         Some(addr) => {
             let no_app = |e: std::io::Error| format!("can't reach the FigCraft app at {addr}: {e} (start it with `figcraft --control PORT`)");
@@ -170,7 +171,7 @@ fn mcp(attach: Option<&str>, timeout: Option<u64>, roots: Option<figcraft_engine
         eprintln!("file access confined to {}", r.to_json());
     }
     parent_watch::start();
-    let mut server = figcraft_mcp::Server::new(backend).with_roots(roots);
+    let mut server = figcraft_mcp::Server::new(backend).with_roots(roots).with_profile(profile);
     let stdout = std::io::stdout();
     server.serve_concurrent(std::io::stdin(), stdout.lock()).map_err(|e| format!("stdio: {e}"))?;
     Ok(ExitCode::SUCCESS)

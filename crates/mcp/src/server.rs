@@ -10,9 +10,10 @@ use figcraft_engine::file_access::{Roots, confined};
 use serde_json::{Value, json};
 
 use crate::backend::Backend;
+use crate::profile::{self, MORE_TOOLS, Profile};
 use crate::prompts;
 use crate::resources;
-use crate::tools::{call_tool, tool_definitions};
+use crate::tools::{ToolResult, call_tool, tool_definitions};
 
 /// The MCP revision we implement.
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
@@ -58,6 +59,8 @@ prompts/list has workflows, including fix_comments.";
 pub struct Server {
     backend: Box<dyn Backend>,
     initialized: bool,
+    /// Which tools `tools/list` shows.
+    profile: Profile,
     /// The automation roots every request's file access is confined to (`--automation-read-root`,
     /// `--automation-write-root`), if any.
     roots: Option<Arc<Roots>>,
@@ -169,13 +172,29 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 
 impl Server {
     pub fn new(backend: Box<dyn Backend>) -> Self {
-        Self { backend, initialized: false, roots: None, agent: String::new(), cancelled: HashSet::new(), queued: 0, dropped: 0, last_call: None }
+        Self {
+            backend,
+            initialized: false,
+            profile: Profile::Full,
+            roots: None,
+            agent: String::new(),
+            cancelled: HashSet::new(),
+            queued: 0,
+            dropped: 0,
+            last_call: None,
+        }
     }
 
     /// Confine the files every request reads and writes to `roots` (see
     /// [`figcraft_engine::file_access`]).
     pub fn with_roots(mut self, roots: Option<Roots>) -> Self {
         self.roots = roots.map(Arc::new);
+        self
+    }
+
+    /// List the tools of `profile` (default: all of them).
+    pub fn with_profile(mut self, profile: Profile) -> Self {
+        self.profile = profile;
         self
     }
 
@@ -415,19 +434,28 @@ impl Server {
                         "prompts": {"listChanged": false},
                     },
                     "serverInfo": {"name": "figcraft", "title": "FigCraft", "version": env!("CARGO_PKG_VERSION")},
-                    "instructions": format!("{INSTRUCTIONS} Backend: {}.{}", self.backend.describe(), self.roots_note()),
+                    "instructions": format!("{INSTRUCTIONS} {} Backend: {}.{}", self.profile.note(), self.backend.describe(), self.roots_note()),
                 }))
             }
             "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({"tools": tool_definitions()})),
+            "tools/list" => Ok(
+                json!({"tools": profile::list(self.profile, tool_definitions()), "_meta": {"profile": self.profile.name(), "note": self.profile.note()}}),
+            ),
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).ok_or((INVALID_PARAMS, "missing tool `name` (a string)".to_string()))?;
                 let args = params.get("arguments").cloned().unwrap_or(Value::Null);
                 if !(args.is_object() || args.is_null()) {
                     return Err((INVALID_PARAMS, "`arguments` must be an object".into()));
                 }
+                if name == MORE_TOOLS {
+                    let filter = args.get("filter").and_then(Value::as_str);
+                    return Ok(ToolResult::text(profile::more_tools(self.profile, &tool_definitions(), filter)).to_value());
+                }
                 if !crate::tools::TOOL_NAMES.contains(&name) {
                     return Err((INVALID_PARAMS, format!("unknown tool `{name}`")));
+                }
+                if !self.profile.lists(name) {
+                    return Ok(ToolResult::error(self.profile.hidden_error(name)).to_value());
                 }
                 let token = params.pointer("/_meta/progressToken").filter(|t| t.is_string() || t.is_number()).cloned();
                 let progress = |emit: &mut dyn FnMut(Value), done: bool| {

@@ -212,6 +212,9 @@ pub struct McpArgs {
     /// How long the attached app may take over each request, in seconds (1–600; default 60)
     #[arg(long, value_name = "SECONDS", requires = "attach", value_parser = clap::value_parser!(u64).range(1..=600))]
     pub timeout: Option<u64>,
+    /// Tools to list: core (about 20, short descriptions) or full (default; FIGCRAFT_MCP_PROFILE sets it when no flag does)
+    #[arg(long, value_name = "PROFILE", value_parser = ["core", "full"])]
+    pub profile: Option<String>,
     #[command(flatten)]
     pub roots: RootArgs,
 }
@@ -457,6 +460,9 @@ mod tests {
     fn mcp_and_plugin_publish() {
         let Command::Mcp(a) = ok(&["mcp"]) else { panic!("mcp") };
         assert_eq!(a.attach, None);
+        assert_eq!(a.profile, None);
+        let Command::Mcp(a) = ok(&["mcp", "--profile", "core"]) else { panic!("mcp") };
+        assert_eq!(a.profile.as_deref(), Some("core"));
         let Command::Mcp(a) = ok(&["mcp", "--attach", "7979"]) else { panic!("mcp") };
         assert_eq!(a.attach.as_deref(), Some("127.0.0.1:7979"));
         let Command::Mcp(a) = ok(&["mcp", "--attach=localhost:7979"]) else { panic!("mcp") };
@@ -520,6 +526,7 @@ mod tests {
             (&["mcp", "--attach", "7979", "--automation-read-root", "."], ArgumentConflict),
             (&["mcp", "--automation-write-root"], InvalidValue),
             (&["mcp", "stray"], UnknownArgument),
+            (&["mcp", "--profile", "huge"], InvalidValue),
             (&["convert", "a"], MissingRequiredArgument),
             (&["plugin", "publish", "dist"], MissingRequiredArgument),
             (&["commands", "--filter", "--json"], InvalidValue),
