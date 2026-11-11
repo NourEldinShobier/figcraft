@@ -85,7 +85,7 @@ pub(super) fn version_list(ds: &DocState) -> Value {
 }
 
 /// The version named by `id`, else by `index` (validated: never negative, never past the end).
-pub(super) fn version_index(cmd: &str, ds: &DocState, p: &Value) -> Result<usize> {
+pub(crate) fn version_index(cmd: &str, ds: &DocState, p: &Value) -> Result<usize> {
     if let Some(id) = string(p, "id") {
         return ds.versions.iter().position(|v| v.id == id).ok_or_else(|| bad(cmd, format!("no version `{id}`")));
     }

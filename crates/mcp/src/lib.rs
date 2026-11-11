@@ -20,7 +20,7 @@ mod profile;
 mod prompts;
 mod resources;
 mod server;
-mod sheet;
+use figcraft_engine::sheet;
 mod tools;
 
 #[cfg(test)]

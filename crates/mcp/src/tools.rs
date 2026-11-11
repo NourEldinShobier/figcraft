@@ -217,6 +217,8 @@ pub const TOOL_NAMES: &[&str] = &[
     "list_versions",
     "restore_version",
     "compare_version",
+    "check_changes",
+    "visual_diff",
     "find_similar",
     "propagate_change",
     "get_design_guidelines",
@@ -291,6 +293,8 @@ const DOCUMENT_TOOLS: &[&str] = &[
     "list_versions",
     "restore_version",
     "compare_version",
+    "check_changes",
+    "visual_diff",
     "find_similar",
     "propagate_change",
     "get_design_guidelines",
@@ -942,6 +946,39 @@ fn tools() -> Vec<Value> {
             obj(
                 json!({"id": string("The version's id (list_versions)"), "node": id_schema("A top-level frame or section (default: all of the current page)")}),
                 &["id"],
+            ),
+            true,
+        ),
+        tool(
+            "check_changes",
+            "Check what an edit broke",
+            "One call after a bulk edit: runs the layout lint, the accessibility audit (contrast, target size, non-text contrast, alt text), the token audit and the overflow check on the document now and on the checkpoint `since`, and returns ONLY the issues that are new (engine `check.changes`): {since, ok, new, resolved, counts: {layout, a11y, tokens, overflow}, issues: [{check, id | ids, name?, message | detail | ...}], truncated?, incomplete?, note?}. Make the checkpoint first with `checkpoint`. An issue is the same when it is the same check on the same layer(s), so one that got worse is not new; `resolved` counts old issues that are gone. Limited to `root` (a layer) or `page` (id, name or \"all\"; default the open page). Read-only.",
+            obj(
+                json!({
+                    "since": {"description": "The checkpoint: a version id (checkpoint, list_versions) or its index", "anyOf": [{"type": "string"}, {"type": "integer", "minimum": 0}]},
+                    "root": id_schema("Only this layer and what is inside it"),
+                    "page": string("A page id or name, or \"all\" (default: the open page)"),
+                    "checks": json!({"type": "array", "items": {"type": "string", "enum": ["layout", "a11y", "tokens", "overflow"]}, "description": "Which checks to run (default all four)"}),
+                    "limit": int("New issues to list (default 50, up to 500)"),
+                }),
+                &["since"],
+            ),
+            true,
+        ),
+        tool(
+            "visual_diff",
+            "Diff frames as pictures",
+            "Renders each top-level frame and section now and at the checkpoint `since` and returns the frames whose pixels changed (engine `visual.diff`): {since, compared, unchanged, changed: [{id, name, status (changed | added | removed), changedPercent, changedPixels, bbox: {x, y, width, height}, resized?, targeted, untargeted?}], untargeted: [ids], lastEdit: {known, layers}, sheet?, skipped?, truncated?}, biggest change first. `targeted` is whether the last write tool call touched the frame or a layer inside it: `untargeted: true` marks a frame that changed without that, a side effect (a component edit reaching instances, a style or variable edit) to look at; it is null (and lastEdit.known false) once anything else has changed the file since. `threshold` is a percent of the frame's pixels (default 0: any change). `sheet` is a .png path for a contact sheet of the changed frames (up to 16), each as before, after and diff. Make the checkpoint first with `checkpoint`. Read-only.",
+            obj(
+                json!({
+                    "since": {"description": "The checkpoint: a version id (checkpoint, list_versions) or its index", "anyOf": [{"type": "string"}, {"type": "integer", "minimum": 0}]},
+                    "frames": ids_schema("Layers to compare (default: the top-level frames and sections of the page)"),
+                    "page": string("A page id or name, or \"all\" (default: the open page)"),
+                    "threshold": num("Percent (0-100) of a frame's pixels that must change for it to be listed (default 0)"),
+                    "scale": num("Render scale, 0.05-2 (default 1; large frames render smaller)"),
+                    "sheet": string("Write a contact sheet PNG of the changed frames to this .png path"),
+                }),
+                &["since"],
             ),
             true,
         ),
@@ -1680,6 +1717,8 @@ fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, doc_target:
         "list_versions" => list_versions(b, a),
         "restore_version" => restore_version(b, a),
         "compare_version" => compare_version(b, a),
+        "check_changes" => check_changes(b, a),
+        "visual_diff" => visual_diff(b, a),
         "find_similar" => find_similar(b, a),
         "propagate_change" => propagate_change(b, a),
         "get_code_connect_map" => get_code_connect_map(b, a),
@@ -2773,6 +2812,24 @@ fn compare_version(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolRe
 
 /// Most top-level frames `compare_version` compares at once.
 const MAX_COMPARED: usize = 50;
+
+/// `check_changes`: `check.changes`, the issues that are new since a checkpoint.
+fn check_changes(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let mut params = pick(a, &["since", "page", "checks", "limit"]);
+    if let Some(root) = a.get("root").filter(|n| !n.is_null()) {
+        params["root"] = json!(id_arg(root)?);
+    }
+    exec(b, "check.changes", params).map(|v| ToolResult::json(&v))
+}
+
+/// `visual_diff`: `visual.diff`, the frames whose pixels changed since a checkpoint.
+fn visual_diff(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let mut params = pick(a, &["since", "page", "threshold", "scale", "sheet"]);
+    if let Some(ids) = ids_arg(a, "frames")? {
+        params["frames"] = json!(ids);
+    }
+    exec(b, "visual.diff", params).map(|v| ToolResult::json(&v))
+}
 
 fn lint_icons(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
     let mut params = a.clone();

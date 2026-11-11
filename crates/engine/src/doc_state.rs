@@ -128,6 +128,9 @@ pub struct DocState {
     pub(crate) id_lists: std::collections::BTreeMap<String, Vec<NodeId>>,
     /// The agent scope fence ([`cmd::safety`]): session state, not saved in the file.
     pub(crate) fence: Option<cmd::safety::Fence>,
+    /// The layers the last guarded edit (`maxAffected` or `withChanged`) changed, with the document
+    /// it left: valid only while that is still the document ([`cmd::verify`] reads it).
+    pub(crate) last_touched: Option<(std::sync::Weak<Document>, Vec<NodeId>)>,
 }
 
 /// The whole file on its way to a tab opened page-first (see [`cmd::file::preload_staged`]).
@@ -225,6 +228,7 @@ impl DocState {
             loading: None,
             id_lists: Default::default(),
             fence: None,
+            last_touched: None,
         };
         st.zoom_to_fit();
         st
@@ -247,6 +251,7 @@ impl DocState {
         whole.on_disk_hash = self.on_disk_hash;
         whole.id_lists = std::mem::take(&mut self.id_lists);
         whole.fence = self.fence.take();
+        whole.last_touched = self.last_touched.take();
         if let Some(p) = page.and_then(|i| whole.doc.pages.get(i)) {
             whole.page = *p;
         }

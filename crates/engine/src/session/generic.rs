@@ -196,6 +196,17 @@ impl Session {
         let before = self.ds().ok().map(|d| (d.uid, d.doc.clone()));
         let targets = params::targets(self, params);
         let value = self.execute(id, params)?;
+        // Remember what this edit touched, for `visual.diff`'s untargeted flag.
+        if let Some((uid, b)) = &before
+            && let Some(ds) = self.docs.iter_mut().find(|d| d.uid == *uid)
+        {
+            let mut touched = safety::affected(b, &ds.doc).all();
+            touched.extend(targets.iter().copied());
+            touched.sort_unstable();
+            touched.dedup();
+            touched.truncate(10_000);
+            ds.last_touched = Some((std::sync::Arc::downgrade(&ds.doc), touched));
+        }
         let changed = before.and_then(|(uid, b)| {
             let ds = self.docs.iter().find(|d| d.uid == uid)?;
             with.then(|| safety::summary(&b, &ds.doc, &targets, !matches!(id, "command.batch" | "script.run")))

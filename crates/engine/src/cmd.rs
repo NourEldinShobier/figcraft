@@ -47,6 +47,7 @@ pub mod tokens;
 pub mod tokens_export;
 pub mod variables;
 pub mod variables_io;
+pub mod verify;
 pub mod view;
 
 use std::collections::HashMap;
@@ -114,6 +115,7 @@ fn registry() -> &'static Registry {
         list.extend(mermaid::specs());
         list.extend(guidelines::specs());
         list.extend(tokencheck::specs());
+        list.extend(verify::specs());
         list.extend(textinv::specs());
         list.extend(dsindex::specs());
         list.extend(script::specs());
