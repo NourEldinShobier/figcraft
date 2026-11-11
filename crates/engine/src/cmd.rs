@@ -4,6 +4,7 @@ pub mod a11y;
 pub mod a11yaudit;
 pub mod adjust;
 pub mod arrange;
+pub mod assertion;
 pub mod comment;
 pub mod component;
 pub mod create;
@@ -103,6 +104,7 @@ fn registry() -> &'static Registry {
         list.extend(idlists::specs());
         list.extend(adjust::specs());
         list.extend(family::specs());
+        list.extend(assertion::specs());
         list.extend(import_html::specs());
         list.extend(mermaid::specs());
         list.extend(guidelines::specs());

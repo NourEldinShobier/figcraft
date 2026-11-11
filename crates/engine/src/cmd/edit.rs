@@ -647,31 +647,54 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             ok()
         }),
-        spec!("command.batch", "Run several commands", "{label?, onError?, commands: [{command, params, as?}]} (one undo step)", false, |s, p| {
-            // `continue` rolls back only the failed steps and returns one outcome per step.
-            let continue_on_error = match get(p, "onError") {
-                None => false,
-                Some(Value::String(mode)) if mode == "abort" => false,
-                Some(Value::String(mode)) if mode == "continue" => true,
-                Some(_) => return Err(bad("command.batch", "`onError` must be \"abort\" or \"continue\"")),
-            };
-            let label = string(p, "label").unwrap_or_else(|| "Batch".into());
-            let cmds: Vec<BatchStep> = match get(p, "commands") {
-                Some(Value::Array(a)) => {
-                    let mut out = Vec::new();
-                    for (i, c) in a.iter().enumerate() {
-                        let cmd =
-                            c.get("command").and_then(Value::as_str).ok_or_else(|| bad("command.batch", format!("step {i} has no `command`")))?;
-                        crate::batch::refuse_unknown_step_keys(i, c)?;
-                        let params = c.get("params").cloned().unwrap_or(json!({}));
-                        out.push(BatchStep { name: crate::batch::step_name(i, c)?, ..BatchStep::new(cmd, params) });
+        spec!(
+            "command.batch",
+            "Run several commands",
+            "{label?, onError?, preview?, commands: [{command, params, as?} | {assert: {noOverflow?, noOverlap?, contrast?, count?, exists?, none?}}]} (one undo step). An `assert` step checks the document after the steps before it (see batch.assert) and fails the batch, rolling it back, when false. `preview: true` runs the batch, returns {preview, results, diff} (the doc.diff of what it changed) and rolls everything back",
+            false,
+            |s, p| {
+                // `continue` rolls back only the failed steps and returns one outcome per step.
+                let continue_on_error = match get(p, "onError") {
+                    None => false,
+                    Some(Value::String(mode)) if mode == "abort" => false,
+                    Some(Value::String(mode)) if mode == "continue" => true,
+                    Some(_) => return Err(bad("command.batch", "`onError` must be \"abort\" or \"continue\"")),
+                };
+                let label = string(p, "label").unwrap_or_else(|| "Batch".into());
+                let cmds: Vec<BatchStep> = match get(p, "commands") {
+                    Some(Value::Array(a)) => {
+                        let mut out = Vec::new();
+                        for (i, c) in a.iter().enumerate() {
+                            crate::batch::refuse_unknown_step_keys(i, c)?;
+                            let (cmd, params) = if let Some(a) = c.get("assert") {
+                                if c.get("command").is_some() || c.get("params").is_some() {
+                                    return Err(bad("command.batch", format!("step {i}: an `assert` step has no `command` or `params`")));
+                                }
+                                ("batch.assert", a.clone())
+                            } else {
+                                let cmd = c
+                                    .get("command")
+                                    .and_then(Value::as_str)
+                                    .ok_or_else(|| bad("command.batch", format!("step {i} has no `command` (or `assert`)")))?;
+                                (cmd, c.get("params").cloned().unwrap_or(json!({})))
+                            };
+                            out.push(BatchStep { name: crate::batch::step_name(i, c)?, ..BatchStep::new(cmd, params) });
+                        }
+                        out
                     }
-                    out
+                    _ => return Err(bad("command.batch", "`commands` must be an array")),
+                };
+                let preview = match get(p, "preview") {
+                    None | Some(Value::Null) => false,
+                    Some(Value::Bool(b)) => *b,
+                    Some(_) => return Err(bad("command.batch", "`preview` must be a boolean (true or false)")),
+                };
+                if preview {
+                    return s.preview_batch(&label, &cmds, continue_on_error);
                 }
-                _ => return Err(bad("command.batch", "`commands` must be an array")),
-            };
-            Ok(Value::Array(if continue_on_error { s.batch_continue(&label, &cmds)? } else { s.batch(&label, &cmds)? }))
-        }),
+                Ok(Value::Array(if continue_on_error { s.batch_continue(&label, &cmds)? } else { s.batch(&label, &cmds)? }))
+            }
+        ),
         spec!("edit.repeat", "Repeat last command", "{}", true, |s, _| {
             let Some((id, p)) = s.last_command.clone().filter(|(id, _)| id != "edit.repeat") else {
                 return Err(EngineError::Disabled("edit.repeat".into(), "nothing to repeat".into()));

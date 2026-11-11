@@ -359,11 +359,12 @@ fn tools() -> Vec<Value> {
         tool(
             "batch",
             "Run commands as one step",
-            "Run several commands in order as ONE undo step (engine `command.batch`). By default (onError: \"abort\"), if any command fails, everything is rolled back and the error names the failing step; success returns an array of the results in order. With onError: \"continue\", a failed step is rolled back on its own, the later steps still run, the call is not an error, and the array instead holds one {step, command, ok, result} or {step, command, ok, error} object per step; a reference to a failed step fails that step too. A later step can use what an earlier step returned: name a step with \"as\": \"card\", then anywhere in a later step's params {\"$ref\": \"card\"} stands for the `id` in its result ({\"$step\": n} does the same by zero-based position). Add \"field\" for another part of the result: a key or a slash path, e.g. {\"$ref\": \"copy\", \"field\": \"ids/0\"} for the first id edit.duplicate returned (with \"map\": true it also returns `map`, each original id → its copy, so \"field\": \"map/3\" is the copy of layer 3). Any object with a `$ref` or `$step` key is a reference. Example: [{\"command\":\"node.create\",\"as\":\"card\",\"params\":{\"type\":\"frame\"}}, {\"command\":\"node.create\",\"params\":{\"type\":\"text\",\"text\":\"Hi\",\"parent\":{\"$ref\":\"card\"}}}] builds a frame and a text inside it in one call.",
+            "Run several commands in order as ONE undo step (engine `command.batch`). By default (onError: \"abort\"), if any command fails, everything is rolled back and the error names the failing step; success returns an array of the results in order. With onError: \"continue\", a failed step is rolled back on its own, the later steps still run, the call is not an error, and the array instead holds one {step, command, ok, result} or {step, command, ok, error} object per step; a reference to a failed step fails that step too. A later step can use what an earlier step returned: name a step with \"as\": \"card\", then anywhere in a later step's params {\"$ref\": \"card\"} stands for the `id` in its result ({\"$step\": n} does the same by zero-based position). Add \"field\" for another part of the result: a key or a slash path, e.g. {\"$ref\": \"copy\", \"field\": \"ids/0\"} for the first id edit.duplicate returned (with \"map\": true it also returns `map`, each original id → its copy, so \"field\": \"map/3\" is the copy of layer 3). Any object with a `$ref` or `$step` key is a reference. Assertions: a step {\"assert\": {...}} checks the document after the steps before it and, when false, fails the whole batch (rolled back, the error names the step and why); one key per kind: noOverflow {root?}, noOverlap {root?}, contrast {root?} (text below AA contrast), count {where, min?, max?, equals?}, exists {where}, none {where} (`where` is a node.find filter), e.g. {\"assert\": {\"noOverflow\": {\"root\": {\"$ref\": \"card\"}}}}. With onError: \"continue\" a failed assertion is one failed step. `preview: true` runs the batch (assertions included), returns {preview, rolledBack, results, diff} where diff is the doc.diff of what it changed (counts, changed layers with old and new values, added, removed, moved), and rolls everything back, to show a bulk edit before applying it (a failed step or assertion is still the error). Example: [{\"command\":\"node.create\",\"as\":\"card\",\"params\":{\"type\":\"frame\"}}, {\"command\":\"node.create\",\"params\":{\"type\":\"text\",\"text\":\"Hi\",\"parent\":{\"$ref\":\"card\"}}}] builds a frame and a text inside it in one call.",
             obj(
                 json!({
-                    "commands": {"type": "array", "minItems": 1, "description": "Steps to run", "items": obj(json!({"command": string("Command id"), "params": command_params_schema(), "as": string("Name for this step, unique in the batch; later steps use its result with {\"$ref\": name}")}), &["command"])},
+                    "commands": {"type": "array", "minItems": 1, "description": "Steps to run", "items": obj(json!({"command": string("Command id (give this or `assert`)"), "params": command_params_schema(), "as": string("Name for this step, unique in the batch; later steps use its result with {\"$ref\": name}"), "assert": {"type": "object", "description": "Instead of `command`: a check that fails the batch when false. Keys: noOverflow {root?, page?}, noOverlap {root?, page?}, contrast {root?}, count {where, min?, max?, equals?}, exists {where}, none {where}", "additionalProperties": true}}), &[])},
                     "label": string("Undo history label (default \"Batch\")"),
+                    "preview": boolean("Run the batch, return {preview, rolledBack, results, diff} (a doc.diff of what it changed) and roll everything back"),
                     "quiet": boolean("Terse result: {ok, count, failures?} with only the failed steps (use with onError continue); step results are left out"),
                     "onError": {"type": "string", "enum": ["abort", "continue"], "description": "abort (default) rolls back the whole batch on the first failure; continue rolls back only the failed step, runs the rest and returns one {step, command, ok, result|error} object per step"},
                 }),
@@ -1638,7 +1639,18 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Stri
     }
     let mut steps = Vec::with_capacity(cmds.len());
     for (i, c) in cmds.iter().enumerate() {
-        let Some(cmd) = c.get("command").and_then(Value::as_str) else { return Err(format!("step {i}: `command` must be a string")) };
+        if let Some(a) = c.get("assert") {
+            if c.get("command").is_some() || c.get("params").is_some() || !a.is_object() {
+                return Err(format!("step {i}: an `assert` step is {{\"assert\": {{...}}}} with no `command` or `params`"));
+            }
+            let mut step = json!({"command": "batch.assert", "params": a});
+            if let (Some(name), Some(o)) = (c.get("as"), step.as_object_mut()) {
+                o.insert("as".into(), name.clone());
+            }
+            steps.push(step);
+            continue;
+        }
+        let Some(cmd) = c.get("command").and_then(Value::as_str) else { return Err(format!("step {i}: `command` (or `assert`) must be a string")) };
         let params = match c.get("params") {
             None | Some(Value::Null) => json!({}),
             Some(v @ Value::Object(_)) => v.clone(),
@@ -1657,8 +1669,13 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Stri
     if let Some(mode) = a.get("onError") {
         params["onError"] = mode.clone();
     }
+    match a.get("preview") {
+        None | Some(Value::Null) => {}
+        Some(Value::Bool(p)) => params["preview"] = json!(p),
+        Some(_) => return Err("`preview` must be a boolean".into()),
+    }
     let quiet = a.get("quiet").and_then(Value::as_bool).unwrap_or(false);
-    exec(b, "command.batch", params).map(|v| ToolResult::json(&if quiet { quiet_batch(&v) } else { v }))
+    exec(b, "command.batch", params).map(|v| ToolResult::json(&if quiet && v.is_array() { quiet_batch(&v) } else { v }))
 }
 
 /// `{ok, count, failures?}` for a batch result: only the `ok: false` outcomes of `onError: continue` are kept.

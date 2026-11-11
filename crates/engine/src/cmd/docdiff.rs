@@ -168,7 +168,23 @@ fn diff(s: &mut Session, p: &Value) -> Result<Value> {
         }
         (None, None) => return Err(bad(CMD, "pass `a` (another open document) or `version`")),
     };
-    let (ea, eb) = (snapshot(CMD, &before)?, snapshot(CMD, &after)?);
+    diff_documents(CMD, &before, &after, by_id, limit, mode, a_label, b_label)
+}
+
+/// The structural diff of `before` to `after` as `doc.diff` reports it (`by_id`: match layers by
+/// id, else by path). `doc.diff` and the preview of `command.batch` share it.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn diff_documents(
+    cmd: &str,
+    before: &Document,
+    after: &Document,
+    by_id: bool,
+    limit: usize,
+    mode: &str,
+    a_label: Value,
+    b_label: String,
+) -> Result<Value> {
+    let (ea, eb) = (snapshot(cmd, before)?, snapshot(cmd, after)?);
     let key = |e: &Entry| if by_id { e.id.0.to_string() } else { e.path.clone() };
     let index_a: BTreeMap<String, usize> = ea.iter().enumerate().map(|(i, e)| (key(e), i)).collect();
     let index_b: BTreeMap<String, usize> = eb.iter().enumerate().map(|(i, e)| (key(e), i)).collect();

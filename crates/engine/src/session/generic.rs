@@ -200,4 +200,27 @@ impl Session {
             "result": result,
         }))
     }
+
+    /// Run a batch, report what it did as a `doc.diff` of the document before and after, and put
+    /// everything back (see [`Session::dry_run`]). A failed step or assertion is the batch's error.
+    pub(crate) fn preview_batch(&mut self, label: &str, steps: &[crate::BatchStep], keep_going: bool) -> Result<Value> {
+        let last_command = self.last_command.clone();
+        let clipboard = self.clipboard.clone();
+        let ui_requests = self.ui_requests.len();
+        let mut report = None;
+        let outcome = self.grouped::<()>("Preview", |s| {
+            let before = s.ds()?.doc.clone();
+            let results = if keep_going { s.batch_continue(label, steps)? } else { s.batch(label, steps)? };
+            report = Some((results, before, s.ds()?.doc.clone()));
+            Err(EngineError::Other("preview".into()))
+        });
+        self.last_command = last_command;
+        self.clipboard = clipboard;
+        self.ui_requests.truncate(ui_requests);
+        let Some((results, before, after)) = report else {
+            return Err(outcome.err().unwrap_or_else(|| EngineError::Other("the preview did not finish".into())));
+        };
+        let diff = cmd::docdiff::diff_documents("command.batch", &before, &after, true, 50, "preview", Value::Null, after.name.clone())?;
+        Ok(serde_json::json!({"preview": true, "rolledBack": true, "results": results, "diff": diff}))
+    }
 }

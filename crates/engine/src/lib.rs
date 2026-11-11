@@ -207,6 +207,8 @@ mod auto_layout_move_tests;
 #[cfg(test)]
 mod autosave_tests;
 #[cfg(test)]
+mod batch_assert_tests;
+#[cfg(test)]
 mod batch_continue_events_tests;
 #[cfg(test)]
 mod batch_rollback_tests;
