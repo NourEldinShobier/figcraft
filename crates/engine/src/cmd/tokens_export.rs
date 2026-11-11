@@ -188,7 +188,7 @@ pub(super) fn styles(cx: &Ctx) -> (Map<String, Value>, Vec<String>) {
     let mut made: Vec<(String, String, Value)> = Vec::new(); // (group, style name, token)
     for st in &cx.doc.styles {
         let (group, got) = match &st.kind {
-            StyleKind::Text { style } => ("text", Some(("typography", typography(cx, st, style), text_extensions(style)))),
+            StyleKind::Text { style, .. } => ("text", Some(("typography", typography(cx, st, style), text_extensions(style)))),
             StyleKind::Effect { effects } => ("effect", shadows(cx, st, effects).map(|(v, e)| ("shadow", v, e))),
             StyleKind::Paint { paints } => {
                 let first = st.name.split('/').next().unwrap_or("").trim().to_ascii_lowercase();

@@ -311,7 +311,7 @@ impl<'d> Exporter<'d> {
             || !n.measurements.is_empty()
             || !n.dev_status.is_none()
         {
-            self.warn("Dev Mode annotations, statuses, resources, measurements and code links were left out");
+            self.warn("Developer Mode annotations, statuses, resources, measurements and code links were left out");
         }
         // The layer key is kept as plugin data (`figcraft` / `key`), which the import puts back.
         if let Some(k) = n.key() {

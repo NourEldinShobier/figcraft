@@ -518,7 +518,7 @@ fn tools() -> Vec<Value> {
         tool(
             "export",
             "Export",
-            "Export layers (default: the selection, else every top-level layer of the current page) as png, jpg, svg, webp, pdf or xml (an Android Vector Drawable, with `warnings` for what it changed or left out, per `vdCompat`) at `scale`, or the whole file as `fig` (experimental: written from public format knowledge, with `warnings` for what was left out; other apps may not open every file) (PDF: with `bleed`, `cropMarks`, `bleedMarks` and `cmyk` for print; options `contentsOnly`, `includeBoundingBox`, and for SVG `svgOutlineText`, `svgIdAttribute`, `svgSimplifyStroke`; for XML `svgIdAttribute` and `vdCompat`). With `path` the file is written there (absolute path recommended) and the result says where. Without `path`: png/jpg/webp come back as an image content block, svg as text, xml as text followed by `{format, warnings}`, other formats as base64 `data`.",
+            "Export layers (default: the selection, else every top-level layer of the current page) as png, jpg, svg, webp, pdf or xml (an Android Vector Drawable, with `warnings` for what it changed or left out, per `vdCompat`) at `scale`, or the whole file as `fig` (experimental: written from public format knowledge, with `warnings` for what was left out; other apps may not open every file) (PDF: with `bleed`, `cropMarks`, `bleedMarks` and `cmyk` for print; options `contentsOnly`, `includeBoundingBox`, and for SVG `svgOutlineText`, `svgIdAttribute`, `svgSimplifyStroke`; for XML `svgIdAttribute` and `vdCompat`; for png, jpg and webp `colorProfile`). With `path` the file is written there (absolute path recommended) and the result says where. Without `path`: png/jpg/webp come back as an image content block, svg as text, xml as text followed by `{format, warnings}`, other formats as base64 `data`.",
             obj(
                 json!({
                     "ids": ids_schema("Layers to export (several are composited into one image)"),
@@ -539,6 +539,8 @@ fn tools() -> Vec<Value> {
                     "cvd": {"type": "string", "enum": ["protanopia", "deuteranopia", "tritanopia", "achromatopsia"], "description": "PNG only: simulate this colour vision deficiency"},
                     "iconPreset": boolean("SVG: tidy for icons (transforms baked into the paths, no needless groups or view-box clips, numbers to 3 decimals, the layers' box as the view box)"),
                     "currentColor": {"type": ["boolean", "string"], "description": "With iconPreset: true makes the icon's only colour `currentColor`; a hex colour like \"#111111\" does so for that colour"},
+                    "colorProfile": {"type": "string", "enum": ["sameAsFile", "srgb", "displayP3"], "description": "PNG, JPG and WebP: the color profile of the file (default sameAsFile: the document's); colors are converted and out-of-gamut ones clip. SVG, PDF and XML are always sRGB"},
+                    "quality": {"type": "integer", "minimum": 1, "maximum": 100, "description": "JPG: the encoder's quality, 1 (smallest file) to 100; default 90"},
                 }),
                 &[],
             ),
@@ -2664,6 +2666,8 @@ fn export(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Str
         "currentColor",
         "vdCompat",
         "cvd",
+        "colorProfile",
+        "quality",
     ] {
         if let Some(v) = a.get(k).filter(|v| !v.is_null()) {
             params.insert(k.into(), v.clone());

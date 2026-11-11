@@ -182,6 +182,10 @@ pub(crate) fn sandbox_refusal(command: &str, params: &Value) -> Option<String> {
     if command == "variable.import" && get(params, "variables").and_then(Value::as_str).is_some_and(|t| !t.trim_start().starts_with('{')) {
         return Some("plugins can't read files: pass the variables JSON itself".into());
     }
+    // A saved version is the file's history, which plugins can't read (`version.` is denied).
+    if command == "dev.compare" && get(params, "version").is_some_and(|v| !v.is_null()) {
+        return Some("plugins can't read saved versions: leave out `version`".into());
+    }
     None
 }
 
@@ -203,6 +207,11 @@ fn refusal(m: &Manifest, command: &str, params: &Value) -> Option<String> {
     }
     if m.permissions.access == Access::Read && find_command(command).is_some_and(|c| c.history) {
         return Some(format!("`{command}` edits the document, and {} may only read it", m.name));
+    }
+    // Branches live beside the document (not in its undo history or its `Arc`), so the write
+    // checks below don't see them change.
+    if m.permissions.access == Access::Read && matches!(command, "branch.create" | "branch.updateFromMain" | "branch.merge" | "branch.archive") {
+        return Some(format!("`{command}` changes the file's branches, and {} may only read it", m.name));
     }
     None
 }
@@ -287,10 +296,23 @@ impl figcraft_plugin::Host for EngineHost<'_> {
             Ok(v)
         });
         r.map(|mut v| {
-            // A plugin gets the open files' names, not where they are on disk (#1117).
-            if command == "doc.list" {
-                for e in v.as_array_mut().into_iter().flatten().filter_map(Value::as_object_mut) {
+            // A plugin gets the open files' and libraries' names, not where they are on disk or
+            // the share links (with their tokens) that reach them (#1117).
+            if matches!(command, "doc.list" | "library.list" | "library.updates") {
+                // `doc.list` is a list; `library.list` keeps its list under `libraries`, and
+                // `library.updates` its failures under `errors`.
+                let list = match command {
+                    "library.list" => v.get_mut("libraries"),
+                    "library.updates" => v.get_mut("errors"),
+                    _ => Some(&mut v),
+                };
+                for e in list.and_then(Value::as_array_mut).into_iter().flatten().filter_map(Value::as_object_mut) {
                     e.remove("path");
+                    // A failure's text may quote the path, a token or another form of it: the
+                    // plugin gets a fixed message.
+                    if let Some(err) = e.get_mut("error").filter(|v| v.is_string()) {
+                        *err = json!("the library could not be read");
+                    }
                 }
             }
             v.to_string()
@@ -747,6 +769,23 @@ mod refusal_tests {
         let via_plugin: Value = serde_json::from_str(&host.call("doc.list", "{}").unwrap()).unwrap();
         assert_eq!(via_plugin[0]["name"], direct[0]["name"]);
         assert!(via_plugin[0].get("path").is_none(), "{via_plugin}");
+    }
+
+    #[test]
+    fn read_only_plugin_cannot_change_branches() {
+        let m = Manifest::parse(r#"{"id":"x.y","name":"X","main":"plugin.wasm"}"#).unwrap();
+        for cmd in ["branch.archive", "branch.updateFromMain", "branch.merge", "branch.create"] {
+            assert!(refusal(&m, cmd, &json!({})).is_some(), "{cmd} changes persisted branch state");
+        }
+        assert!(refusal(&m, "branch.list", &json!({})).is_none());
+    }
+
+    #[test]
+    fn plugins_cannot_compare_against_a_saved_version() {
+        let m = Manifest::parse(r#"{"id":"x.y","name":"X","main":"plugin.wasm","permissions":{"access":"write"}}"#).unwrap();
+        assert!(refusal(&m, "dev.compare", &json!({"version": "v1"})).is_some());
+        assert!(refusal(&m, "dev.compare", &json!({"version": null})).is_none());
+        assert!(refusal(&m, "dev.compare", &json!({})).is_none());
     }
 }
 

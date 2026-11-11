@@ -341,7 +341,8 @@ struct Item {
     /// would be derived (an auto layout frame's content decides that size).
     main_per_cross: Option<f64>,
     cross_per_main: Option<f64>,
-    /// Baseline alignment: distance from the item's top to its first baseline.
+    /// Baseline alignment: distance from the item's top to its first text baseline, or to its
+    /// bottom edge when it has no text (an icon next to a text sits on the line with its bottom).
     baseline: Option<f64>,
     /// Baseline alignment: offset from the line's top (computed per line).
     base_off: f64,
@@ -593,8 +594,11 @@ pub fn layout_frame(doc: &mut Document, frame: NodeId, m: &dyn Measure) {
         it.cross = if horizontal { h } else { w };
     }
     if baseline {
+        // A layer without a text baseline (an icon, a shape, a frame holding no text) sits on the
+        // line with its bottom edge: "the bottoms of the icon and the word home are aligned on the
+        // red line" (Use the horizontal and vertical flows in auto layout; #1825).
         for it in items.iter_mut().filter(|it| !it.fill_cross) {
-            it.baseline = item_baseline(doc, it.id, m, 0);
+            it.baseline = item_baseline(doc, it.id, m, 0).or(Some(it.cross));
         }
     }
 

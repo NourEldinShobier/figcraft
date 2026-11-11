@@ -40,6 +40,8 @@ mod paste_style_tests;
 #[cfg(test)]
 mod prop_value_tests;
 #[cfg(test)]
+mod scale_factor_tests;
+#[cfg(test)]
 mod scaled_instance_tests;
 #[cfg(test)]
 mod slot_tests;
@@ -62,6 +64,8 @@ mod text_style_tests;
 mod text_wrap_tests;
 #[cfg(test)]
 mod value_budget_tests;
+#[cfg(test)]
+mod vector_scale_tests;
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -81,6 +85,9 @@ const MAX_CHUNK: u64 = 512 * 1024 * 1024;
 /// Largest decompressed schema chunk: Figma's schema unpacks to well under 1 MB, so a schema that
 /// inflates past this is refused before its definitions are decoded.
 const MAX_SCHEMA: u64 = 16 * 1024 * 1024;
+/// Longest image hash (bytes) an image is found by: `images/` names and embedded images both
+/// stop at 64 bytes (128 hex digits).
+pub(crate) const MAX_IMAGE_HASH: usize = 64;
 /// Largest image member read.
 const MAX_IMAGE: u64 = figcraft_doc::ImageData::MAX_BYTES;
 /// Total decompressed ZIP image bytes read per import: the native image budget (`IMAGE_BUDGET`) on
@@ -196,6 +203,8 @@ fn import_inner(
     let file_name = archive.file_name.as_deref().filter(|n| !n.trim().is_empty()).unwrap_or(name);
     // The message goes before the layers are built, so the images it carries are copied out first.
     let embedded = embedded_copies(&msg);
+    // Hashes naming one blob map to the first of them, so the blob is copied and hashed once.
+    let _aliases = ImageAliases::install(embedded_aliases(&embedded, |hash| archive.has_image(hash)));
     let images = |r: &str| archive.image(r).or_else(|| embedded.get(r).map(|b| b.to_vec()));
     let nodes = msg.get("nodeChanges").map_or(0, |changes| changes.list().len());
     let staging = (nodes >= page_first.min_nodes).then_some((page_first.max_first_share, first));
@@ -344,9 +353,55 @@ fn embedded_copies(msg: &Kv) -> BTreeMap<String, Arc<[u8]>> {
     out
 }
 
+/// Embedded images ([`embedded_copies`]) whose blob an earlier hash already names, each with that
+/// hash. Hashes that also have an `images/` member keep their own name: the member is read first.
+/// Pointing every alias at one name has the import copy and hash each blob once, however many
+/// hashes a file points at it.
+fn embedded_aliases(embedded: &BTreeMap<String, Arc<[u8]>>, in_zip: impl Fn(&str) -> bool) -> BTreeMap<String, String> {
+    let mut first: BTreeMap<usize, &String> = BTreeMap::new();
+    let mut out = BTreeMap::new();
+    for (hash, bytes) in embedded {
+        if in_zip(hash) {
+            continue;
+        }
+        // Hashes naming one blob share its copy, so the copy's address tells the blob.
+        let canonical = *first.entry(bytes.as_ptr() as usize).or_insert(hash);
+        if canonical != hash {
+            out.insert(hash.clone(), canonical.clone());
+        }
+    }
+    out
+}
+
+thread_local! {
+    static IMAGE_ALIASES: std::cell::RefCell<BTreeMap<String, String>> = const { std::cell::RefCell::new(BTreeMap::new()) };
+}
+
+/// The image hash aliases ([`embedded_aliases`]) of the import running on this thread, for as long
+/// as it lives: the mapper names every image paint by [`canonical_image_ref`].
+struct ImageAliases;
+
+impl ImageAliases {
+    fn install(aliases: BTreeMap<String, String>) -> Self {
+        IMAGE_ALIASES.with(|a| *a.borrow_mut() = aliases);
+        Self
+    }
+}
+
+impl Drop for ImageAliases {
+    fn drop(&mut self) {
+        IMAGE_ALIASES.with(|a| a.borrow_mut().clear());
+    }
+}
+
+/// The name an image paint's hash goes by: the first hash naming the same blob, else itself.
+pub(crate) fn canonical_image_ref(hash: String) -> String {
+    IMAGE_ALIASES.with(|a| a.borrow().get(&hash).cloned()).unwrap_or(hash)
+}
+
 /// The hash and blob index of an `Image` value whose `dataBlob` points at a usable blob.
 fn embedded_image(image: &Kv, blobs: &[Kv]) -> Option<(String, usize)> {
-    let hash = image.get("hash").and_then(Kv::bytes).filter(|h| !h.is_empty() && h.len() <= 64)?;
+    let hash = image.get("hash").and_then(Kv::bytes).filter(|h| !h.is_empty() && h.len() <= MAX_IMAGE_HASH)?;
     let Some(Kv::Uint(index)) = image.get("dataBlob") else { return None };
     let index = usize::try_from(*index).ok()?;
     let bytes = blob(blobs, index)?;
@@ -392,10 +447,15 @@ impl<'b> Archive<'b> {
         Ok(Archive { canvas, file_name, zip: Some(z), image_budget })
     }
 
+    /// Whether `images/` has a member for image `hash`.
+    fn has_image(&self, hash: &str) -> bool {
+        self.zip.as_ref().is_some_and(|z| z.index_for_name(&format!("images/{hash}")).is_some())
+    }
+
     /// Bytes of image `hash` (lowercase hex) from `images/`.
     fn image(&self, hash: &str) -> Option<Vec<u8>> {
         let budget = &self.image_budget;
-        if hash.is_empty() || hash.len() > 128 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+        if hash.is_empty() || hash.len() > 2 * MAX_IMAGE_HASH || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
             return None;
         }
         // A clone shares the parsed directory and the bytes; the resolver only has shared access.

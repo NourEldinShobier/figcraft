@@ -305,7 +305,9 @@ fn cached_stroke_outline(n: &Node, path: &BezPath, closed: bool) -> Arc<BezPath>
     if let Some(p) = locked(stroke_cache()).get(key) {
         return p;
     }
-    let out = Arc::new(figcraft_pathops::stroke_outline_of(path, props, closed, net));
+    // Points with styles of their own are stroked on the network as drawn (smoothed corners in).
+    let drawn = net.map(|network| figcraft_doc::geometry::drawn_network(network, n.corners.smoothing));
+    let out = Arc::new(figcraft_pathops::stroke_outline_of(path, props, closed, drawn.as_deref()));
     locked(stroke_cache()).insert(key, out.clone());
     out
 }
@@ -348,7 +350,7 @@ fn round_result(path: BezPath, radius: f64, smoothing: f64) -> BezPath {
     }
     let mut net = figcraft_doc::VectorNetwork::from_path(&path);
     net.vertices.iter_mut().for_each(|v| v.radius = radius);
-    net.rounded_smooth(smoothing).map_or(path, |r| r.fill_path())
+    net.rounded_smoothed(smoothing).map_or(path, |r| r.fill_path())
 }
 
 /// The result a file stored for boolean group `n`, scaled to its size, while it still matches the
@@ -401,9 +403,9 @@ fn node_outline_at(doc: &Document, n: &Node, depth: usize) -> Option<(BezPath, F
             Some((p, FillRule::Winding))
         }
         NodeKind::Vector { network } => {
+            let drawn = figcraft_doc::geometry::drawn_network(network, n.corners.smoothing);
+            let net = drawn.as_ref();
             if network.regions.iter().any(|r| r.fills.is_some() || r.paint_space.is_some()) {
-                let rounded = network.rounded();
-                let net = rounded.as_ref().unwrap_or(network);
                 let mut areas = BezPath::new();
                 for (i, region) in net.regions.iter().enumerate() {
                     let paints = region.fills.as_deref().unwrap_or(&n.fills);
@@ -424,7 +426,7 @@ fn node_outline_at(doc: &Document, n: &Node, depth: usize) -> Option<(BezPath, F
             }
             let rule =
                 if network.regions.iter().any(|r| r.winding == figcraft_doc::WindingRule::EvenOdd) { FillRule::EvenOdd } else { FillRule::Winding };
-            Some((network.fill_path(), rule))
+            Some((net.fill_path(), rule))
         }
         _ => figcraft_doc::geometry::shape_path(n).map(|p| (p, FillRule::Winding)),
     }
@@ -916,8 +918,8 @@ fn region_painted(n: &Node) -> Option<&figcraft_doc::VectorNetwork> {
 /// Each region of a vector with region paints, filled with its own paints (or the layer's) in its
 /// own paint frame.
 fn fill_vector_regions(ctx: &Ctx, pix: &mut Pixmap, n: &Node, network: &figcraft_doc::VectorNetwork, xf: Affine) {
-    let rounded = network.rounded();
-    let net = rounded.as_ref().unwrap_or(network);
+    let drawn = figcraft_doc::geometry::drawn_network(network, n.corners.smoothing);
+    let net = drawn.as_ref();
     for (i, region) in net.regions.iter().enumerate() {
         let paints = region.fills.as_deref().unwrap_or(&n.fills);
         if let Some(mut path) = net.region_path(i) {

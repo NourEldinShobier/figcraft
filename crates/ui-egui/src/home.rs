@@ -190,9 +190,8 @@ fn dropped(app: &mut FigApp, ctx: &egui::Context) {
     }
 }
 
-/// Draw the Home sidebar: app icon and wordmark, file/template search (Escape clears it),
-/// section tabs (choosing one clears the file query) and preferences at the bottom.
-#[allow(deprecated)] // Ui::id was renamed in egui; migrate with the next egui bump
+/// Draw the Home sidebar: app icon and wordmark, file/template search (Escape clears it), section
+/// tabs (choosing one clears the file query) and Preferences at the bottom.
 fn sidebar(app: &mut FigApp, ui: &mut Ui, t: &Tokens, left: Rect) {
     let mut y = left.min.y + 20.0;
     crate::theme::paint_app_icon(ui, Rect::from_min_size(pos2(left.min.x + 12.0, y - 4.0), vec2(32.0, 32.0)));
@@ -235,7 +234,7 @@ fn sidebar(app: &mut FigApp, ui: &mut Ui, t: &Tokens, left: Rect) {
         ui.painter().line_segment([pos2(left.min.x + 12.0, pref_y - 6.0), pos2(left.max.x - 12.0, pref_y - 6.0)], Stroke::new(1.0, t.border));
     }
     let r = Rect::from_min_size(pos2(left.min.x + 8.0, pref_y), vec2(SIDEBAR - 16.0, 32.0));
-    let mut resp = ui.interact(r, ui.id().with("home_preferences"), Sense::click());
+    let mut resp = ui.interact(r, ui.scope_id().with("home_preferences"), Sense::click());
     let current = app.ui.preferences;
     a11y::button(&resp, tr("Preferences"));
     if current || resp.hovered() {
