@@ -7,7 +7,7 @@ use figcraft_color::Color;
 use serde_json::{Map, Value, json};
 
 use super::Warn;
-use super::css::Index;
+use super::css::{Index, split_top};
 use super::dom::{Dom, Kind as DomKind};
 use super::paint;
 use super::style::{self, Len, Props, Vars, len};
@@ -33,6 +33,7 @@ const PLACEHOLDERS: &[(&str, f64, f64)] = &[
     ("meter", 80.0, 16.0),
 ];
 const PLACEHOLDER_FILL: &str = "#E5E7EB";
+const SIDES: [&str; 4] = ["top", "right", "bottom", "left"];
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Sz {
@@ -51,6 +52,15 @@ pub enum Kind {
     Svg(String),
 }
 
+/// Offsets of a `position: absolute` box from the edges of its positioned parent.
+#[derive(Clone, Copy, Debug)]
+pub struct Abs {
+    pub top: Option<f64>,
+    pub right: Option<f64>,
+    pub bottom: Option<f64>,
+    pub left: Option<f64>,
+}
+
 pub struct Layer {
     pub kind: Kind,
     pub name: Option<String>,
@@ -61,11 +71,32 @@ pub struct Layer {
     pub avail: Option<f64>,
     pub props: Map<String, Value>,
     pub children: Vec<Layer>,
+    /// The layer sits outside its parent's flow at these offsets.
+    pub abs: Option<Abs>,
+    /// A row of boxes that hugs its height: once sized, it is fixed at its tallest child's height
+    /// and those children fill it (`align-items: stretch`).
+    pub stretch: bool,
 }
 
 impl Layer {
-    fn new(kind: Kind, name: Option<String>) -> Self {
-        Layer { kind, name, text: String::new(), w: Sz::Hug, h: Sz::Hug, avail: None, props: Map::new(), children: Vec::new() }
+    pub fn new(kind: Kind, name: Option<String>) -> Self {
+        Layer {
+            kind,
+            name,
+            text: String::new(),
+            w: Sz::Hug,
+            h: Sz::Hug,
+            avail: None,
+            props: Map::new(),
+            children: Vec::new(),
+            abs: None,
+            stretch: false,
+        }
+    }
+
+    /// A box that stretches to the height of its row.
+    pub fn stretchable(&self) -> bool {
+        matches!(self.kind, Kind::Frame) && self.h == Sz::Hug && self.abs.is_none()
     }
 }
 
@@ -89,6 +120,17 @@ struct Ctx {
     /// The parent is as tall as its content.
     hug_v: bool,
     depth: usize,
+    /// The parent is positioned (`position` other than static): absolute children sit inside it.
+    pos: bool,
+    /// The parent is a grid.
+    grid: Option<GridCtx>,
+}
+
+/// How the cells of a grid parent size their items (`justify-items` / `align-items: stretch`).
+#[derive(Clone, Copy)]
+struct GridCtx {
+    stretch_h: bool,
+    stretch_v: bool,
 }
 
 pub struct Styled {
@@ -107,7 +149,7 @@ enum Level {
 enum Piece {
     Text(String),
     Inline(Styled),
-    Item(Layer),
+    Item(Box<Layer>),
 }
 
 struct Flex {
@@ -119,6 +161,28 @@ struct Flex {
     justify: &'static str,
     align: &'static str,
     stretch: bool,
+}
+
+struct GridSpec {
+    cols: Vec<Value>,
+    rows: Vec<Value>,
+    gap: f64,
+    row_gap: f64,
+    stretch_h: bool,
+    stretch_v: bool,
+    justify: &'static str,
+    align: &'static str,
+}
+
+/// Most grid tracks read from a `grid-template-*` list.
+const MAX_TRACKS: usize = 100;
+
+fn is_grid(p: &Props) -> bool {
+    matches!(p.get("display").map(String::as_str), Some("grid" | "inline-grid"))
+}
+
+fn is_positioned(p: &Props) -> bool {
+    matches!(p.get("position").map(String::as_str), Some("relative" | "absolute" | "fixed" | "sticky"))
 }
 
 struct BoxModel {
@@ -180,10 +244,7 @@ impl Builder<'_> {
             Some("none") => (true, false, false),
             Some("flex") => (false, true, false),
             Some("inline-flex") => (false, true, true),
-            Some("grid" | "inline-grid") => {
-                self.warn.add("display: grid is not supported (laid out as a block)");
-                (false, false, d == Some("inline-grid"))
-            }
+            Some("inline-grid") => (false, false, true),
             Some("inline" | "inline-block") | None => (false, false, true),
             Some(_) => (false, false, false),
         }
@@ -317,6 +378,157 @@ impl Builder<'_> {
         }
     }
 
+    fn grid_spec(&mut self, p: &Props, inh: &Inh) -> GridSpec {
+        let items = |v: Option<&String>| match v.map(String::as_str) {
+            Some("center") => ("center", false),
+            Some("end" | "flex-end" | "self-end" | "right") => ("max", false),
+            Some("start" | "flex-start" | "self-start" | "left") => ("min", false),
+            _ => ("min", true),
+        };
+        let (justify, stretch_h) = items(p.get("justify-items"));
+        let (align, stretch_v) = items(p.get("align-items"));
+        GridSpec {
+            cols: self.tracks(p, "grid-template-columns", inh).unwrap_or_else(|| vec![json!("1fr")]),
+            rows: self.tracks(p, "grid-template-rows", inh).unwrap_or_default(),
+            gap: self.px(p, "column-gap", inh.size),
+            row_gap: self.px(p, "row-gap", inh.size),
+            stretch_h,
+            stretch_v,
+            justify,
+            align,
+        }
+    }
+
+    /// The tracks of a `grid-template-columns` / `-rows` value as FigCraft track values (px number,
+    /// `"2fr"`, `"auto"`); `None` without one.
+    fn tracks(&mut self, p: &Props, key: &str, inh: &Inh) -> Option<Vec<Value>> {
+        let v = p.get(key).filter(|v| *v != "none")?;
+        let mut out: Vec<Value> = Vec::new();
+        for tok in split_top(v, ' ').into_iter().filter(|t| !t.is_empty()) {
+            match tok.strip_prefix("repeat(").and_then(|t| t.strip_suffix(')')) {
+                Some(inner) => {
+                    let (n, list) = inner.split_once(',').unwrap_or(("", ""));
+                    match n.trim().parse::<usize>() {
+                        Ok(n) if (1..=MAX_TRACKS).contains(&n) => {
+                            let one: Vec<Value> =
+                                split_top(list.trim(), ' ').into_iter().filter(|t| !t.is_empty()).map(|t| self.track(t, inh)).collect();
+                            for _ in 0..n {
+                                out.extend(one.iter().cloned());
+                            }
+                        }
+                        _ => {
+                            self.warn.add("`repeat()` needs a plain count (auto-fill and auto-fit are not supported): read as one 1fr track");
+                            out.push(json!("1fr"));
+                        }
+                    }
+                }
+                None => out.push(self.track(tok, inh)),
+            }
+            if out.len() >= MAX_TRACKS {
+                self.warn.add(format!("more than {MAX_TRACKS} grid tracks: the rest is ignored"));
+                break;
+            }
+        }
+        out.truncate(MAX_TRACKS);
+        (!out.is_empty()).then_some(out)
+    }
+
+    fn track(&mut self, tok: &str, inh: &Inh) -> Value {
+        let t = tok.trim();
+        if t == "auto" {
+            return json!("auto");
+        }
+        if let Some(fr) = t.strip_suffix("fr").and_then(|n| n.parse::<f64>().ok()).filter(|n| n.is_finite() && *n >= 0.0) {
+            return json!(format!("{fr}fr"));
+        }
+        if let Some(inner) = t.strip_prefix("minmax(").and_then(|t| t.strip_suffix(')')) {
+            self.warn.add("`minmax()` grid tracks use their maximum");
+            return self.track(split_top(inner, ',').get(1).copied().unwrap_or("1fr"), inh);
+        }
+        match len(t, inh.size, self.vw) {
+            Some(Len::Px(n)) => json!(n.clamp(0.0, 100_000.0)),
+            _ => {
+                self.warn.add(format!("grid track `{t}` is not supported (read as 1fr)"));
+                json!("1fr")
+            }
+        }
+    }
+
+    /// `grid-column` / `grid-row` of an item as FigCraft's 0-based anchor and span.
+    fn grid_item(&mut self, p: &Props, ctx: &Ctx, layer: &mut Layer) {
+        if ctx.grid.is_none() {
+            return;
+        }
+        for (key, anchor, span) in [("grid-column", "gridColumn", "gridColumnSpan"), ("grid-row", "gridRow", "gridRowSpan")] {
+            let Some(v) = p.get(key) else { continue };
+            let (start, n) = match Self::grid_line(v) {
+                Some(placed) => placed,
+                None => {
+                    self.warn.add(format!("`{key}: {v}` is not supported (only a line number, `span n` and `a / b` of those work)"));
+                    continue;
+                }
+            };
+            if let Some(s) = start {
+                layer.props.insert(anchor.into(), json!(s));
+            }
+            if let Some(n) = n {
+                layer.props.insert(span.into(), json!(n));
+            }
+        }
+    }
+
+    /// (0-based start, span) of a `grid-column` / `grid-row` value; `None` when it is not understood.
+    fn grid_line(v: &str) -> Option<(Option<u32>, Option<u32>)> {
+        fn span(s: &str) -> Option<u32> {
+            s.trim().strip_prefix("span")?.trim().parse::<u32>().ok().filter(|n| (1..=1000).contains(n))
+        }
+        fn line(s: &str) -> Option<u32> {
+            s.trim().parse::<u32>().ok().filter(|n| (1..=1000).contains(n))
+        }
+        let (a, b) = v.split_once('/').map_or((v.trim(), None), |(a, b)| (a.trim(), Some(b.trim())));
+        Some(match (a, b) {
+            ("auto", None) => (None, None),
+            (a, None) => match (line(a), span(a)) {
+                (Some(l), _) => (Some(l - 1), None),
+                (_, Some(n)) => (None, Some(n)),
+                _ => return None,
+            },
+            (a, Some(b)) => match (line(a), line(b), span(b)) {
+                (Some(s), Some(e), _) if e > s => (Some(s - 1), Some(e - s)),
+                (Some(s), _, Some(n)) => (Some(s - 1), Some(n)),
+                (None, _, Some(n)) if a == "auto" => (None, Some(n)),
+                _ => return None,
+            },
+        })
+    }
+
+    /// The offsets of an absolutely positioned box inside a positioned parent; other `position`
+    /// values that cannot be represented are reported.
+    fn abs_of(&mut self, p: &Props, ctx: &Ctx, em: f64) -> Option<Abs> {
+        match p.get("position").map(String::as_str) {
+            Some("absolute") if ctx.pos => {
+                let mut off = |key: &str| match self.length(p, key, em) {
+                    Some(Len::Px(n)) => Some(n.clamp(-100_000.0, 100_000.0)),
+                    Some(Len::Pct(_)) => {
+                        self.warn.add(format!("`{key}` in % is not supported (ignored)"));
+                        None
+                    }
+                    _ => None,
+                };
+                Some(Abs { top: off("top"), right: off("right"), bottom: off("bottom"), left: off("left") })
+            }
+            Some("absolute" | "fixed") => {
+                self.warn.add("position: fixed, and absolute without a positioned parent, are laid out in the normal flow");
+                None
+            }
+            Some("relative") if SIDES.iter().any(|k| p.get(*k).is_some_and(|v| !matches!(len(v, em, self.vw), Some(Len::Px(0.0) | Len::Auto)))) => {
+                self.warn.add("position: relative offsets are not supported (the box stays where the flow puts it)");
+                None
+            }
+            _ => None,
+        }
+    }
+
     fn box_model(&mut self, p: &Props, inh: &Inh) -> BoxModel {
         let pad = ["top", "right", "bottom", "left"].map(|s| self.px(p, &format!("padding-{s}"), inh.size));
         let border = paint::border(p, inh.color, inh.size, self.vw, &mut self.warn);
@@ -350,6 +562,7 @@ impl Builder<'_> {
             _ if horiz => self.default_width(p, inh, add, ctx, inline),
             _ => match ctx.flex {
                 Some(Dir::Row) if ctx.stretch && !ctx.hug_v => Sz::Fill,
+                None if ctx.grid.is_some_and(|g| g.stretch_v) && !ctx.hug_v => Sz::Fill,
                 _ => Sz::Hug,
             },
         }
@@ -363,6 +576,7 @@ impl Builder<'_> {
             },
             Some(Dir::Col) if ctx.stretch && !ctx.hug => Sz::Fill,
             Some(Dir::Col) => Sz::Hug,
+            None if ctx.grid.is_some_and(|g| !g.stretch_h) => Sz::Hug,
             None if inline || ctx.hug => Sz::Hug,
             None => Sz::Fill,
         }
@@ -379,7 +593,7 @@ impl Builder<'_> {
             vars = hs.vars;
         }
         let st = self.styled(root, &vars);
-        let ctx = Ctx { flex: None, stretch: false, avail: Some(self.vw), hug: false, hug_v: false, depth: 0 };
+        let ctx = Ctx { flex: None, stretch: false, avail: Some(self.vw), hug: false, hug_v: false, depth: 0, pos: false, grid: None };
         let mut layer = self.element(&st, ctx, &inh, true)?;
         if layer.props.get("fills").and_then(Value::as_array).is_none_or(Vec::is_empty) {
             layer.props.insert("fills".into(), json!([self.canvas.map_or("#FFFFFF".to_string(), |c| c.to_css_hex())]));
@@ -418,8 +632,18 @@ impl Builder<'_> {
             layer.props.insert("cornerRadius".into(), r);
         }
         self.common_props(&st.props, &mut layer.props);
+        if let Some(a) = self.abs_of(&st.props, ctx, inh.size) {
+            // Out of the flow: no margin, and nothing to fill.
+            layer.abs = Some(a);
+            if layer.w == Sz::Fill {
+                layer.w = Sz::Hug;
+            }
+            return Some(layer);
+        }
         let m = self.margins(&st.props, inh.size);
-        Some(self.wrap_margin(layer, &m, ctx))
+        let mut out = self.wrap_margin(layer, &m, ctx);
+        self.grid_item(&st.props, ctx, &mut out);
+        Some(out)
     }
 
     fn dims(&mut self, st: &Styled, ctx: &Ctx, em: f64) -> (Sz, Sz) {
@@ -496,15 +720,19 @@ impl Builder<'_> {
         if let Some(done) = self.special(st, &tag, &ctx, parent) {
             return done;
         }
-        if matches!(st.props.get("position").map(String::as_str), Some("absolute" | "fixed")) {
-            self.warn.add("position: absolute and fixed are laid out in the normal flow");
-        }
         let inh = parent.derive(&st.props, self.vw);
+        let abs = self.abs_of(&st.props, &ctx, inh.size);
+        // An absolute box shrinks to its content and takes no margin; the flow does not see it.
+        let ctx = if abs.is_some() { Ctx { flex: None, grid: None, stretch: false, hug: true, hug_v: true, ..ctx } } else { ctx };
         let (_, is_flex, inline_level) = self.display(&st.props);
+        let grid = is_grid(&st.props).then(|| self.grid_spec(&st.props, &inh));
         let flex = self.flex_spec(&st.props, &inh, is_flex);
         let bx = self.box_model(&st.props, &inh);
         let (eh, ev) = bx.extra();
         let mut m = self.margins(&st.props, inh.size);
+        if abs.is_some() {
+            m = Margins { e: [0.0; 4], auto_h: false };
+        }
         let inline = inline_level && ctx.flex.is_none();
         let (mut w, mut h) = (self.axis(&st.props, true, &inh, eh, &ctx, inline), self.axis(&st.props, false, &inh, ev, &ctx, false));
         let mut pad = bx.pad;
@@ -521,7 +749,16 @@ impl Builder<'_> {
             return None;
         }
         let avail = self.inner_width(&st.props, w, &ctx, &m, eh);
-        let cctx = Ctx { flex: flex.dir, stretch: flex.stretch, avail, hug: w == Sz::Hug, hug_v: h == Sz::Hug, depth: ctx.depth + 1 };
+        let cctx = Ctx {
+            flex: flex.dir,
+            stretch: flex.stretch,
+            avail,
+            hug: w == Sz::Hug,
+            hug_v: h == Sz::Hug,
+            depth: ctx.depth + 1,
+            pos: is_positioned(&st.props),
+            grid: grid.as_ref().map(|g| GridCtx { stretch_h: g.stretch_h, stretch_v: g.stretch_v }),
+        };
         let mut kids = self.children(st.el, &inh, &cctx, &st.vars);
         if flex.rev {
             kids.reverse();
@@ -530,8 +767,10 @@ impl Builder<'_> {
         let fills = paint::fills(&st.props, inh.color, size, &mut self.warn);
         let mut props = Map::new();
         let boxy = self.frame_props(&st.props, &inh, &mut props, (&bx, &pad), size);
-        let lone_text = kids.len() == 1 && matches!(kids.first().map(|k| &k.kind), Some(Kind::Text));
-        let layer = if lone_text && !root && !boxy && fills.is_empty() && flex.dir.is_none() {
+        let lone_text = kids.len() == 1 && matches!(kids.first().map(|k| (&k.kind, k.abs)), Some((Kind::Text, None)));
+        let stretch =
+            flex.dir == Some(Dir::Row) && flex.stretch && !flex.wrap && h == Sz::Hug && kids.len() >= 2 && kids.iter().any(Layer::stretchable);
+        let layer = if lone_text && !root && !boxy && fills.is_empty() && flex.dir.is_none() && grid.is_none() {
             self.left += 1;
             let mut t = kids.remove(0);
             if w != Sz::Hug {
@@ -541,15 +780,24 @@ impl Builder<'_> {
             t
         } else {
             props.insert("fills".into(), json!(fills));
-            self.frame_layout(&mut props, &flex, &pad);
+            self.frame_layout(&mut props, &flex, grid.as_ref(), &pad);
             let mut l = Layer::new(Kind::Frame, Some(element_name(self.dom, st.el, &tag)));
-            (l.w, l.h, l.props, l.children) = (w, h, props, kids);
+            (l.w, l.h, l.props, l.children, l.stretch) = (w, h, props, kids, stretch);
             self.min_max(&st.props, &mut l.props, &inh, (eh, ev));
             l
         };
         let mut layer = layer;
         layer.avail = ctx.avail;
-        Some(if root { layer } else { self.wrap_margin(layer, &m, &ctx) })
+        if abs.is_some() {
+            layer.abs = abs;
+            if layer.w == Sz::Fill {
+                layer.w = Sz::Hug;
+            }
+            return Some(layer);
+        }
+        let mut out = if root { layer } else { self.wrap_margin(layer, &m, &ctx) };
+        self.grid_item(&st.props, &ctx, &mut out);
+        Some(out)
     }
 
     fn inner_width(&mut self, p: &Props, w: Sz, ctx: &Ctx, m: &Margins, eh: f64) -> Option<f64> {
@@ -597,7 +845,7 @@ impl Builder<'_> {
         boxy | out.contains_key("opacity") | out.contains_key("visible")
     }
 
-    fn frame_layout(&mut self, props: &mut Map<String, Value>, f: &Flex, pad: &[f64; 4]) {
+    fn frame_layout(&mut self, props: &mut Map<String, Value>, f: &Flex, grid: Option<&GridSpec>, pad: &[f64; 4]) {
         props.insert("layout".into(), json!(if f.dir == Some(Dir::Row) { "horizontal" } else { "vertical" }));
         props.insert("gap".into(), json!(f.gap));
         if f.wrap {
@@ -606,6 +854,20 @@ impl Builder<'_> {
         }
         props.insert("mainAlign".into(), json!(f.justify));
         props.insert("crossAlign".into(), json!(f.align));
+        if let Some(g) = grid {
+            props.insert("layout".into(), json!("grid"));
+            props.insert("gap".into(), json!(g.gap));
+            props.insert("crossGap".into(), json!(g.row_gap));
+            props.insert("columnTracks".into(), json!(g.cols));
+            // Without a template the rows are implicit: one to start with, more as items need them.
+            if g.rows.is_empty() {
+                props.insert("gridRows".into(), json!(1));
+            } else {
+                props.insert("rowTracks".into(), json!(g.rows));
+            }
+            props.insert("mainAlign".into(), json!(g.justify));
+            props.insert("crossAlign".into(), json!(g.align));
+        }
         if pad.iter().any(|v| *v > 0.0) {
             props.insert("padding".into(), json!(pad));
         }
@@ -678,17 +940,19 @@ impl Builder<'_> {
 
     fn child_element(&mut self, c: usize, run: &mut Vec<Piece>, out: &mut Vec<Layer>, inh: &Inh, ctx: &Ctx, vars: &Vars) {
         let tag = self.dom.tag(c).unwrap_or("");
-        if SKIP.contains(&tag) || self.dom.attr(c, "hidden").is_some() || (tag == "br" && ctx.flex.is_some()) {
+        let boxes = ctx.flex.is_some() || ctx.grid.is_some();
+        if SKIP.contains(&tag) || self.dom.attr(c, "hidden").is_some() || (tag == "br" && boxes) {
             return;
         }
         let st = self.styled(c, vars);
         if st.props.get("display").is_some_and(|d| d == "none") {
             return;
         }
-        let level = if ctx.flex.is_some() { Level::Block } else { self.level(&st) };
+        let absolute = ctx.pos && st.props.get("position").is_some_and(|p| p == "absolute");
+        let level = if boxes || absolute { Level::Block } else { self.level(&st) };
         match level {
             Level::Inline => run.push(Piece::Inline(st)),
-            Level::InlineBlock => run.extend(self.element(&st, *ctx, inh, false).map(Piece::Item)),
+            Level::InlineBlock => run.extend(self.element(&st, *ctx, inh, false).map(|l| Piece::Item(Box::new(l)))),
             Level::Block => {
                 self.flush(run, out, inh, ctx);
                 out.extend(self.element(&st, *ctx, inh, false));
@@ -710,7 +974,7 @@ impl Builder<'_> {
                 Piece::Inline(st) => self.collect_inline(&mut buf, &st, inh),
                 Piece::Item(l) => {
                     line.extend(self.text_layer(&mut buf, inh, ctx, wants_hug));
-                    line.push(l);
+                    line.push(*l);
                 }
             }
         }

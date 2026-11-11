@@ -125,10 +125,10 @@ fn dry_run_leaves_the_document_alone() {
 fn unsupported_features_are_listed_and_the_rest_is_still_imported() {
     let mut s = Session::new();
     let html = r#"<style>
-      @media (max-width: 600px) { p { color: red } }
+      @media print { p { color: red } }
       a:hover { color: blue }
       ul > li { margin: 0 }
-      .g { display: grid; grid-template-columns: 1fr 1fr; transform: rotate(3deg); }
+      .g { display: flex; transform: rotate(3deg); }
       .w { width: calc(100% - 10px); position: absolute; }
     </style>
     <div class="g"><p class="w">kept</p></div>
@@ -136,20 +136,7 @@ fn unsupported_features_are_listed_and_the_rest_is_still_imported() {
     <link rel="stylesheet" href="site.css">"#;
     let r = ex(&mut s, html);
     let w = warnings(&r).join("\n");
-    for needle in [
-        "@media",
-        "a:hover",
-        "ul > li",
-        "grid",
-        "grid-template-columns",
-        "transform",
-        "calc(100% - 10px)",
-        "position",
-        "<video>",
-        "<input>",
-        "<img>",
-        "stylesheet",
-    ] {
+    for needle in ["media query", "a:hover", "ul > li", "transform", "calc(100% - 10px)", "position", "<video>", "<input>", "<img>", "stylesheet"] {
         assert!(w.contains(needle), "no warning mentions {needle}: {w}");
     }
     assert!(!get(&mut s, "kept")["characters"].is_null());
@@ -327,4 +314,206 @@ fn tables_and_lists_import_as_frames() {
     let row = get(&mut s, "tr");
     assert_eq!(row["layout"]["mode"], json!("horizontal"), "{row}");
     assert_eq!(get(&mut s, "ul")["layout"]["padding"], json!([0.0, 0.0, 0.0, 40.0]));
+}
+
+fn doc_node(s: &Session, id: u64) -> figcraft_doc::Node {
+    s.doc().unwrap().node(figcraft_doc::NodeId(id)).unwrap().clone()
+}
+
+fn id_of(s: &mut Session, name: &str) -> u64 {
+    *ids(s, name).first().unwrap_or_else(|| panic!("no layer named {name}"))
+}
+
+fn doc_nodes_named(s: &mut Session, name: &str) -> Vec<figcraft_doc::Node> {
+    ids(s, name).into_iter().map(|id| doc_node(s, id)).collect()
+}
+
+#[test]
+fn css_grid_becomes_a_grid_layout_with_tracks_gaps_and_spans() {
+    use figcraft_doc::GridTrack;
+    let mut s = Session::new();
+    let r = ex(
+        &mut s,
+        "<style>.g div{background:#eee}.g{display:grid;grid-template-columns:100px 1fr repeat(2, minmax(0, 2fr)) auto;gap:8px 16px;padding:10px;width:800px}
+          .a{grid-column:span 2}.b{grid-column:2 / 4;grid-row:2}.c{grid-column:1 / span 2}.d{grid-column:5}</style>
+         <div class=g><div class=a>A</div><div class=b>B</div><div class=c>C</div><div class=d>D</div></div>",
+    );
+    assert_eq!(warnings(&r), ["`minmax()` grid tracks use their maximum"], "{r}");
+    let grid = get(&mut s, "div.g");
+    assert_eq!(
+        (grid["layout"]["mode"].clone(), grid["layout"]["gap"].clone(), grid["layout"]["crossGap"].clone()),
+        (json!("grid"), json!(16.0), json!(8.0)),
+        "{grid}"
+    );
+    let gid = id_of(&mut s, "div.g");
+    let al = doc_node(&s, gid).layout.unwrap();
+    assert_eq!(al.column_tracks, vec![GridTrack::fixed(100.0), GridTrack::fill(1.0), GridTrack::fill(2.0), GridTrack::fill(2.0), GridTrack::hug()]);
+    assert_eq!(al.grid_columns, 5);
+    let cl = |s: &mut Session, name: &str| {
+        let id = id_of(s, name);
+        doc_node(s, id).child_layout
+    };
+    let a = cl(&mut s, "div.a");
+    assert_eq!((a.grid_column, a.grid_column_span, a.grid_row), (None, 2, None));
+    let b = cl(&mut s, "div.b");
+    assert_eq!((b.grid_column, b.grid_column_span, b.grid_row), (Some(1), 2, Some(1)));
+    let c = cl(&mut s, "div.c");
+    assert_eq!((c.grid_column, c.grid_column_span), (Some(0), 2));
+    assert_eq!(cl(&mut s, "div.d").grid_column, Some(4));
+}
+
+#[test]
+fn grid_items_fill_their_cells() {
+    let mut s = Session::new();
+    ex(
+        &mut s,
+        "<div style='display:grid;grid-template-columns:100px 1fr 1fr;width:400px;height:60px'><style>div div{background:#eee}</style><div class=a>a</div><div class=b>b</div><div class=c>c</div></div>",
+    );
+    let at = |s: &mut Session, name: &str| {
+        let n = get(s, name);
+        (n["x"].as_f64().unwrap(), n["width"].as_f64().unwrap(), n["height"].as_f64().unwrap())
+    };
+    assert_eq!(at(&mut s, "div.a"), (0.0, 100.0, 60.0));
+    assert_eq!(at(&mut s, "div.b"), (100.0, 150.0, 60.0));
+    assert_eq!(at(&mut s, "div.c"), (250.0, 150.0, 60.0));
+    // Items that opt out of stretching keep their own size.
+    ex(
+        &mut s,
+        "<div style='display:grid;grid-template-columns:1fr 1fr;width:400px;justify-items:center'><div style='width:50px;height:20px;background:#f00' id=k></div></div>",
+    );
+    let k = get(&mut s, "div#k");
+    assert_eq!((k["x"].clone(), k["width"].clone()), (json!(75.0), json!(50.0)), "centred in a 200 px cell: {k}");
+}
+
+#[test]
+fn grid_values_that_are_not_understood_warn_and_stay_bounded() {
+    let mut s = Session::new();
+    let r = ex(
+        &mut s,
+        "<div style='display:grid;grid-template-columns:repeat(auto-fill, 100px) 5% bogus;grid-template-rows:repeat(99999, 1fr)'><p style='grid-column:span 0 / -1;grid-row:foo'>x</p></div>
+         <div style='display:grid;grid-template-columns:repeat(0,1fr) minmax(;'><i>y</i></div>
+         <div style='display:grid;grid-template-columns:none;grid-template-rows:200px auto'><i>z</i></div>",
+    );
+    let w = warnings(&r).join("\n");
+    for needle in ["auto-fill", "5%", "bogus", "grid-column", "grid-row"] {
+        assert!(w.contains(needle), "no warning mentions {needle}: {w}");
+    }
+    for g in doc_nodes_named(&mut s, "div") {
+        let al = g.layout.unwrap();
+        assert!((1..=100).contains(&al.grid_columns) && al.grid_rows <= 100, "{} x {}", al.grid_columns, al.grid_rows);
+    }
+}
+
+#[test]
+fn absolute_children_of_a_positioned_parent_leave_the_flow_at_their_offsets() {
+    let mut s = Session::new();
+    let r = ex(
+        &mut s,
+        "<div class=box style='position:relative;width:300px;height:200px'>
+           <div class=tl style='position:absolute;top:10px;left:20px;width:50px;height:30px'>t</div>
+           <div class=br style='position:absolute;right:10px;bottom:5px;width:40px;height:20px'>b</div>
+           <div class=wide style='position:absolute;left:10px;right:10px;top:0;height:10px'>w</div>
+           <div class=full style='position:absolute;inset:0'></div>
+           <p class=flow style='margin:0'>flow</p></div>",
+    );
+    assert!(warnings(&r).is_empty(), "{r}");
+    let pos = |s: &mut Session, name: &str| {
+        let n = get(s, name);
+        (n["absolute"].clone(), n["x"].as_f64().unwrap(), n["y"].as_f64().unwrap(), n["width"].as_f64().unwrap(), n["height"].as_f64().unwrap())
+    };
+    assert_eq!(pos(&mut s, "div.tl"), (json!(true), 20.0, 10.0, 50.0, 30.0));
+    assert_eq!(pos(&mut s, "div.br"), (json!(true), 250.0, 175.0, 40.0, 20.0), "anchored to the bottom right corner");
+    assert_eq!(pos(&mut s, "div.wide"), (json!(true), 10.0, 0.0, 280.0, 10.0), "left and right give the width");
+    assert_eq!(pos(&mut s, "div.full"), (json!(true), 0.0, 0.0, 300.0, 200.0), "inset: 0 covers the parent");
+    let br = get(&mut s, "div.br");
+    assert_eq!((br["constraints"]["horizontal"].clone(), br["constraints"]["vertical"].clone()), (json!("right"), json!("bottom")));
+    let wide = get(&mut s, "div.wide");
+    assert_eq!((wide["constraints"]["horizontal"].clone(), wide["constraints"]["vertical"].clone()), (json!("leftRight"), json!("top")));
+    let flow = get(&mut s, "flow");
+    assert!(flow.get("absolute").is_none(), "{flow}");
+    assert_eq!(flow["y"], json!(0.0), "the others do not leave room for absolute boxes: {flow}");
+}
+
+#[test]
+fn an_absolute_box_is_placed_from_the_size_a_hugging_parent_ends_up_with() {
+    let mut s = Session::new();
+    ex(
+        &mut s,
+        "<div class=p style='position:relative;padding:10px;display:inline-block'><span class=badge style='position:absolute;right:0;top:-4px;display:block;width:20px;height:20px;background:#f00'></span>hello world</div>",
+    );
+    let p = get(&mut s, "div.p");
+    let badge = get(&mut s, "span.badge");
+    let (pw, bw) = (p["width"].as_f64().unwrap(), badge["width"].as_f64().unwrap());
+    assert!(pw > 20.0, "the parent hugs its text, not the badge: {p}");
+    assert_eq!((badge["x"].as_f64().unwrap(), badge["y"].clone(), badge["absolute"].clone()), (pw - bw, json!(-4.0), json!(true)), "{badge}");
+}
+
+#[test]
+fn absolute_without_a_positioned_parent_and_relative_offsets_stay_warnings() {
+    let mut s = Session::new();
+    let r = ex(
+        &mut s,
+        "<div><p class=a style='position:absolute;top:5px'>a</p></div><div style='position:relative'><p class=b style='position:relative;top:5px'>b</p><p class=c style='position:fixed'>c</p></div>",
+    );
+    let w = warnings(&r).join("\n");
+    assert!(w.contains("absolute without a positioned parent"), "{w}");
+    assert!(w.contains("position: relative offsets"), "{w}");
+    for name in ["a", "b", "c"] {
+        assert!(get(&mut s, name).get("absolute").is_none(), "{name} stays in the flow");
+    }
+}
+
+#[test]
+fn flex_rows_stretch_their_boxes_to_the_tallest_even_when_the_row_hugs() {
+    let mut s = Session::new();
+    ex(
+        &mut s,
+        "<div class=row style='display:flex;gap:10px;width:400px'>
+           <div class=a style='flex:1;padding:8px;border:1px solid #000'>short</div>
+           <div class=b style='flex:1;padding:8px;border:1px solid #000'><div style='height:80px;background:#ccc'></div></div></div>",
+    );
+    let (a, b, row) = (get(&mut s, "div.a"), get(&mut s, "div.b"), get(&mut s, "div.row"));
+    assert!(b["height"].as_f64().unwrap() > 40.0, "{b}");
+    assert_eq!(a["height"], b["height"], "stretched to the tallest child: {a}");
+    assert_eq!(a["sizing"]["vertical"], json!("fill"), "{a}");
+    assert_eq!((row["sizing"]["vertical"].clone(), row["height"].clone()), (json!("fixed"), b["height"].clone()), "{row}");
+
+    ex(
+        &mut s,
+        "<div class=row2 style='display:flex;align-items:flex-start;width:400px'>
+           <div class=a2 style='flex:1;padding:8px;border:1px solid #000'>short</div>
+           <div class=b2 style='flex:1;padding:8px;border:1px solid #000'><div style='height:80px;background:#ccc'></div></div></div>",
+    );
+    let (a, b, row) = (get(&mut s, "div.a2"), get(&mut s, "div.b2"), get(&mut s, "div.row2"));
+    assert!(a["height"].as_f64().unwrap() < b["height"].as_f64().unwrap(), "flex-start does not stretch: {a}");
+    assert_eq!((a["sizing"]["vertical"].clone(), row["sizing"]["vertical"].clone()), (json!("hug"), json!("hug")));
+}
+
+#[test]
+fn media_queries_follow_the_viewport_width_option() {
+    let html = "<style>.r{display:flex;flex-direction:row} @media (max-width: 600px) { .r{flex-direction:column} } @media (min-width: 601px) and (max-width: 2000px) { .r{gap:7px} }</style><div class=r><i>a</i><i>b</i></div>";
+    let mut s = Session::new();
+    let narrow = s.execute("import.html", &json!({"html": html, "width": 600})).unwrap();
+    assert!(warnings(&narrow).is_empty(), "{narrow}");
+    let r = get(&mut s, "div.r");
+    assert_eq!((r["layout"]["mode"].clone(), r["layout"]["gap"].clone()), (json!("vertical"), json!(0.0)), "{r}");
+    s.execute("import.html", &json!({"html": html, "width": 601})).unwrap();
+    let wide = doc_nodes_named(&mut s, "div.r");
+    let gapped = wide.iter().filter(|n| n.layout.as_ref().is_some_and(|l| l.gap == 7.0)).count();
+    assert_eq!(gapped, 1, "601 px takes the second query and not the first");
+}
+
+#[test]
+fn first_last_and_nth_child_select_by_place() {
+    let mut s = Session::new();
+    let r = ex(
+        &mut s,
+        "<style>li:first-child{color:#ff0000} li:last-child{color:#00ff00} li:nth-child(2){color:#0000ff} li:nth-child(2n){color:#000000}</style>
+         <ul><li>one</li><li>two</li><li>three</li></ul>",
+    );
+    let colour = |s: &mut Session, t: &str| get(s, t)["fills"][0]["color"].clone();
+    assert_eq!(colour(&mut s, "one"), json!("#FF0000"));
+    assert_eq!(colour(&mut s, "two"), json!("#0000FF"));
+    assert_eq!(colour(&mut s, "three"), json!("#00FF00"));
+    assert!(warnings(&r).iter().any(|w| w.contains("nth-child(2n)")), "only plain numbers: {r}");
 }

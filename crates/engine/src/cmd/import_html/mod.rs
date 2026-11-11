@@ -21,7 +21,7 @@ use serde_json::{Map, Value, json};
 use super::CommandSpec;
 use crate::params::{get, num, opt_id, string};
 use crate::{EngineError, Result, Session, bad, spec};
-use build::{Builder, Kind, Layer, Sz};
+use build::{Abs, Builder, Kind, Layer, Sz};
 
 /// Largest page accepted, in bytes.
 pub const MAX_INPUT: usize = 2 * 1024 * 1024;
@@ -30,11 +30,30 @@ pub const MAX_LAYERS: usize = 5000;
 const DEFAULT_WIDTH: f64 = 1440.0;
 const MAX_WARNINGS: usize = 100;
 
-/// The warnings, each once.
+/// The warnings, each once, and the work that waits until every layer exists (it is carried here
+/// because the warnings go wherever the layers are placed).
 #[derive(Default)]
 pub struct Warn {
     pub list: Vec<String>,
     seen: HashSet<String>,
+    post: Post,
+}
+
+/// An absolutely positioned layer: its parent, its offsets and whether its size is its own.
+struct AbsPlace {
+    parent: NodeId,
+    child: NodeId,
+    at: Abs,
+    w_fixed: bool,
+    h_fixed: bool,
+}
+
+/// Placement that needs the layers' laid-out sizes.
+#[derive(Default)]
+struct Post {
+    abs: Vec<AbsPlace>,
+    /// Rows that hug their height, with the children that fill it once it is known.
+    stretch: Vec<Vec<NodeId>>,
 }
 
 impl Warn {
@@ -52,7 +71,7 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![spec!(
         "import.html",
         "Import HTML",
-        "{html? (a page or fragment, at most 2 MB), path? (an .html file inside the allowed read roots; one of html and path is required), parent? (a frame or the page: default the open page), x?, y? (default: beside the existing layers), width? (viewport width in px, default 1440)}  imports static HTML + CSS as layers, one undo step: block flow becomes a vertical auto layout frame, display:flex an auto layout frame (flex-direction, gap, justify-content, align-items, flex-wrap, flex-grow), text a text layer, <img> with a data: URI an image, inline <svg> vector layers. <style> blocks and style attributes apply (tag, .class, #id and descendant selectors; custom properties). Supported properties: display (block, flex, inline, none), width/height/min/max in px, % and em, margin, padding, background(-color, linear-gradient), border, border-radius, color, font, line-height, text-align, text-transform, letter-spacing, text-decoration, opacity, box-shadow, overflow. Nothing is fetched: other images become grey rectangles. Never fails on unsupported input: → {rootId, created (layers), warnings: [unsupported property, tag or selector, ...], truncated?} at most 5000 layers; dryRun previews",
+        "{html? (a page or fragment, at most 2 MB), path? (an .html file inside the allowed read roots; one of html and path is required), parent? (a frame or the page: default the open page), x?, y? (default: beside the existing layers), width? (viewport width in px, default 1440)}  imports static HTML + CSS as layers, one undo step: block flow becomes a vertical auto layout frame, display:flex an auto layout frame (flex-direction, gap, justify-content, align-items, flex-wrap, flex-grow), text a text layer, <img> with a data: URI an image, inline <svg> vector layers. <style> blocks and style attributes apply (tag, .class, #id, descendant, :first-child, :last-child and :nth-child(n) selectors; custom properties; @media with max-width/min-width, evaluated at the viewport width). Supported properties: display (block, flex, grid, inline, none), grid-template-columns/rows (px, fr, auto, repeat(n, ...)), gap, grid-column/grid-row (line numbers and spans), position absolute/relative with top/right/bottom/left/inset inside a positioned parent, align-items (stretch fills the cross axis of rows), width/height/min/max in px, % and em, margin, padding, background(-color, linear-gradient), border, border-radius, color, font, line-height, text-align, text-transform, letter-spacing, text-decoration, opacity, box-shadow, overflow. Nothing is fetched: other images become grey rectangles. Never fails on unsupported input: → {rootId, created (layers), warnings: [unsupported property, tag or selector, ...], truncated?} at most 5000 layers; dryRun previews",
         true,
         import_html
     )]
@@ -106,6 +125,7 @@ fn import_html(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let mut warn = warn;
     let id = place(s, &layer, parent, pos, &mut warn)?;
+    finish(s, id, std::mem::take(&mut warn.post))?;
     s.ds_mut()?.selection = vec![id];
     let created = count(s.doc()?, id);
     let mut out = json!({"rootId": id, "created": created, "warnings": warn.list});
@@ -125,7 +145,7 @@ fn convert(html: &str, vw: f64) -> (Option<Layer>, Warn, bool) {
     let mut rules = Vec::new();
     for i in 0..dom.nodes.len() {
         match dom.tag(i) {
-            Some("style") => css::parse_sheet(&dom.text_of(i), &mut rules, &mut warn),
+            Some("style") => css::parse_sheet(&dom.text_of(i), &mut rules, &mut warn, vw),
             Some("link") if dom.attr(i, "rel").is_some_and(|r| r.to_ascii_lowercase().contains("stylesheet")) => {
                 warn.add("<link rel=stylesheet> is not fetched (style sheets must be in <style> blocks)");
             }
@@ -192,10 +212,99 @@ fn place(s: &mut Session, l: &Layer, parent: NodeId, at: (f64, f64), warn: &mut 
             create(s, "text", l, parent, at, props, Some(&l.text))?
         }
     };
+    let mut fills = Vec::new();
     for child in &l.children {
-        place(s, child, id, (0.0, 0.0), warn)?;
+        let cid = place(s, child, id, (0.0, 0.0), warn)?;
+        if let Some(at) = child.abs {
+            warn.post.abs.push(AbsPlace { parent: id, child: cid, at, w_fixed: fixed(child.w).is_some(), h_fixed: fixed(child.h).is_some() });
+        } else if l.stretch && child.stretchable() {
+            fills.push(cid);
+        }
+    }
+    if !fills.is_empty() {
+        warn.post.stretch.push(fills);
     }
     Ok(id)
+}
+
+/// Lay out the frames under `root` bottom-up, as the engine does after every command.
+fn layout_subtree(doc: &mut figcraft_doc::Document, root: NodeId) {
+    let (mut frames, mut stack) = (Vec::new(), vec![(root, 0usize)]);
+    while let Some((id, depth)) = stack.pop() {
+        let Some(n) = doc.node(id) else { continue };
+        if n.layout.is_some() {
+            frames.push((depth, id));
+        }
+        stack.extend(n.children.iter().map(|c| (*c, depth + 1)));
+    }
+    frames.sort_by_key(|(depth, _)| std::cmp::Reverse(*depth));
+    for (_, id) in frames {
+        figcraft_layout::layout_frame(doc, id, &crate::measure::TextMeasure);
+    }
+}
+
+fn props_of(v: Value) -> Map<String, Value> {
+    match v {
+        Value::Object(m) => m,
+        _ => Map::new(),
+    }
+}
+
+/// Work that needs sizes: absolute layers leave the flow and are placed from their parent's edges,
+/// and rows that hug their height are fixed at their tallest child's height so that the children
+/// can fill it (a hugging parent can't be filled).
+fn finish(s: &mut Session, root: NodeId, post: Post) -> Result<()> {
+    const CMD: &str = "import.html";
+    if post.abs.is_empty() && post.stretch.is_empty() {
+        return Ok(());
+    }
+    for p in &post.abs {
+        super::props::apply(CMD, s.doc_mut()?, p.child, &props_of(json!({"absolute": true})))?;
+    }
+    layout_subtree(s.doc_mut()?, root);
+    // Filling a hugging row fixes it at the height it has now.
+    for kids in &post.stretch {
+        for k in kids {
+            super::props::apply(CMD, s.doc_mut()?, *k, &props_of(json!({"sizingV": "fill"})))?;
+        }
+    }
+    for p in &post.abs {
+        let doc = s.doc_mut()?;
+        let size = |id: NodeId| doc.node(id).map_or((0.0, 0.0), |n| (n.width, n.height));
+        let ((pw, ph), (cw, ch)) = (size(p.parent), size(p.child));
+        let mut props = json!({});
+        let axis = |lo: Option<f64>, hi: Option<f64>, parent: f64, own: f64, fixed: bool| {
+            let size = (!fixed && lo.is_some() && hi.is_some()).then(|| (parent - lo.unwrap_or(0.0) - hi.unwrap_or(0.0)).max(0.0));
+            let at = match (lo, hi) {
+                (Some(lo), _) => lo,
+                (None, Some(hi)) => parent - hi - size.unwrap_or(own),
+                _ => 0.0,
+            };
+            (at, size)
+        };
+        let (x, w) = axis(p.at.left, p.at.right, pw, cw, p.w_fixed);
+        let (y, h) = axis(p.at.top, p.at.bottom, ph, ch, p.h_fixed);
+        props["x"] = json!(x);
+        props["y"] = json!(y);
+        if let Some(w) = w {
+            props["width"] = json!(w);
+        }
+        if let Some(h) = h {
+            props["height"] = json!(h);
+        }
+        // Anchored to the edge it is offset from; to both edges when it is offset from both.
+        let pick = |lo: Option<f64>, hi: Option<f64>, [first, last, both]: [&'static str; 3]| match (lo, hi) {
+            (Some(_), Some(_)) => both,
+            (None, Some(_)) => last,
+            _ => first,
+        };
+        props["constraints"] = json!({
+            "horizontal": pick(p.at.left, p.at.right, ["left", "right", "leftRight"]),
+            "vertical": pick(p.at.top, p.at.bottom, ["top", "bottom", "topBottom"]),
+        });
+        super::props::apply(CMD, doc, p.child, &props_of(props))?;
+    }
+    Ok(())
 }
 
 fn create(s: &mut Session, ty: &str, l: &Layer, parent: NodeId, at: (f64, f64), props: Map<String, Value>, text: Option<&str>) -> Result<NodeId> {
@@ -222,7 +331,11 @@ fn node_id(r: &Value) -> Result<NodeId> {
 
 /// The keys of `props` that make sense on a layer the importer sizes itself.
 fn visual_props(props: &Map<String, Value>) -> Map<String, Value> {
-    props.iter().filter(|(k, _)| matches!(k.as_str(), "cornerRadius" | "opacity" | "visible")).map(|(k, v)| (k.clone(), v.clone())).collect()
+    props
+        .iter()
+        .filter(|(k, _)| matches!(k.as_str(), "cornerRadius" | "opacity" | "visible" | "gridColumn" | "gridColumnSpan" | "gridRow" | "gridRowSpan"))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
 }
 
 fn place_image(s: &mut Session, l: &Layer, b64: &str, parent: NodeId, at: (f64, f64), warn: &mut Warn) -> Result<NodeId> {
@@ -243,6 +356,8 @@ fn place_image(s: &mut Session, l: &Layer, b64: &str, parent: NodeId, at: (f64, 
                 avail: l.avail,
                 props: l.props.clone(),
                 children: Vec::new(),
+                abs: None,
+                stretch: false,
             };
             rect.props.insert("fill".into(), json!("#E5E7EB"));
             (rect.w, rect.h) = (Sz::Fixed(fixed(l.w).unwrap_or(300.0)), Sz::Fixed(fixed(l.h).unwrap_or(150.0)));
@@ -290,6 +405,8 @@ fn place_svg(s: &mut Session, l: &Layer, src: &str, parent: NodeId, at: (f64, f6
                 avail: l.avail,
                 props: visual_props(&l.props),
                 children: Vec::new(),
+                abs: None,
+                stretch: false,
             };
             rect.props.insert("fill".into(), json!("#E5E7EB"));
             place(s, &rect, parent, at, warn)

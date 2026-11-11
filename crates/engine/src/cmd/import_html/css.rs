@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use super::Warn;
 use super::dom::Dom;
+use super::style::{Len, len};
 
 /// Most rules kept from all style sheets.
 const MAX_RULES: usize = 10_000;
@@ -17,11 +18,20 @@ pub struct Decl {
     pub important: bool,
 }
 
+/// A structural pseudo-class: the element's place among its element siblings (1-based).
+#[derive(Clone, Copy)]
+enum Pseudo {
+    First,
+    Last,
+    Nth(usize),
+}
+
 #[derive(Default)]
 struct Compound {
     tag: Option<String>,
     id: Option<String>,
     classes: Vec<String>,
+    pseudos: Vec<Pseudo>,
 }
 
 pub struct Selector {
@@ -120,8 +130,37 @@ fn skip_at_rule(s: &str) -> &str {
     }
 }
 
-/// Append the rules of the style sheet `src` to `rules`.
-pub fn parse_sheet(src: &str, rules: &mut Vec<Rule>, warn: &mut Warn) {
+/// Deepest `@media` nesting evaluated.
+const MAX_MEDIA_DEPTH: usize = 3;
+
+/// Whether a media query holds at viewport width `vw`: `None` when it uses anything but
+/// `all`/`screen` and `(min-width: n)` / `(max-width: n)` joined by `and`.
+fn media_matches(query: &str, vw: f64) -> Option<bool> {
+    let q = query.trim().to_ascii_lowercase();
+    let mut holds = true;
+    for part in q.split(" and ") {
+        match part.trim() {
+            "all" | "screen" | "only screen" => {}
+            part => {
+                let (feature, value) = part.strip_prefix('(')?.strip_suffix(')')?.split_once(':')?;
+                let Some(Len::Px(px)) = len(value.trim(), 16.0, vw) else { return None };
+                match feature.trim() {
+                    "max-width" => holds &= vw <= px,
+                    "min-width" => holds &= vw >= px,
+                    _ => return None,
+                }
+            }
+        }
+    }
+    Some(holds)
+}
+
+/// Append the rules of the style sheet `src` to `rules`; `@media` blocks that hold at width `vw` apply.
+pub fn parse_sheet(src: &str, rules: &mut Vec<Rule>, warn: &mut Warn, vw: f64) {
+    sheet(src, rules, warn, vw, 0);
+}
+
+fn sheet(src: &str, rules: &mut Vec<Rule>, warn: &mut Warn, vw: f64, depth: usize) {
     let src = strip_comments(src);
     let mut rest = src.as_str();
     loop {
@@ -134,6 +173,20 @@ pub fn parse_sheet(src: &str, rules: &mut Vec<Rule>, warn: &mut Warn) {
         }
         if let Some(at) = rest.strip_prefix('@') {
             let name: String = at.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+            if name == "media"
+                && depth < MAX_MEDIA_DEPTH
+                && let Some(open) = rest.find('{')
+            {
+                let query = rest.get("@media".len()..open).unwrap_or("");
+                let (body, after) = block(rest.get(open..).unwrap_or(""));
+                match media_matches(query, vw) {
+                    Some(true) => sheet(body, rules, warn, vw, depth + 1),
+                    Some(false) => {}
+                    None => warn.add(format!("media query `{}` is not supported (skipped; only min-width and max-width work)", query.trim())),
+                }
+                rest = after;
+                continue;
+            }
             if name != "charset" {
                 warn.add(format!("at-rule @{name} is not supported (skipped)"));
             }
@@ -151,8 +204,10 @@ pub fn parse_sheet(src: &str, rules: &mut Vec<Rule>, warn: &mut Warn) {
                     let order = rules.len();
                     rules.push(Rule { selector, decls: decls_of(), order });
                 }
-                None => warn
-                    .add(format!("selector `{}` is not supported (rule skipped; only tag, .class, #id and descendant selectors work)", text.trim())),
+                None => warn.add(format!(
+                    "selector `{}` is not supported (rule skipped; only tag, .class, #id, descendant, :first-child, :last-child and :nth-child(n) selectors work)",
+                    text.trim()
+                )),
             }
         }
     }
@@ -177,15 +232,35 @@ fn parse_compound(text: &str) -> Option<Compound> {
     }
     while !rest.is_empty() {
         let (kind, r) = (rest.chars().next()?, rest.get(1..)?);
-        let (name, r) = ident(r)?;
+        let (name, mut r) = ident(r)?;
         match kind {
             '.' => c.classes.push(name.to_string()),
             '#' if c.id.is_none() => c.id = Some(name.to_string()),
+            ':' => c.pseudos.push(match name {
+                "first-child" => Pseudo::First,
+                "last-child" => Pseudo::Last,
+                "nth-child" => {
+                    // A plain number only: `(3)`, not `(2n+1)` or `(odd)`.
+                    let close = r.strip_prefix('(')?.find(')')?;
+                    let digits = r.get(1..close + 1)?.trim();
+                    let n = digits.chars().all(|c| c.is_ascii_digit()).then(|| digits.parse::<usize>().ok()).flatten().filter(|n| *n >= 1)?;
+                    r = r.get(close + 2..)?;
+                    Pseudo::Nth(n)
+                }
+                _ => return None,
+            }),
             _ => return None,
         }
         rest = r;
     }
     Some(c)
+}
+
+/// (position, count) of `el` among the element children of its parent.
+fn sibling_place(dom: &Dom, el: usize) -> (usize, usize) {
+    let Some(parent) = dom.parent(el) else { return (1, 1) };
+    let siblings = || dom.children(parent).iter().filter(|c| dom.tag(**c).is_some());
+    (siblings().position(|c| *c == el).map_or(1, |i| i + 1), siblings().count())
 }
 
 fn parse_selector(text: &str) -> Option<Selector> {
@@ -194,7 +269,9 @@ fn parse_selector(text: &str) -> Option<Selector> {
         return None;
     }
     let count = |f: fn(&Compound) -> usize| parts.iter().map(f).sum::<usize>() as u32;
-    let specificity = count(|c| usize::from(c.id.is_some())) * 10_000 + count(|c| c.classes.len()) * 100 + count(|c| usize::from(c.tag.is_some()));
+    let specificity = count(|c| usize::from(c.id.is_some())) * 10_000
+        + count(|c| c.classes.len() + c.pseudos.len()) * 100
+        + count(|c| usize::from(c.tag.is_some()));
     Some(Selector { parts, specificity })
 }
 
@@ -206,7 +283,18 @@ fn compound_matches(dom: &Dom, el: usize, c: &Compound) -> bool {
         return false;
     }
     let class_attr = dom.attr(el, "class").unwrap_or("");
-    c.classes.iter().all(|want| class_attr.split_whitespace().any(|have| have == want))
+    if !c.classes.iter().all(|want| class_attr.split_whitespace().any(|have| have == want)) {
+        return false;
+    }
+    if c.pseudos.is_empty() {
+        return true;
+    }
+    let (pos, count) = sibling_place(dom, el);
+    c.pseudos.iter().all(|p| match p {
+        Pseudo::First => pos == 1,
+        Pseudo::Last => pos == count,
+        Pseudo::Nth(n) => pos == *n,
+    })
 }
 
 fn selector_matches(dom: &Dom, el: usize, sel: &Selector) -> bool {
@@ -290,9 +378,52 @@ mod tests {
     use super::*;
 
     fn sheet(src: &str) -> (Index, Vec<String>) {
+        sheet_at(src, 1440.0)
+    }
+
+    fn sheet_at(src: &str, vw: f64) -> (Index, Vec<String>) {
         let (mut rules, mut warn) = (Vec::new(), Warn::default());
-        parse_sheet(src, &mut rules, &mut warn);
+        parse_sheet(src, &mut rules, &mut warn, vw);
         (Index::new(rules), warn.list)
+    }
+
+    fn matched(ix: &Index, dom: &Dom, el: usize) -> Vec<String> {
+        let mut got: Vec<_> = ix.matching(dom, el).iter().map(|r| r.decls[0].value.clone()).collect();
+        got.sort();
+        got
+    }
+
+    #[test]
+    fn structural_pseudo_classes_match_by_place_among_element_siblings() {
+        let dom = parse("<ul><li>a</li> text <li>b</li><li>c</li></ul>");
+        let (ix, warns) = sheet("li:first-child{a:1} li:last-child{a:2} li:nth-child(2){a:3} :nth-child(3){a:4} li:nth-child(4){a:5}");
+        assert!(warns.is_empty(), "{warns:?}");
+        let lis: Vec<usize> = dom.children(dom.find("ul").unwrap()).iter().copied().filter(|c| dom.tag(*c) == Some("li")).collect();
+        assert_eq!(matched(&ix, &dom, lis[0]), ["1"]);
+        assert_eq!(matched(&ix, &dom, lis[1]), ["3"]);
+        assert_eq!(matched(&ix, &dom, lis[2]), ["2", "4"]);
+        let (_, warns) = sheet("li:nth-child(2n+1){a:1} li:nth-child(odd){a:1} li:nth-child(){a:1} li:hover{a:1} li:nth-child(0){a:1}");
+        assert_eq!(warns.len(), 5, "{warns:?}");
+        assert_eq!(sheet("li:first-child.x{a:1}").0.rules[0].specificity(), 201);
+    }
+
+    #[test]
+    fn media_queries_apply_by_viewport_width() {
+        let css = "p{a:base} @media (max-width: 800px) { p{a:narrow} } @media screen and (min-width: 1000px) and (max-width: 1500px) { p{a:wide} } @media (min-width: 100em) { p{a:em} }";
+        let dom = parse("<p>x</p>");
+        let p = dom.find("p").unwrap();
+        let (ix, warns) = sheet_at(css, 700.0);
+        assert!(warns.is_empty(), "{warns:?}");
+        assert_eq!(matched(&ix, &dom, p), ["base", "narrow"]);
+        assert_eq!(matched(&sheet_at(css, 1440.0).0, &dom, p), ["base", "wide"]);
+        assert_eq!(matched(&sheet_at(css, 1600.0).0, &dom, p), ["base", "em"]);
+        // The boundary counts as inside, and a nested query applies too.
+        assert_eq!(matched(&sheet_at("@media (max-width: 800px) { @media (min-width: 800px) { p{a:both} } }", 800.0).0, &dom, p), ["both"]);
+        let (ix, warns) =
+            sheet_at("@media print { p{a:1} } @media (orientation: portrait) { p{a:1} } @media (max-width: 1px) { p{a:1} } @media { p{a:1} }", 100.0);
+        assert!(ix.rules.is_empty());
+        assert_eq!(warns.len(), 3, "{warns:?}");
+        assert!(warns.iter().all(|w| w.contains("media query")));
     }
 
     #[test]
@@ -320,11 +451,11 @@ mod tests {
     #[test]
     fn unsupported_rules_warn_and_the_rest_still_applies() {
         let (ix, warns) = sheet(
-            "/* c */ @media (max-width: 1px) { p { color: red } } a:hover { x: y } ul > li { x: y } @import url(x.css); h1, h2 { margin: 0 } @charset 'utf-8';",
+            "/* c */ @media print { p { color: red } } a:hover { x: y } ul > li { x: y } @import url(x.css); h1, h2 { margin: 0 } @charset 'utf-8';",
         );
         assert_eq!(ix.rules.len(), 2, "h1 and h2");
         assert_eq!(warns.len(), 4, "{warns:?}");
-        assert!(warns[0].contains("@media") && warns[1].contains("a:hover") && warns[2].contains("ul > li") && warns[3].contains("@import"));
+        assert!(warns[0].contains("media query") && warns[1].contains("a:hover") && warns[2].contains("ul > li") && warns[3].contains("@import"));
     }
 
     #[test]

@@ -52,6 +52,15 @@ const KNOWN: &[&str] = &[
     "overflow",
     "visibility",
     "position",
+    "top",
+    "right",
+    "bottom",
+    "left",
+    "grid-template-columns",
+    "grid-template-rows",
+    "grid-column",
+    "grid-row",
+    "justify-items",
 ];
 const SIDES: [&str; 4] = ["top", "right", "bottom", "left"];
 const CORNERS: [&str; 4] = ["top-left", "top-right", "bottom-right", "bottom-left"];
@@ -88,10 +97,6 @@ fn is_silent(name: &str) -> bool {
         "accent-color",
         "touch-action",
         "isolation",
-        "top",
-        "left",
-        "right",
-        "bottom",
         "clear",
         "table-layout",
         "border-collapse",
@@ -123,7 +128,6 @@ fn is_silent(name: &str) -> bool {
         "contain",
         "content-visibility",
         "mask",
-        "inset",
     ];
     NAMES.contains(&name) || PREFIXES.iter().any(|p| name.starts_with(p))
 }
@@ -254,6 +258,7 @@ fn set_decl(props: &mut Props, name: &str, value: &str) {
         "border" => SIDES.iter().for_each(|s| border_side(props, s, value)),
         "border-top" | "border-right" | "border-bottom" | "border-left" => border_side(props, name.trim_start_matches("border-"), value),
         "border-radius" => radius(props, value),
+        "inset" => box4(props, value, str::to_string),
         "background" => background(props, value),
         "background-image" => put(props, name, split_top(value, ',').first().copied().unwrap_or("none").trim()),
         "flex" => flex(props, value),
