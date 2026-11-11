@@ -19,6 +19,8 @@ mod bulk_ops_tools;
 mod bulk_safety_tool;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod cancel_progress;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod changesets_tool;
 #[allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod common;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::disallowed_methods)]

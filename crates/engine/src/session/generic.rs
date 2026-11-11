@@ -217,7 +217,14 @@ impl Session {
         }
         let changed = before.and_then(|(uid, b)| {
             let ds = self.docs.iter().find(|d| d.uid == uid)?;
-            with.then(|| safety::summary(&b, &ds.doc, &targets, !matches!(id, "command.batch" | "command.each" | "instances.fill" | "script.run")))
+            with.then(|| {
+                let mut c = safety::summary(&b, &ds.doc, &targets, !matches!(id, "command.batch" | "command.each" | "instances.fill" | "script.run"));
+                // The open changeset (changeset.begin) is named on every edit made inside it.
+                if let Some(label) = ds.changesets.open_label() {
+                    c["changeset"] = serde_json::json!(label);
+                }
+                c
+            })
         });
         Ok((value, changed))
     }

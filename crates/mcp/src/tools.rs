@@ -219,6 +219,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "compare_version",
     "check_changes",
     "visual_diff",
+    "changesets",
     "find_similar",
     "propagate_change",
     "fill_instances",
@@ -321,6 +322,7 @@ const DOCUMENT_TOOLS: &[&str] = &[
     "compare_version",
     "check_changes",
     "visual_diff",
+    "changesets",
     "find_similar",
     "propagate_change",
     "fill_instances",
@@ -1019,6 +1021,21 @@ fn tools() -> Vec<Value> {
                 &["since"],
             ),
             true,
+        ),
+        tool(
+            "changesets",
+            "Name, list and revert changes",
+            "A change journal for one task. `begin {label}` opens a changeset: until `end`, the edits belong to one named logical change, and every mutating result's `changed` summary carries its label as `changeset`. `end` closes it: {id, label, steps, layers, created, changed, deleted}. `list` shows the open one and the finished ones (up to 50 per file, this session only), newest first, each with `conflicts` when later edits touched the same layers. `revert {id}` undoes just that change while keeping later ones (engine `changeset.revert`, one undo step): layers it edited go back, layers it deleted come back in place, layers it created go. It is refused, naming the layers, when a later change touched one of them: revert that later change first, or go back to a `checkpoint` with restore_version. Layers only; styles and variables a changeset changed stay (the result has a `note`). One changeset is open at a time.",
+            obj(
+                json!({
+                    "action": json!({"type": "string", "enum": ["begin", "end", "list", "revert"], "description": "What to do"}),
+                    "label": string("begin: what the change does, 1 to 100 characters"),
+                    "id": int("revert: the changeset id (list)"),
+                    "limit": int("list: changesets to list (default 20, up to 100)"),
+                }),
+                &["action"],
+            ),
+            false,
         ),
         tool(
             "find_similar",
@@ -1821,6 +1838,7 @@ fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, doc_target:
         "compare_version" => compare_version(b, a),
         "check_changes" => check_changes(b, a),
         "visual_diff" => visual_diff(b, a),
+        "changesets" => changesets(b, a),
         "find_similar" => find_similar(b, a),
         "propagate_change" => propagate_change(b, a),
         "fill_instances" => exec_tool(
@@ -2984,6 +3002,18 @@ fn check_changes(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResu
         params["root"] = json!(id_arg(root)?);
     }
     exec(b, "check.changes", params).map(|v| ToolResult::json(&v))
+}
+
+/// `changesets`: the change journal (`changeset.begin`, `.end`, `.list`, `.revert`).
+fn changesets(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
+    let (cmd, keys): (&str, &[&str]) = match req_s(a, "action")? {
+        "begin" => ("changeset.begin", &["label"]),
+        "end" => ("changeset.end", &[]),
+        "list" => ("changeset.list", &["limit"]),
+        "revert" => ("changeset.revert", &["id"]),
+        other => return Err(format!("`action` must be begin, end, list or revert (got `{other}`)")),
+    };
+    exec(b, cmd, pick(a, keys)).map(|v| ToolResult::json(&v))
 }
 
 /// `visual_diff`: `visual.diff`, the frames whose pixels changed since a checkpoint.

@@ -6,6 +6,7 @@ pub mod adjust;
 pub mod arrange;
 pub mod assertion;
 pub mod boardread;
+pub mod changeset;
 pub mod comment;
 pub mod component;
 pub mod create;
@@ -124,6 +125,7 @@ fn registry() -> &'static Registry {
         list.extend(each::specs());
         list.extend(instfill::specs());
         list.extend(safety::specs());
+        list.extend(changeset::specs());
         list.extend(lintlayout::specs());
         list.extend(docdiff::specs());
         list.extend(summary::specs());
