@@ -220,6 +220,8 @@ pub const TOOL_NAMES: &[&str] = &[
     "get_design_guidelines",
     "design_system_index",
     "audit_tokens",
+    "extract_text",
+    "apply_text",
     "lint_layout",
     "get_code_connect_map",
     "add_code_connect_map",
@@ -234,7 +236,7 @@ pub const TOOL_NAMES: &[&str] = &[
 /// The tools that take `documents`: one call per file (`"all"` or a list of ids), at most
 /// [`MAX_DOCUMENTS`] files.
 /// Write tools that take `ifRev`.
-const REV_GUARDED_TOOLS: &[&str] = &["set_properties", "run_command", "batch", "create_node", "propagate_change", "run_script"];
+const REV_GUARDED_TOOLS: &[&str] = &["set_properties", "run_command", "batch", "create_node", "propagate_change", "run_script", "apply_text"];
 /// Read tools whose result carries the document's `rev`.
 const REV_STAMPED_TOOLS: &[&str] = &["get_node", "inspect_document", "find_nodes", "get_selection"];
 
@@ -283,6 +285,8 @@ const DOCUMENT_TOOLS: &[&str] = &[
     "propagate_change",
     "get_design_guidelines",
     "audit_tokens",
+    "extract_text",
+    "apply_text",
     "design_system_index",
     "lint_layout",
     "get_code_connect_map",
@@ -942,6 +946,30 @@ fn tools() -> Vec<Value> {
             true,
         ),
         tool(
+            "extract_text",
+            "List all text for copy work",
+            "Every text layer with its copy, for writing or translating (engine `text.extract`): {total, listed, truncated?, texts: [{id, name, characters, path (names of the layers above it), frame (nearest frame id), fontSize, maxWidth? (fixed-width box), autoResize, styled (character runs with own style or link), inInstance?}]}, in layer order so the text of one frame is together. Write the new copy back with apply_text. Limited to `root` (a layer) or `page` (id, name or \"all\"; default the open page); at most `limit` layers are listed (default 500, up to 5000), `total` counts all.",
+            obj(
+                json!({"root": id_schema("Only this layer and what is inside it"), "page": string("A page id or name, or \"all\" (default: the open page)"), "limit": int("Layers to list (default 500, up to 5000)")}),
+                &[],
+            ),
+            true,
+        ),
+        tool(
+            "apply_text",
+            "Write new copy into text layers",
+            "Set the characters of many text layers as ONE undo step (engine `text.apply`) and check the layout after: {applied, unchanged, dryRun, results: [{id, name, changed, fit (ok|overflow|truncated), was, lines, height, lost?}], refused: [{id, reason, lost}]}. A layer with several character styles or links is refused unless `flatten` is true, which drops those styles (`lost` says which). `fit` tells which translations no longer fit their fixed box. Use `dryRun` to see the fit without changing anything. Pseudo-localizing to stress layouts is run_command `text.pseudoLocalize` (mode accent|expand|both|restore).",
+            obj(
+                json!({
+                    "changes": json!({"type": "array", "maxItems": 5000, "description": "The new copy per layer", "items": obj(json!({"id": id_schema("A text layer"), "characters": string("The whole new text")}), &["id", "characters"])}),
+                    "flatten": boolean("Drop character styles and links on layers that have them (default: refuse those layers)"),
+                    "dryRun": boolean("Report the result and fit without changing the file"),
+                }),
+                &["changes"],
+            ),
+            false,
+        ),
+        tool(
             "lint_layout",
             "Find layout defects",
             "Layout defects among sibling layers (engine `lint.layout`), so you can check a design without a screenshot: {total, listed, truncated?, findings: [{check, ids, message, fix?: {command, params}}]}. Checks: overlap (siblings that intersect, neither inside the other; auto-layout children and absolute-positioned layers are skipped), misaligned (edges or centres 0-4 px from a shared line), uneven-gap (a row or column of 3+ layers whose gaps differ by up to 4 px), tiny-target (button-like frames, components and instances, or layers with interactions, under 24x24, or 44x44 in frames up to 500 wide), off-grid (x/y not a multiple of `grid`; only when named). Run a finding's `fix` with run_command (align.*, distribute.*, node.set). Limited to `root` (a layer) or `page` (id, name or \"all\"; default the open page).",
@@ -1517,6 +1545,8 @@ fn run_tool(b: &mut dyn Backend, name: &str, a: &Map<String, Value>, doc_target:
         "get_design_guidelines" => exec(b, "library.guidelines", json!({})).map(|v| ToolResult::json(&v)),
         "design_system_index" => read_command(b, "ds.index", a).map(|v| ToolResult::json(&v)),
         "audit_tokens" => exec(b, "lint.tokens", pick(a, &["root", "page", "limit"])).map(|v| ToolResult::json(&v)),
+        "extract_text" => exec(b, "text.extract", pick(a, &["root", "page", "limit"])).map(|v| ToolResult::json(&v)),
+        "apply_text" => exec(b, "text.apply", pick(a, &["changes", "flatten", "dryRun"])).map(|v| ToolResult::json(&v)),
         "lint_layout" => exec(b, "lint.layout", pick(a, &["root", "page", "checks", "grid", "limit"])).map(|v| ToolResult::json(&v)),
         "diff_documents" => exec(b, "doc.diff", pick(a, &["a", "b", "version", "limit"])).map(|v| ToolResult::json(&v)),
         "check_accessibility" => exec(b, "a11y.audit", pick(a, &["root", "page", "limit"])).map(|v| ToolResult::json(&v)),

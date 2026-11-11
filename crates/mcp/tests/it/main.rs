@@ -59,5 +59,6 @@ mod script_tool;
 mod selection_tools;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod terse_results;
+mod text_inventory_tools;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod wish_tools;

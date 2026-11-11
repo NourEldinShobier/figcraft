@@ -37,6 +37,7 @@ pub mod structure;
 pub mod styles;
 pub mod summary;
 pub mod text;
+pub mod textinv;
 pub mod tokencheck;
 pub mod tokens;
 pub mod tokens_export;
@@ -106,6 +107,7 @@ fn registry() -> &'static Registry {
         list.extend(mermaid::specs());
         list.extend(guidelines::specs());
         list.extend(tokencheck::specs());
+        list.extend(textinv::specs());
         list.extend(dsindex::specs());
         list.extend(script::specs());
         list.extend(lintlayout::specs());
