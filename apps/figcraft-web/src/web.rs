@@ -203,6 +203,7 @@ impl eframe::App for WebShell {
                 command: "file.open",
                 target: None,
                 read: Some(read),
+                load: figcraft_ui_egui::pending_open::Load::Idle,
             });
         }
         figcraft_ui_egui::windows::guard(&mut self.fig, ctx, |fig| fig.background_tick(ctx));
