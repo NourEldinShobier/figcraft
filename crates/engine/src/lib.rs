@@ -225,6 +225,8 @@ mod board_connector_tests;
 #[cfg(test)]
 mod board_grid_tests;
 #[cfg(test)]
+mod board_read_tests;
+#[cfg(test)]
 mod board_reshape_tests;
 #[cfg(test)]
 mod board_table_paste_tests;
@@ -584,6 +586,8 @@ mod section_tests;
 mod select_area_tests;
 #[cfg(test)]
 mod selection_behaviour_tests;
+#[cfg(test)]
+mod selection_context_tests;
 #[cfg(test)]
 mod selection_depth_tests;
 #[cfg(test)]

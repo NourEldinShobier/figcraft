@@ -88,7 +88,7 @@ fn fold_name(name: &str) -> String {
     }
 }
 
-fn tag_of(n: &Node) -> Option<&str> {
+pub(super) fn tag_of(n: &Node) -> Option<&str> {
     n.plugin_data.get(TAG).map(String::as_str).filter(|t| !t.is_empty())
 }
 
@@ -195,7 +195,7 @@ fn all_nodes(doc: &Document) -> Vec<NodeId> {
 }
 
 /// The top-level frame holding `id` (a child of the page), and the page.
-fn frame_and_page(doc: &Document, id: NodeId) -> (Option<NodeId>, Option<NodeId>) {
+pub(super) fn frame_and_page(doc: &Document, id: NodeId) -> (Option<NodeId>, Option<NodeId>) {
     let (mut cur, mut frame) = (id, None);
     for _ in 0..10_000 {
         let Some(parent) = doc.node(cur).and_then(|n| n.parent) else { return (frame, None) };
@@ -208,7 +208,7 @@ fn frame_and_page(doc: &Document, id: NodeId) -> (Option<NodeId>, Option<NodeId>
     (frame, None)
 }
 
-fn label(doc: &Document, id: Option<NodeId>) -> Value {
+pub(super) fn label(doc: &Document, id: Option<NodeId>) -> Value {
     match id.and_then(|i| doc.node(i)) {
         Some(n) => json!({"id": n.id, "name": n.name}),
         None => Value::Null,
@@ -216,7 +216,7 @@ fn label(doc: &Document, id: Option<NodeId>) -> Value {
 }
 
 /// Layers like `from`, best first. `from` itself, what is inside it and what holds it are left out.
-fn twins_of(doc: &Document, from: NodeId, min: f64) -> Result<Vec<(NodeId, f64, Vec<&'static str>)>> {
+pub(super) fn twins_of(doc: &Document, from: NodeId, min: f64) -> Result<Vec<(NodeId, f64, Vec<&'static str>)>> {
     let a = doc.get(from).map_err(|e| bad("family.find", e.to_string()))?;
     let mut skip: BTreeSet<NodeId> = doc.ancestors(from).into_iter().collect();
     skip.insert(from);

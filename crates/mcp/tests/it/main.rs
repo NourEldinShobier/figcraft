@@ -12,6 +12,7 @@ mod attached;
 mod automation_roots;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod batch_assert_tool;
+mod board_selection_tools;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod cancel_progress;
 #[allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
