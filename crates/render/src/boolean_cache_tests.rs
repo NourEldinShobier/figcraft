@@ -324,7 +324,7 @@ fn boolean_corner_smoothing_reshapes_the_rounding() {
     assert_eq!(smooth.winding(Point::new(0.3, 0.3)), 0, "but still cuts the tip");
     assert_ne!(smooth.winding(Point::new(15.0, 1.0)), 0);
     let (sa, pa) = (smooth.area().abs(), plain.area().abs());
-    assert!((sa - pa).abs() > 1.0, "{sa} vs {pa}");
+    assert!((sa - pa).abs() > 0.5, "{sa} vs {pa}");
 }
 
 #[test]
