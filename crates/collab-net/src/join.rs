@@ -45,6 +45,7 @@ pub struct GuestConfig {
     pub round_pause: Duration,
     /// Join as the client you were (an app that starts over after a crash): the first hello
     /// carries it, and a server that still knows the id gives it back.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // only the native guest driver reads it
     pub resume: Option<Resume>,
 }
 

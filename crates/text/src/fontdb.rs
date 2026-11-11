@@ -1212,6 +1212,7 @@ impl FontDb {
     /// Offer the families of a later walk of the font folders: new families become pending, a
     /// family not loaded yet takes the walk's files, and a loaded family keeps its faces and gets
     /// the files it hasn't read (styles installed since) as pending, read when it is next used.
+    #[cfg(not(target_arch = "wasm32"))]
     fn merge_rescan(&mut self, found: BTreeMap<String, (String, Vec<Pending>)>) -> Rescan {
         self.generation += 1;
         let mut out = Rescan::default();
