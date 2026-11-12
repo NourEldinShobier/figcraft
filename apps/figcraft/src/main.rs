@@ -269,7 +269,9 @@ fn main() -> eframe::Result {
     // open (no frame then).
     figcraft_ui_egui::i18n::set(&session.prefs.language, figcraft_ui_egui::Services::system_language(&svc).as_deref());
     let mut fig = FigApp::new(session, Box::new(svc));
-    fig.set_startup_update_check(true);
+    // Off in this fork: the check compares against the upstream releases, whose newer builds would
+    // replace this one. Help > Check for updates still works on request.
+    fig.set_startup_update_check(false);
     fig.automation_roots = roots;
     fig.ui.home = false;
     // Files named on the command line are the user's too: their missing fonts are listed.
