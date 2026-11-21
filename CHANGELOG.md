@@ -4,6 +4,25 @@ What changed in FigCraft's agent surface (the MCP server, the engine commands be
 
 To use a new build: quit and restart the FigCraft app, then restart the agent session so its MCP server reloads. `diagnostics` shows `attached: true` when the app is driven, and `tools/list` should show 67 tools (full profile).
 
+## 2026-11-21: second upstream merge
+
+The tree now includes upstream/main (995 commits merged, merge commit b96a48261). `tools/list` now shows 68 tools (full profile) and 22 with `--profile core` (21 tools plus `more_tools`).
+
+What upstream brought:
+
+- The `craft-*` cutover: the `.fig`/format code, image codecs (thumbnail decode, dimension probing, ICC, GIF, bounds) and the updater now come from pinned `craft-*` crates instead of in-tree code.
+- Design context and design-to-code output improvements.
+- Right-to-left text handling fixes.
+- Many bug fixes across the engine, renderer and UI.
+
+Dropped as redundant: the fork's `.fig` mapper extras and the page-first memory work. The mapper and kiwi decoder moved into the pinned craft-libs crates, so those patches no longer apply.
+
+Known limits:
+
+- Upstream's `build_script::web_catalog_packs_fonts` test fails; it is left unchanged.
+- The startup update check stays disabled in this fork (Help > Check for updates still works on request).
+
+To use it: quit and restart the FigCraft app, then restart the agent session.
 ## 2026-11-11: upstream merge and bulk-edit release (54 to 67 tools)
 
 The tree now includes upstream/main (644 commits merged).
