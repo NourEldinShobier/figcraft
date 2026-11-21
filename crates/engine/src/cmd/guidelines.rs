@@ -72,7 +72,7 @@ mod tests {
         let mut s = Session::new();
         let f = s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap();
         s.execute("library.setGuidelines", &json!({"text": "Buttons are 44px tall."})).unwrap();
-        let d = s.execute("inspect.designContext", &json!({"id": f["id"], "include": "hints"})).unwrap();
+        let d = s.execute("inspect.codeContext", &json!({"id": f["id"], "include": "hints"})).unwrap();
         assert!(d["hints"][0].as_str().unwrap().contains("Buttons are 44px tall."), "{d}");
     }
 

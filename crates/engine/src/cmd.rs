@@ -162,6 +162,7 @@ fn registry() -> &'static Registry {
         list.extend(crate::devinspect::specs());
         list.extend(crate::design_read::specs());
         list.extend(crate::dev::lint_icons::specs());
+        list.extend(crate::design_context::specs());
         list.extend(crate::component_codegen::specs());
         list.extend(crate::playground::specs());
         list.extend(crate::code_connect::specs());

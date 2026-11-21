@@ -106,8 +106,14 @@ Each may be given more than once, as `--flag DIR` or `--flag=DIR`:
   (writing through it would create its target, wherever that is). A path outside the roots gets
   the same refusal whatever exists there, so a refusal doesn't tell what is outside. Folders are
   compared by whole names: `/work2/x` is not inside `/work`. On Windows the case comes from the disk (`C:\WORK\x` is
-  inside `C:\work`), `\\?\` and UNC (`\\server\share\…`) paths are resolved like drive-letter ones,
-  and new names that are devices (`CON`, `NUL`, `COM1`…) or streams (`a.png:x`) are refused.
+  inside `C:\work`), `\\?\C:\…` paths are resolved like drive-letter ones, and
+  new names that are devices (`CON`, `NUL`, `COM1`…) or streams (`a.png:x`) are refused.
+  A path on another computer (`\\server\share\…`, `\\?\UNC\…`, WebDAV's `\\host@SSL\share\…`) or a device
+  path (`\\.\pipe\…`, `\\?\GLOBALROOT\…`) is refused by its spelling before anything looks it up, since looking
+  it up would contact that host, unless a root is on the same share; a link whose target is one of those is
+  refused too. A local volume's `\\?\Volume{…}\` path is let through. A link whose text is a native NT name
+  (`\Device\…`, `\??\…`, `\GLOBAL??\…`) is refused as a device path, and so is a name that ends in a period or a space, in a
+  path or as a link's target, since Windows trims it where it looks a name up.
 - **The network:** a confined call reaches no FigCraft or plugin server, so it can't send a
   document anywhere through one. Hosting, joining, publishing and sharing a file (`collab.host`,
   `collab.join`, `collab.publish`, `collab.share` …), team libraries on a server (`library.check`
@@ -190,6 +196,7 @@ The other tools are hidden. Calling one by name fails with a tool error that say
 - `create_node` and `set_properties` take `x`/`y` **relative to the parent frame** (the page when
   there is none, so they are page coordinates then). Groups and boolean groups have no coordinate
   space of their own: a layer in a group is placed in the frame (or on the page) the group is in.
+  `rotation` is the layer's angle to its parent (Figma's plugin API `rotation` is the same); `absoluteRotation` sets its rotation on the page, what the Design panel's field shows; a call takes one of the two.
   `inspect_document` reports `x`/`y` the same way, plus `absoluteBounds` in page coordinates.
   In `props`, `fill` and `stroke` also accept `"none"` (either case) or `null` as no paint, the
   same as an empty `fills`/`strokes` list, so an outline-only shape can be made in one call.
@@ -199,13 +206,29 @@ The other tools are hidden. Calling one by name fails with a tool error that say
   leaves its contents where they are, and so does resizing a frame with `cmd` held (constraints
   ignored); a layer a mask hides can't be clicked there, and a mask group's box and exports are
   the mask's (plus any layers under the mask).
+- Repeated UI (buttons, inputs, cards, list rows, tab bars, icons) is a component and its copies
+  are instances: make it once with `component.create` (or `create_node` type `component`) and place
+  each other copy with `instance.create {component, parent?, x?, y?}` rather than duplicating the
+  layers, so every copy follows the main. States and sizes are variants of one set: name the mains
+  `Property=value` (`State=Default`, `State=Hover`) and run `component.combineVariants` on them;
+  `component.addVariant {id}` adds one more. What changes per copy is a component property:
+  `component.addProperty {id, name, type: text|boolean|instanceSwap, layer}` on the component, or
+  on the set once its variants are combined, then `component.bindProperty {layer, property}` for
+  each other variant's layer (a property added to one variant before combining stays that
+  variant's, so an instance switched to another variant loses it); `instance.setProperties {ids,
+  properties}` sets it on each copy. The server's `initialize` instructions say this too, since
+  agents otherwise tend to copy layers.
 - Children of an auto-layout frame are positioned by the layout: set `layout`, `gap`, `padding`,
   `mainAlign`, `crossAlign`, `sizingH`/`sizingV` instead of x/y. In one call, `layout` applies
   before the keys that tune it, so `{"layout": {"mode": "vertical"}, "gap": 8}` keeps the gap;
   auto layout keys beside a `layout` of `null` or `"none"` are refused. More auto layout props:
   - `sizingH` / `sizingV`: `fixed`, `hug` (auto layout frames and text) or `fill` (children in an
-    auto layout flow). A child can't fill an axis its parent hugs: setting `fill` turns the parent
-    `fixed` on that axis, and a parent set to `hug` turns the children that filled it `fixed`. A
+    auto layout flow). A child can't fill the axis its parent hugs along the flow: setting `fill`
+    turns the parent `fixed` on that axis (the session notice reads "Width set to Fixed for <name>"),
+    and a parent set to `hug` turns the children that filled it `fixed`. Across the flow the parent keeps
+    hugging and the child takes the line's cross size (the largest sibling that doesn't fill, its min
+    counted, padding outside); the parent turns `fixed` ("Height set to Fixed for <name>") only when no
+    such sibling is left, and `fill` across a wrapping row that hugs that axis is refused. A
     layer moved out of auto layout (or whose frame loses it) keeps its size as `fixed`. Fill
     children share the space like CSS flexbox, within their min/max.
   - `minWidth` / `maxWidth` / `minHeight` / `maxHeight` (px, `null` removes) bound Hug, Fill and
@@ -279,8 +302,8 @@ The other tools are hidden. Calling one by name fails with a tool error that say
   profile into the file's space: an embedded ICC profile (PNG, JPG, WebP, TIFF; RGB or grey), a PNG's
   `sRGB` / `gAMA` / `cHRM` chunks, else sRGB (also for CMYK or damaged profiles); `image.place` reports
   the profile's name as `imageProfile` (`null`: none usable, taken as sRGB). PNG exports are tagged (`sRGB` chunk, or a Display P3 ICC profile plus
-  `cICP`), Display P3 JPG and WebP embed the ICC profile, and SVG and PDF export Display P3 files
-  converted to sRGB (out-of-gamut colours clip). The app's canvas shows sRGB (P3 colours outside sRGB clip on screen):
+  `cICP`), JPG embeds the ICC profile for sRGB and for Display P3, WebP embeds it for Display P3 only (sRGB WebP is untagged), and SVG and RGB PDF export Display P3 files
+  converted to sRGB (out-of-gamut colours clip). PDF with `cmyk` converts them to sRGB the same way and then to DeviceCMYK. The app's canvas shows sRGB (P3 colours outside sRGB clip on screen):
   `view.proofSrgb {on?}` (View ▸ Soft-proof sRGB) stripes those pixels so `screenshot {window:
   true}` shows where they are (after the next canvas render), and the colour picker says Outside
   sRGB for such a colour.
@@ -322,6 +345,11 @@ The other tools are hidden. Calling one by name fails with a tool error that say
   `textDecorationOffset` (`auto`, px, or `"10%"` of the font size; the offset runs from the baseline
   down to an underline's top edge), `textDecorationSkipInk` (underlines break around descenders) and
   `textDecorationColor` (a colour, or `auto` for the text's) are character props too.
+- **Wrap style** (`auto`, `balance`, `pretty`) works at three levels: `wrapStyle` on `node.set`
+  sets the layer (every paragraph); with `start`/`end` it sets the paragraphs those chars touch,
+  and a paragraph's own style beats the layer's. `text.wrapStyle` sets the selected paragraphs while
+  text is edited. `get_node` reports one `wrapStyle`, or `lineWrapStyles` per paragraph when they
+  differ.
 - **Lists** are per paragraph: `listStyle` (`none`, `bulleted`, `numbered`) and `indentation` (the
   nesting level, 0–8) apply to the paragraphs chars `start`..`end` touch (all of them without a
   range); `get_node` reports one `listStyle` for the layer, or `lineTypes` and `lineIndentations`
@@ -337,10 +365,11 @@ The other tools are hidden. Calling one by name fails with a tool error that say
   `style.detach {which: "text", start?, end?}` unlinks them (values stay). A layer's `styles.text` is
   the style all its chars share (none when they differ); `get_node` lists the linked chars as
   `textStyleRanges` (`[start, end, style id]`).
-  A text style also carries paragraph spacing and indent, the list style and the OpenType features
-  (`paragraph` beside `style` in `style.list`): applying it sets them (on a range, the list goes to
-  the paragraphs touched; the rest is the layer's), `style.update` moves them too, and a `.fig`
-  file keeps them with the style.
+  A text style also carries paragraph spacing and indent, the list style, the wrap style and the
+  OpenType features (`paragraph` beside `style` in `style.list`; a `value` takes `wrapStyle`):
+  applying it sets them (on a range, the list and wrap style go to the paragraphs touched; the rest
+  is the layer's), `style.update` moves them too, and a `.fig` file keeps them with the style
+  (not the wrap style yet).
   Changing what a text style sets (font, size, line height, letter spacing, decoration, case, axis
   values; at the paragraph level the spacing, indent, list and features) on linked chars unlinks
   them; `style.update` moves every linked char. `style.create {type: "text", name}` takes the
@@ -416,6 +445,7 @@ The SVG icon preset (`iconPreset: true` on `export` and `export_many`, with `cur
 | `set_properties {ids \| where, props, quiet?, documents?}` | `list` (a saved list, see `list.save`) is a third way to name the layers (`ids`, `where` or `list`, one of them); `dryRun: true` changes nothing and returns `{dryRun, wouldChange, created, deleted, count, result}` (with `matched` and `ids` for `where`/`list`); `keepSelection: true` leaves the user's selection and view alone. Instead of `ids`, `where` (the `node.find` filters, as for `select`) picks the layers: they are found first, then `node.set` changes them together as one undo step, and the result adds `matched` and `ids`. No match is an error and nothing changes; the other `where` rules are those of `select`. With `quiet` (default for more than one layer) returns only `{ok, ids, warnings?}` instead of every updated layer. `node.set` on layers (geometry, fills, strokes, effects, corner radius, auto layout, sizing, constraints, masks (`isMask`, `maskType: alpha\|vector\|luminance`), handoff status (`devStatus: none\|readyForDev\|completed`; marking again clears "Changed"), a section's `sectionContentsHidden`, text…); returns the updated layers. |
 | `inspect_document {depth, allPages, fields?, outline?}` | The document as JSON (its `id`, layer tree, styles, selection, history); `fields` selects layer properties, `outline: true` gives a compact tree (below). The tools that act on a document also take `document` (see Naming the document below). |
 | `get_node {id, depth, fields?, outline?}` | One layer as JSON (a stroked layer reports `strokeWeight`, `strokeAlign`, `strokeJoin` and `strokeCap`, or `startCap` and `endCap` when they differ; text reports `textAlignVertical`, `textCase`, `paragraphSpacing`, `paragraphIndent`; `constrainProportions` and `overflow` when set; `node.set` also takes `strokeWidth` as an alias of `strokeWeight`); `pluginData` (`{key: value}`, values as strings) when the layer or page has layer data written with `set_properties {props: {pluginData}}`. Takes the same `fields` and `outline` options as `inspect_document`. |
+| `design_context {ids?, scope?, depth?, maxNodes?, maxBytes?}` | Everything needed to build a design in one read: see [Design context](#design-context). |
 | `select {ids \| where}` | `list` (a saved list, see `list.save`) selects its layers like `ids`; `dryRun: true` selects nothing and reports the layers as `wouldSelect`; `keepSelection` is accepted and has no effect here (selecting replaces the selection: to act on layers without touching it, give `where`, `list` or `ids` to the tool that does the work). `where` also takes `page`, `widthNot`, `heightNot`, `outsideParent` and `edgeGap`, as `find_nodes` does. Replace the selection (`[]` deselects). Instead of `ids`, `where` takes exactly the `node.find` filters (`root`, `name`, `nameRegex`, `nameGlob`, `type`, `text`, `component`, `fill`, `stroke`, `strokeWeight`, `width`, `height`, `parent`, `variant`, `key`, `keyGlob`, `limit`): the layers are found first (engine `node.find`), then selected, and the result adds `matched` and `ids`. Nothing matching leaves the selection unchanged (`matched: 0` and a `note`). Giving both `ids` and `where`, a `where` with no filter besides `limit`, or one that matches more layers than `limit` returns (default 100, up to 10000) is an error. |
 | `get_selection {}` | What the user has selected right now: `{page: {id, name}, selection: [{id, name, type, parent, x, y, width, height}], count}` (x/y relative to the parent frame; an empty selection has `count: 0`; at most 200 layers are listed, with `truncated` saying so). One `document.inspect` plus one `node.get` per selected layer, so it works headless and attached. |
 | `find_nodes {name?, nameRegex?, nameGlob?, type?, text?, component?, fill?, stroke?, strokeWeight?, width?, height?, widthNot?, heightNot?, parent?, variant?, key?, keyGlob?, outsideParent?, edgeGap?, root?, page?, limit?, details?, documents?}` | Engine `node.find`, read-only: never selects, never changes the page, the view or the selection, so it is safe on the file the user is working in. Returns `{ids, total}` (at most `limit` ids, default 100, up to 10000; `total` counts every match). `page` is an id, a name or `"all"`; `details: true` adds `nodes: [{id, name, type, parent, x, y, width, height}]`. The filters are those of `where` plus `details`. |
@@ -472,7 +502,7 @@ The SVG icon preset (`iconPreset: true` on `export` and `export_many`, with `cur
 | `wait_for_changes {after?, timeoutMs?, topics?, limit?}` | Wait for new comment events in the attached app; returns pending events at once, else waits up to `timeoutMs` (default 20 s, max 25 s). Pass the returned `cursor` back to keep watching. Headless returns immediately. |
 | `get_metadata {nodeId?, depth?, maxNodes?}` | Sparse XML outline of a layer (default the current page): `<frame id name x y width height>` per layer, x/y relative to the parent, `hidden="true"` for invisible layers, `omitted="N"` for children not shown. `depth` 0–32 (default 4), `maxNodes` 1–5000 (default 500); a cut outline ends with a `<!-- truncated -->` comment. Engine command `inspect.metadata {id?, depth?, maxNodes?}` → `{xml, nodes, truncated}`. |
 | `get_variable_defs {nodeId?}` | The variables a layer, its descendants and their styles use, `{name: value}`, resolved in the layer's modes (colours as hex, numbers and booleans as strings). Default the selection. Engine command `inspect.variableDefs`. |
-| `get_design_context {nodeId?, language?, depth?, include?}` | Everything to implement a layer in code: `code` (HTML + CSS by default; `language` as `inspect.code`, cut at 60,000 characters with `codeTruncated`; a mapped (Code Connect) instance shows its snippet in place of generated markup), `properties` (as `inspect.properties`), `variables`, `assets` (as `inspect.assets`) and an `outline` (as `get_metadata`, `depth` default 3). `include` (a name or list of `instances`, `annotations`, `devResources`, `status`, `comments`, `bindings`, `interactions`, `hints`, or `all`; default all but `comments` and `interactions`) adds, for the layer and its descendants: `instances` [{id, componentName, mainId, codeConnect? {importPath, name, snippet}}], `annotations`, `devResources` [{layer, name, url}], `status` {status, changed, note?}, `comments` (open threads pinned inside, text only), `bindings` [{id, name, bound {property: {variable, collection, value, css: `var(--name, raw)`}}}], `interactions` [{id, name, trigger, actions, durationMs}] and `hints` (priority order: mapped components, then tokens, then raw values). Lists stop at 100 entries; `truncated` names the cut ones. Default the selection. Engine command `inspect.designContext`. |
+| `get_design_context {nodeId?, language?, depth?, include?}` | Everything to implement a layer in code: `code` (HTML + CSS by default; `language` as `inspect.code`, cut at 60,000 characters with `codeTruncated`; a mapped (Code Connect) instance shows its snippet in place of generated markup), `properties` (as `inspect.properties`), `variables`, `assets` (as `inspect.assets`) and an `outline` (as `get_metadata`, `depth` default 3). `include` (a name or list of `instances`, `annotations`, `devResources`, `status`, `comments`, `bindings`, `interactions`, `hints`, or `all`; default all but `comments` and `interactions`) adds, for the layer and its descendants: `instances` [{id, componentName, mainId, codeConnect? {importPath, name, snippet}}], `annotations`, `devResources` [{layer, name, url}], `status` {status, changed, note?}, `comments` (open threads pinned inside, text only), `bindings` [{id, name, bound {property: {variable, collection, value, css: `var(--name, raw)`}}}], `interactions` [{id, name, trigger, actions, durationMs}] and `hints` (priority order: mapped components, then tokens, then raw values). Lists stop at 100 entries; `truncated` names the cut ones. Default the selection. Engine command `inspect.codeContext`. |
 | `search_design_system {query, types?, limit?}` | Components, variables and styles whose name or description matches `query` fuzzily (case-insensitive; empty lists all). A component set is also found by its variants' names (`State=Default` finds the set "Row"). Scores: exact name 100, prefix 90, match at a word start 80, substring 70, letters in order (`stdf` finds `State=Default`) up to 50 when adjacent and none below 10; a description counts half, a variant name 0.9. `types`: `component`, `variable`, `style` (default all); `limit` per kind 1–200 (default 25), best score first. Returns `{components, variables, styles, total, semantic}`; each hit has `score` and `matchedOn` (`name`, `description` or `variant`; components also `matchedVariant: {id, name}`), `total` counts every match, variants are listed under their set. `semantic` is always `false`: there is no embedding or meaning-based search. Engine command `inspect.searchDesignSystem`. |
 
 `auto_name_layers` rules (fixed, in this order; a layer whose name is not generic is never touched, nor is anything inside an instance; parents are renamed before their children, and a child uses its parent's new name). The *context* of a layer is the name of its nearest ancestor with a non-generic name (a variant stands for its component set; pages do not count).
@@ -548,6 +578,41 @@ XML outline with geometry (x, y, width, height) and an `omitted` child count, no
 {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"inspect_document","arguments":{"depth":6,"outline":true}}}
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_node","arguments":{"id":3,"depth":2,"fields":["name","width","height"]}}}
 ```
+
+### Design context
+
+`design_context` (the command `inspect.designContext`) reads the selection, or `ids`, or `scope`
+(`selection`, `page`, `document`; with nothing selected, the page). The result is one JSON object:
+
+| Key | What it holds |
+|---|---|
+| `version` | The format's version; fields can be added without changing it |
+| `document` | `name`, `page`, `colorProfile` |
+| `target` | `source` (`selection`, `ids`, `page`, `document`), `ids`, `layers` in the tree |
+| `nodes` | The tree, below |
+| `variables` | By id: `name`, `collection`, `type`, `codeSyntax`, and `modes` with each `mode`'s stored `value` and `resolved` value. The tree's layers and shared styles bind them, or another one reads them as an alias or in a colour calculation |
+| `styles` | By id: the shared styles the tree uses |
+| `components` | By id: `name`, `type`, `properties` with variants, `codeLinks` |
+| `fonts` | `family`, `styles`, and whether it's `installed` |
+| `assets` | What `inspect.assets` lists, for the layers in the tree |
+| `missing` | `{what, why}`: what the design doesn't specify. Always says that the file stores no breakpoints |
+| `truncated` | When `depth` or `maxNodes` cut the tree, or `maxBytes` made the tool ask for fewer layers: `layersLeftOut`, `assetsLeftOut`, `depth`, `maxNodes`; and `variables` when aliases went deeper than the 10,000 variables followed |
+
+Each layer in `nodes` has `id`, `name`, `type` and:
+
+- `explicit`: what the designer set, with the keys of `get_node`.
+- `derived`: what the file worked out: `absoluteBounds`, `rotation`, `gridCell`, a position in an auto
+  layout flow, and a size that Hug, Fill or auto-sizing text decides.
+- `tokens`: bound variables by field, and shared styles as `style.fill`, `style.text[0..5]` and so on,
+  with the `name` of each. `explicit` holds the value they resolved to.
+- `unsupported`: `{property, why}` for what has no direct CSS equivalent. The value stays in `explicit`.
+- `code`: for a component or instance connected to code, per language, `{language, importPath, name,
+  code}`, with the instance's own values in `code`. A connected instance stops there: `childCount`
+  says what it holds, and `get_node` reads it.
+- `children`, or `childCount` where the tree stops.
+
+Values are the file's own. Nothing is converted to CSS or guessed. Hidden layers are in the tree, with
+`visible: false` in `explicit`.
 
 ### Compact layer trees
 
@@ -629,7 +694,8 @@ Returns `{fitted: [{id, fontSize, lines, fits, orphan}]}`. Use case: a carousel 
 
 A board is a file of its own kind for thinking together: `file.newBoard {name?}` opens one (its
 page is light; `inspect_document` says `kind: "board"`). Board objects are ordinary layers with a
-`board` entry `get_node` shows (`{type: sticky|shape|connector|label|stamp|ink, …}`), so the usual
+`board` entry `get_node` shows (`{type: sticky|shape|connector|label|stamp|ink|mindNode|codeBlock, …}`; a connector may say
+`branch: true`), so the usual
 commands move, resize, recolour, copy, delete and undo them. On a design file the board commands
 refuse; on a board `proto.*`, `dev.*`, `view.prototype` and `view.devMode` refuse. Each of these is
 one undo step and returns the ids it made:
@@ -642,11 +708,39 @@ one undo step and returns the ids it made:
   same colour beside the selected (or edited) one; with `edit: true` the app goes on typing in it
   (`Shift+Cmd/Ctrl+Enter` in the app does both). On a shape it does what `board.addConnected` does:
   the next shape, joined to it by a connector (`{id, text, connector}`).
+  On a code block it makes the next code block 128 units beside it (`side`, default right), as wide and
+  in the same language, not joined (`{id, text, language}`).
 - `board.addConnected {id?, side?: right|below|left|above, edit?}` → `{id, text, connector}`: the
   next sticky or shape of the same kind, size and colour on that side of the selected (or edited)
   one, 80 units away, joined to it by a connector the way the Connector tool makes one; one undo
   step. With `edit: true` the app goes on typing in it (the "+" beside a selected sticky or shape
   in the app does both).
+- `board.mindMap {x?, y?, text?, children?, parent?, edit?}` → `{id, text, children: [{id, text, connector}]}`:
+  a mind map: a first node (`mindNode`, bold 24, no box; `text` defaults to `Topic`, `x`/`y` to the
+  view's centre, in the parent's coordinates) with up to 20 `children` (texts; default `Idea 1`, `Idea 2`, `Idea 3`)
+  on its right, each joined to it by a curved branch (a connector with `branch: true`: stroke 4,
+  `#757575`, round caps). The map lays itself out: children stand in one column 88 units right of
+  the widest node of their parent's column, 48 apart, centred on their parent; a node is its text,
+  sized to it. One undo step. A map's shape is read from its branches alone: the parent of a node
+  is the layer a branch arrives from. After every edit (a command, typing, a gesture, undo, a live
+  session's change) a touched map is laid out again from its first node, so moving the first node
+  moves the map, a child moved by hand goes back (or swaps with the sibling whose middle it
+  passed), and a deleted node's children stay where they are, without their branch.
+- `board.mindMapAdd {id?, relation?: child|sibling, text?, edit?}` → `{id, text, connector}`: a node
+  of the map that the given (or selected, or edited) one belongs to: a child below its other
+  children, or a sibling right after it (the first node has none); the map lays itself out again.
+  One undo step. With `edit: true` the app goes on typing in it.
+- `board.codeBlock {x?, y?, language?, text?, width?, parent?, edit?}` → `{id, text, language}`: a code
+  block (`codeBlock` with its `language`): a dark panel holding monospace text (Liberation Mono 16 on a
+  24 line where it is embedded or installed). `language` is `bash cpp css go graphql html javascript json
+  kotlin plainText python ruby rust sql swift typescript` (default `typescript`); `width` is 210 to 100000
+  (default 576); `x`/`y` are its top-left corner, by default the view's centre less half the width and less 64 (half the
+  smallest height, 128), so a block of more lines reaches further down. Its height is its lines: 32 + 24 a visual line,
+  never under four lines, so only its width can be changed (a set or dragged height is not kept). In its
+  text Tab types two spaces, Enter keeps the line's indent, and lists, links and styled ranges do not stick.
+  One undo step.
+- `board.setLanguage {id?, ids?, language}` → `{ids}`: the language of the given (or selected, or edited)
+  code blocks, by id or name (`cpp` or `C++`).
 - `board.shape {shape, x, y, width?, height?, text?, color?, parent?}` → `{id, text}`: a shape with centred,
   wrapping text: `rectangle roundedRectangle ellipse diamond triangle triangleDown parallelogramRight parallelogramLeft trapezoid pentagon hexagon octagon star plus arrowLeft arrowRight chevron speechBubble database document predefinedProcess manualInput internalStorage`.
 - `board.connector {from, to, fromSide?, toSide?, fromAt?, toAt?, style?: straight|elbow|curved, startCap?, endCap?, label?}`
@@ -781,7 +875,7 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
   `board.nextSticky` (`Shift+Cmd/Ctrl+Enter`, also while typing in a sticky). Keys no design-file
   shortcut uses; on a design file they refuse.
 - `view.pan {dx, dy, big?}`: the arrow keys with nothing selected (`key ArrowRight` does the same)
-  pan the view by 20 screen pixels a step, 200 with `big` (Shift).
+  pan the view by 64 screen pixels a step, 320 with `big` (Shift).
 - `view.multiplayerCursors {on?}` (`Alt+Cmd+\`): show or hide others' cursors in a live session.
 - `view.outlinesHiddenLayers {on?}` and `view.outlinesObjectBounds {on?}`: what outline mode
   (`view.outlines`, `view.outlinesSelection`) draws besides the shapes: hidden layers, and the box
@@ -827,15 +921,21 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
   in the pages list, never opened and holding no layers), `page.list` (each page's `divider`),
   `page.rename`, `page.move {id, index}`, `page.duplicate` ("Copy of …", after its source, with its colour,
   flows (starting at the copied frames), prototype settings and guides),
-  `page.delete` (the last page that isn't a divider stays).
+  `page.delete` (the last page that isn't a divider stays), `page.setOpening {id?}` (the page the
+  file opens on for everyone who opens or joins it, the current page when none is named, a divider
+  refused: a document change, so it syncs in a live session and undoes, #1817; the choice is saved
+  with the file and opens it for everyone, whichever page the saver was on).
 - `component.list`: each component's `folder` (the Assets panel's folders: its page, the frames
   holding it, then its name's slash parts) and `label` (the name on its tile).
 - `view.contextMenu` (`Shift+F10`): the selection's context menu, at its layer row when the layers
   panel has the keyboard (after F6 or a click on a row), else on the canvas below the selection; the
   menu takes the keyboard and gives it back when it closes (no-op headless).
 - `select.area {x, y, width, height, add?, deep?}`: select what a marquee from `x, y` over that box
-  (page units) would: top-level layers, a frame only when the box covers it, the children of the
-  top-level frame the box starts in; `add` toggles like a Shift marquee, `deep` takes nested layers
+  (page units) would: the top-level layers it touches (a rotated shape by its outline); an empty
+  frame on touch; any other frame or section only when the box covers it, otherwise the layers in it
+  the box touches, except that once the box takes a frame whole, a partly covered frame comes whole
+  too, and the frame the box starts in is selected only then (when the box also takes another
+  top-level frame); `add` toggles like a Shift marquee, `deep` takes nested layers
   like Cmd/Ctrl. Returns `{selection}`. Without a box (`F8` in the app) it draws one for the
   keyboard around the selection (or in the middle of the view): the arrows move it, Shift+arrows
   move its far corner (10 screen pixels a press), Enter selects (Shift+Enter adds, Cmd/Ctrl+Enter
@@ -902,7 +1002,7 @@ page line crosses; parts that come apart move to layers of their own above, list
 `vector.deleteHeal`, `vector.join` / `vector.smoothJoin` (join the selected points while editing),
 `vector.edit.cornerRadius` (rounds the selected sharp points, next to straight or curved segments: a
 curve is cut where the arc meets it and keeps the rest of its shape; drawn and exported;
-`node.set {cornerRadius}` on a vector rounds every point), `vector.edit.strokeCap {cap, vertices?}`
+`node.set {cornerRadius}` on a vector rounds every point, and on a boolean group every sharp corner of its result, while its layers keep their own radius), `vector.edit.strokeCap {cap, vertices?}`
 and `vector.edit.strokeJoin {join, vertices?}` (the stroke's cap where it ends at these points and
 its join where it turns there, `null` for the layer's; drawn, exported and outlined),
 `vector.edit.moveHandles {dx, dy, handles?}` (moves the selected handles by a page offset),
@@ -1137,7 +1237,7 @@ most when it can't be reached).
   `library.acceptUpdates` takes it, overrides kept. The app's own background checks ask only about
   team libraries added (`library.add`) or checked (`library.check {library?}`) on this computer,
   so opening a file that names another one contacts nothing (#1097).
-- `library.usage {library?, days?}` → `{id, name, assetsKnown, styles [{id, name, type, layers, files}], variables [{id, name, collection, layers, files}], instances, detached, detachesKnown, days,
+- `library.usage {library?, days?}` → `{id, name, assetsKnown, assetActionsKnown, styles [{id, name, type, layers, files, insertions, detachments}], variables [{id, name, collection, layers, files, insertions, detachments}], instances, detached, detachesKnown, days,
   insertions, detachments, actionsKnown, weeks: [{week, insertions, detachments}], files: [{name,
   updated, instances, detached}], components: [{id, name, instances, files, detached, insertions,
   detachments}]}`: what the files using it reported (each fetch reports the asking document's name
@@ -1332,8 +1432,8 @@ layer; text on one `<textPath>` as text on a path, with its start offset and anc
 image fills, and SVG images imported in place. CSS, `<use>`/`<symbol>`, units
 and `viewBox`/`preserveAspectRatio` are resolved. The result's `warnings` list what was left out
 (filters that aren't shadows or blurs, rotated repeating patterns, a clip path's own clip path).
-Linked files are never read, only data URIs; documents nested more than 512 elements deep are
-refused.
+Linked files are never read, only data URIs; documents nested more than 256 elements deep
+(references followed) are refused.
 
 ### Importing `.fig` files
 
@@ -2108,7 +2208,9 @@ supported (rule skipped; ...)".
   `--radius-*`, `--text-*`, `--spacing-*`, `--font-*`; a number's namespace and unit come from what
   layers bind it to), other modes on `[data-<collection>="<mode>"]`. With `mobile: <frame id>` (the
   same layer names, mobile layout) the code is mobile first: the mobile frame's classes, the
-  desktop frame's that differ behind `lg:`, and layers only on desktop `hidden` plus `lg:flex`
+  desktop frame's that differ behind `lg:` (a mobile `max-width` is dropped as the phone's own width,
+  unless desktop has the same cap: a fixed-size layer such as a badge keeps `max-w-[48px]` at every
+  width), and layers only on desktop `hidden` plus `lg:flex`
   (auto layout frames) or `lg:block` (other layers).
 - **Component code:** `inspect.code {id, language: react|leptos|vue|swiftui|compose|arkui|flutter}` on a component,
   a component set or a variant writes the component as a reusable unit: React (TSX) with a props
@@ -2269,7 +2371,9 @@ properties with their values, its code and, with `path`, a PNG of it. The docume
 unbinds): `fill` or `fills/<i>/color` and `fills/<i>/stops/<j>/color` on a paint style,
 `effects/<i>/<color|radius|spread|offsetX|offsetY|startRadius>` on an effect style,
 `layoutGrids/<i>/<size|count|gutter|offset>` on a grid style, `fontSize`, `lineHeight`,
-`letterSpacing`, `fontFamily`, `fontStyle` on a text style. Each layer using the style shows the
+`letterSpacing`, `fontWeight` (numbers; a weight picks the family's face nearest it and sets the
+`wght` axis of a variable font), `fontFamily`, `fontStyle` (strings; a bound weight and a bound style
+name replace each other) on a text style. Each layer using the style shows the
 field in its own modes and stays linked; `style.list` gives a style's `bound` map.
 
 `effect.add {ids?, type? | effect?}` adds an effect (`dropShadow`, `innerShadow`, `layerBlur`,
@@ -2460,12 +2564,12 @@ turned off 0°.
   `node.set {pointCount}` keeps stars to 3–60 points; `miterAngle` (degrees, the Design panel's
   Miter angle) sets the miter limit (`limit = 1 / sin(angle / 2)`); `get_node` reports a join
   other than miter (`strokeJoin`) or a miter angle other than the default ~28.96° (`miterAngle`).
-- **Select**: `select.layersAt {x, y}` lists every layer under a page point, front-most first with its
-  depth (the context menu's Select layer); `select.set`, `select.children` / `select.parent` (Enter
+- **Select**: `select.layersAt {x, y}` lists every layer under a page point, locked ones too, front-most first with its
+  depth and a `locked` flag (true when the layer or an ancestor is locked; the context menu's Select layer); `select.set`, `select.children` / `select.parent` (Enter
   / Shift+Enter), `select.next` / `select.previous` (Tab / Shift+Tab). With `pointer`, `cmd: true`
   clicks select the nested layer, `cmd` drags from empty canvas select the nested layers they touch,
   and `shift` drags toggle what they touch. A press on the background of a top-level frame with
-  layers in it (the frame not selected) starts a marquee inside it, as on the canvas; an empty frame
+  layers in it (the frame not selected) starts a marquee, as on the canvas; an empty frame
   is picked and dragged. Locked layers (selectable with `select.set`) get no handles and stay put
   when the rest of the selection is dragged. `select.all` / `select.inverse` skip hidden and locked
   layers.

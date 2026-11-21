@@ -93,7 +93,7 @@ fn variable_defs_follow_the_layers_mode() {
 #[test]
 fn design_context_bundles_code_properties_variables_and_outline() {
     let (mut s, f, _) = card();
-    let out = s.execute("inspect.designContext", &json!({"id": f, "language": "css"})).unwrap();
+    let out = s.execute("inspect.codeContext", &json!({"id": f, "language": "css"})).unwrap();
     assert_eq!(
         (out["id"].as_u64(), out["name"].as_str(), out["type"].as_str(), out["language"].as_str()),
         (Some(f.0), Some("Card <1>"), Some("FRAME"), Some("css"))
@@ -104,10 +104,10 @@ fn design_context_bundles_code_properties_variables_and_outline() {
     assert_eq!(out["properties"][0]["title"], "Layout");
     assert!(out["outline"].as_str().unwrap().starts_with("<frame "));
     // html is the default language
-    assert_eq!(s.execute("inspect.designContext", &json!({"id": f})).unwrap()["language"], "html");
-    assert!(s.execute("inspect.designContext", &json!({"id": f, "language": "cobol"})).is_err());
+    assert_eq!(s.execute("inspect.codeContext", &json!({"id": f})).unwrap()["language"], "html");
+    assert!(s.execute("inspect.codeContext", &json!({"id": f, "language": "cobol"})).is_err());
     s.execute("select.none", &json!({})).unwrap();
-    assert!(s.execute("inspect.designContext", &json!({})).is_err(), "no selection, no id");
+    assert!(s.execute("inspect.codeContext", &json!({})).is_err(), "no selection, no id");
 }
 
 #[test]
@@ -148,7 +148,7 @@ fn design_context_extras_cover_the_subtree() {
     ex(&mut s, "comment.add", json!({"x": 20, "y": 30, "text": "Check spacing", "anchor": f.0}));
     ex(&mut s, "proto.interaction.add", json!({"id": r, "dest": f}));
 
-    let out = ex(&mut s, "inspect.designContext", json!({"id": f, "language": "react", "include": "all"}));
+    let out = ex(&mut s, "inspect.codeContext", json!({"id": f, "language": "react", "include": "all"}));
     assert_eq!(out["instances"][0]["componentName"], "Chip");
     assert_eq!(out["instances"][0]["mainId"].as_u64(), Some(comp.0));
     assert_eq!(out["instances"][0]["codeConnect"]["importPath"], "@acme/ui");
@@ -169,11 +169,11 @@ fn design_context_extras_cover_the_subtree() {
     assert!(out.get("truncated").is_none());
 
     // Default include leaves out the heavy lists; a named list gives only that one.
-    let d = ex(&mut s, "inspect.designContext", json!({"id": f}));
+    let d = ex(&mut s, "inspect.codeContext", json!({"id": f}));
     assert!(d.get("comments").is_none() && d.get("interactions").is_none() && d.get("hints").is_some());
-    let only = ex(&mut s, "inspect.designContext", json!({"id": f, "include": ["status"]}));
+    let only = ex(&mut s, "inspect.codeContext", json!({"id": f, "include": ["status"]}));
     assert!(only.get("instances").is_none() && only["status"]["status"] == "readyForDev");
     for junk in [json!("bogus"), json!(5), json!(["status", 3]), json!({"a": 1})] {
-        assert!(s.execute("inspect.designContext", &json!({"id": f, "include": junk})).is_err());
+        assert!(s.execute("inspect.codeContext", &json!({"id": f, "include": junk})).is_err());
     }
 }

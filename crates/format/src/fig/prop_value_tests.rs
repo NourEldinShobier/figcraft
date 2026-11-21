@@ -187,75 +187,42 @@ fn property_values_written_only_as_variables_are_applied() {
     assert_eq!(props.get("Label"), Some(&Value::String("Name on card".into())));
 }
 
-/// A main "Button" whose nested instance "Icon" (main Mail, 40) is swapped through definition 72;
-/// instance 20 of it sets the swap to Card (41). `icon_fields` bind the nested instance; `row` is
-/// an override row instance 20 writes for it.
-fn swap_message(icon_fields: Vec<(&'static str, Kv<'static>)>, row: Vec<(&'static str, Kv<'static>)>) -> Kv<'static> {
-    let mut icon = vec![("symbolData", o(vec![("symbolID", g(40))]))];
-    icon.extend(icon_fields);
-    let mut row_fields = vec![("guidPath", o(vec![("guids", Kv::Array(vec![g(13)]))]))];
-    row_fields.extend(row);
-    message(vec![
-        node(
-            10,
-            "SYMBOL",
-            "Button",
-            Some(2),
-            vec![("componentPropDefs", Kv::Array(vec![definition(72, "Icon", "INSTANCE_SWAP", o(vec![("guidValue", g(40))]))]))],
-        ),
-        node(13, "INSTANCE", "Icon", Some(10), icon),
-        node(40, "SYMBOL", "Mail", Some(2), vec![]),
-        node(41, "SYMBOL", "Card", Some(2), vec![]),
-        node(
-            20,
-            "INSTANCE",
-            "Instance",
-            Some(2),
-            vec![
-                ("symbolData", o(vec![("symbolID", g(10)), ("symbolOverrides", Kv::Array(vec![o(row_fields)]))])),
-                (
-                    "componentPropAssignments",
-                    Kv::Array(vec![variable_assignment(72, "SYMBOL_ID", o(vec![("symbolIdValue", o(vec![("guid", g(41))]))]))]),
-                ),
-            ],
-        ),
-    ])
-}
-
-/// #464: an override row with a map of its own (variable bindings only) must not hide the swap
-/// binding below it, and the older `componentPropRefs` form binds the swap as well.
+/// #2022: a set keeps each named text definition under its own name (Figma writes one per variant,
+/// plus leftovers of deleted variants), and each variant's text reads its own copy.
 #[test]
-fn instance_swap_properties_reach_nested_instances_in_either_reference_form() {
-    let map_only = swap_message(vec![bound("OVERRIDDEN_SYMBOL_ID", 72)], vec![bound("CORNER_RADIUS", 73)]);
-    let legacy = swap_message(
-        vec![("componentPropRefs", Kv::Array(vec![o(vec![("defID", g(72)), ("componentPropNodeField", Kv::Enum("OVERRIDDEN_SYMBOL_ID"))])]))],
-        vec![],
-    );
-    let plain = swap_message(vec![bound("OVERRIDDEN_SYMBOL_ID", 72)], vec![]);
-    for (name, msg) in [("plain", plain), ("row with its own map", map_only), ("componentPropRefs", legacy)] {
-        let (rest, _, _) = to_rest(&msg, "Synthetic", crate::rest::MAX_NODES);
-        let instance = by_id(&rest["document"], "9:20");
-        assert_eq!(by_id(instance, "I9:20;9:13")["componentId"], "9:41", "{name}");
-    }
-}
-
-/// #1234: a text layer in a library instance links its style by the asset's key and version; the
-/// file's copy of that style (which says the same key and version) wins over the layer's stale size.
-#[test]
-fn a_text_style_linked_by_asset_key_beats_the_layers_own_copy() {
-    let link = |version: &str| ("styleIdForText", o(vec![("assetRef", o(vec![("key", s("abc")), ("version", s(version))]))]));
-    let text = |id: u32, name: &str, version: &str| {
-        node(id, "TEXT", name, Some(2), vec![("textData", o(vec![("characters", s("Hi"))])), ("fontSize", Kv::Float(12.0)), link(version)])
-    };
-    let style = node(
-        30,
-        "TEXT",
-        "Heading",
-        Some(2),
-        vec![("styleType", Kv::Enum("TEXT")), ("key", s("abc")), ("version", s("7")), ("fontSize", Kv::Float(30.0))],
-    );
-    let msg = message(vec![style, text(31, "By asset", "7"), text(32, "Other version", "9")]);
+fn a_set_keeps_each_named_text_definition_and_layers_read_their_own() {
+    let text = |chars: &str| o(vec![("textValue", o(vec![("characters", s(chars))]))]);
+    let names = ["Type=Flag /  State=Default label", "Type=Flag /  State=Selected label", "Type=Issue /  State=Default label"];
+    let set_defs: Vec<Kv<'static>> =
+        names.iter().zip([70, 71, 72]).zip(["One", "Two", "Gone"]).map(|((n, id), c)| definition(id, n, "TEXT", text(c))).collect();
+    let copies = |first: u32| Kv::Array((0..3).map(|k| o(vec![("id", g(first + k)), ("parentPropDefId", g(70 + k))])).collect());
+    let msg = message(vec![
+        node(9, "FRAME", "Chip", Some(2), vec![("isStateGroup", Kv::Bool(true)), ("componentPropDefs", Kv::Array(set_defs))]),
+        node(10, "SYMBOL", "Type=Flag, State=Default", Some(9), vec![("componentPropDefs", copies(80))]),
+        node(11, "TEXT", "Label", Some(10), vec![bound("TEXT_DATA", 80)]),
+        node(20, "SYMBOL", "Type=Flag, State=Selected", Some(9), vec![("componentPropDefs", copies(90))]),
+        node(21, "TEXT", "Label", Some(20), vec![bound("TEXT_DATA", 91)]),
+    ]);
     let (rest, _, _) = to_rest(&msg, "Synthetic", crate::rest::MAX_NODES);
-    assert_eq!(by_id(&rest["document"], "9:31")["style"]["fontSize"], 30.0);
-    assert_eq!(by_id(&rest["document"], "9:32")["style"]["fontSize"], 12.0, "an unknown version names nothing");
+    let defs = &by_id(&rest["document"], "9:9")["componentPropertyDefinitions"];
+    for (k, n) in names.iter().enumerate() {
+        assert_eq!(defs[format!("{n}#9:{}", 70 + k)]["type"], "TEXT", "{n}");
+    }
+    assert_eq!(defs.as_object().map(|d| d.len()), Some(3), "{defs}");
+    assert_eq!(by_id(&rest["document"], "9:11")["componentPropertyReferences"]["characters"], format!("{}#9:70", names[0]));
+    assert_eq!(by_id(&rest["document"], "9:21")["componentPropertyReferences"]["characters"], format!("{}#9:71", names[1]));
+
+    let (doc, _) = crate::rest::import_fig(&rest, &crate::rest::no_images).unwrap();
+    let refs: Vec<Option<String>> = doc
+        .ids()
+        .filter_map(|id| doc.node(id))
+        .filter(|n| n.name == "Label" && n.source.is_none())
+        .map(|n| n.prop_refs.get("characters").cloned())
+        .collect();
+    assert_eq!(refs.len(), 2, "{refs:?}");
+    assert!(refs.contains(&Some(names[0].to_string())) && refs.contains(&Some(names[1].to_string())), "{refs:?}");
+    for set in doc.ids().filter_map(|id| doc.node(id)).filter(|n| matches!(n.kind, NodeKind::Component { .. })) {
+        let NodeKind::Component { props, .. } = &set.kind else { continue };
+        assert!(names.iter().all(|n| props.contains_key(*n)), "{} holds {:?}", set.name, props.keys().collect::<Vec<_>>());
+    }
 }

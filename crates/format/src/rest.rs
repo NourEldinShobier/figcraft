@@ -61,18 +61,18 @@ pub use variables::export as export_variables;
 pub const MAX_NODES: usize = 200_000;
 /// Deepest layer nesting followed.
 const MAX_DEPTH: usize = 256;
-/// Private .fig provenance, consumed only by the `.fig` import ([`import_with_networks`]).
-pub(crate) const FIG_SOURCE_FIELD: &str = "_figSource";
-/// Hidden .fig library context; accepted only by the `.fig` import ([`import_with_networks`]).
-pub(crate) const FIG_LIBRARY_CONTEXTS_FIELD: &str = "_figLibraryContexts";
-/// Ids of mains in a `.fig` file that its layer cap kept out; read only by the `.fig` import.
-pub(crate) const FIG_CAPPED_MAINS_FIELD: &str = "_figCappedMains";
+/// The `.fig` mapping's private handoffs, read only by the `.fig` import ([`import_with_networks`]).
+pub(crate) use craft_fig::rest::{FIG_CAPPED_MAINS_FIELD, FIG_LIBRARY_CONTEXTS_FIELD, FIG_SOURCE_FIELD};
 /// Longest SVG path string read from one geometry entry.
 const MAX_PATH_BYTES: usize = 4 << 20;
 /// Most path elements in one vector.
 const MAX_PATH_ELEMENTS: usize = 200_000;
-/// Most distinct warnings reported.
-pub(crate) const MAX_WARNINGS: usize = 200;
+#[cfg(test)]
+pub(crate) use craft_figma_rest::MAX_WARNINGS;
+/// Distinct warnings in first-seen order, with repeat counts (at most 200). The
+/// import report reads the `(×n)` suffix off before it looks the note up in the catalogue, so a
+/// counted note is still translated (`ui-egui`'s `note_text`).
+pub(crate) use craft_figma_rest::Warnings;
 /// Most shared style definitions read.
 const MAX_STYLES: usize = 10_000;
 /// Image key used for image fills without an `imageRef`.
@@ -165,7 +165,7 @@ pub fn import(v: &Value, images: ImageResolver) -> Result<(Document, Vec<String>
 /// in the file JSON (a `meta` with `variableCollections`, or `variableCollections` and
 /// `variables` at the top level) are read too; the first definition of an id wins.
 pub fn import_with(v: &Value, variables: Option<&Value>, images: ImageResolver) -> Result<(Document, Vec<String>), FormatError> {
-    import_parts(v, variables, images, Vec::new(), MAX_NODES, false, None)
+    import_parts(v, variables, images, Vec::new(), MAX_NODES, false)
 }
 
 /// Internal .fig JSON path: GUID provenance is not part of the public REST import contract.
@@ -178,14 +178,13 @@ pub(crate) fn import_fig(v: &Value, images: ImageResolver) -> Result<(Document, 
 /// [`import_fig`] for the `.fig` import's JSON, whose vectors name their networks by
 /// `vectorNetworkRef`, an index in `networks` (built once each, and far smaller than as JSON).
 /// `max_nodes`: the layer cap, set by the `.fig` import in place of [`MAX_NODES`].
-#[cfg(test)]
 pub(crate) fn import_with_networks(
     v: &Value,
     images: ImageResolver,
     networks: Vec<Option<VectorNetwork>>,
     max_nodes: usize,
 ) -> Result<(Document, Vec<String>), FormatError> {
-    import_parts(v, None, images, networks, max_nodes, true, None)
+    import_parts(v, None, images, networks, max_nodes, true)
 }
 
 /// [`import_with_networks`] for imports other than `.fig` (no `.fig` source identities): the
@@ -196,48 +195,7 @@ pub(crate) fn import_with_networks_plain(
     networks: Vec<Option<VectorNetwork>>,
     max_nodes: usize,
 ) -> Result<(Document, Vec<String>), FormatError> {
-    import_parts(v, None, images, networks, max_nodes, false, None)
-}
-
-/// The layers of a `.fig` file's REST JSON, each serialized as it was mapped: the tree of
-/// `serde_json::Value`s takes several times the memory of its text, and the layers are built one
-/// at a time, so only the one being built is ever a tree. `v`'s `document` holds no pages.
-#[derive(Default, Clone)]
-pub(crate) struct Packed {
-    pub pages: Vec<PackedPage>,
-    /// Library copies (see [`FIG_LIBRARY_CONTEXTS_FIELD`]), each as one serialized layer.
-    pub contexts: Vec<Vec<u8>>,
-}
-
-/// A page without its layers, and its top-level layers.
-#[derive(Clone)]
-pub(crate) struct PackedPage {
-    pub header: Value,
-    pub children: Vec<Vec<u8>>,
-}
-
-/// A layer serialized by the mapper and deflated (the text of a design file repeats itself about
-/// ten-fold). Numbers round-trip exactly (`float_roundtrip`).
-pub(crate) fn pack(v: &Value) -> Vec<u8> {
-    use std::io::Write;
-    // Serialized in one piece: the encoder is slow when fed token by token.
-    let Ok(text) = serde_json::to_vec(v) else { return Vec::new() };
-    let mut out = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::fast());
-    if out.write_all(&text).is_err() {
-        return Vec::new();
-    }
-    out.finish().unwrap_or_default()
-}
-
-fn unpack(bytes: &[u8]) -> Result<Value, FormatError> {
-    use std::io::Read;
-    let corrupt = |e: &dyn std::fmt::Display| FormatError::Corrupt(format!("packed layer: {e}"));
-    let mut text = Vec::new();
-    flate2::read::DeflateDecoder::new(bytes).read_to_end(&mut text).map_err(|e| corrupt(&e))?;
-    let mut de = serde_json::Deserializer::from_slice(&text);
-    // Layers nest up to MAX_DEPTH levels; the mapper wrote them, so the default limit isn't needed.
-    de.disable_recursion_limit();
-    serde::Deserialize::deserialize(&mut de).map_err(|e| corrupt(&e))
+    import_parts(v, None, images, networks, max_nodes, false)
 }
 
 /// `j` without its children: what the passes after the build keep of a layer.
@@ -248,114 +206,6 @@ fn shallow(j: &Value) -> Value {
     }
 }
 
-/// [`import_with_networks`] for the layers the `.fig` mapper packed (see [`Packed`]).
-pub(crate) fn import_packed(
-    v: &Value,
-    packed: Packed,
-    images: ImageResolver,
-    networks: Vec<Option<VectorNetwork>>,
-    max_nodes: usize,
-) -> Result<(Document, Vec<String>), FormatError> {
-    import_parts(v, None, images, networks, max_nodes, true, Some(packed))
-}
-
-/// The `.fig` import with its pages built one at a time as the mapper makes them, so the first
-/// page can be shown (see [`Incremental::preview`]) while the others are still being mapped. The
-/// document at [`Incremental::finish`] is the one [`import_packed`] gives: the same steps in the
-/// same order (pages in file order, the library copies after them, the cross-references last).
-pub(crate) struct Incremental<'a> {
-    cx: Ctx<'a>,
-    blank: Option<NodeId>,
-    /// Library copies, packed; built after the last page.
-    contexts: Vec<Vec<u8>>,
-    /// Pages after the first, packed, to build in [`Self::finish`].
-    deferred: Vec<PackedPage>,
-}
-
-impl<'a> Incremental<'a> {
-    /// Start from the file JSON as mapped with only the first page (no pages in it), the packed
-    /// library copies and the vector networks made so far.
-    pub(crate) fn start(
-        file: &Value,
-        contexts: Vec<Vec<u8>>,
-        images: ImageResolver<'a>,
-        networks: Vec<Option<VectorNetwork>>,
-        max_nodes: usize,
-    ) -> Self {
-        let name = text(file, "name").filter(|n| !n.trim().is_empty()).map_or("Imported file", clip_str);
-        let mut cx = Ctx::new(Document::new(name), images);
-        cx.fig_sources = Some(fig_sources::Sources::new(max_nodes));
-        let blank = cx.doc.first_page();
-        cx.collect_meta(file);
-        cx.variables(file);
-        cx.style_definitions(file);
-        cx.networks = networks;
-        cx.max_nodes = max_nodes.saturating_add(contexts.len());
-        Self { cx, blank, contexts, deferred: Vec::new() }
-    }
-
-    /// Keep a later page (packed, as small as it gets) for [`Self::finish`], which builds it once
-    /// the message is gone: a built page held while the message is still around is memory the
-    /// plain import never needs at that time. `networks`: those the mapper made since the last page.
-    pub(crate) fn defer_page(&mut self, page: PackedPage, networks: Vec<Option<VectorNetwork>>) {
-        self.cx.networks.extend(networks);
-        self.deferred.push(page);
-    }
-
-    /// Build the next page (the first, at the start).
-    pub(crate) fn add_page(&mut self, page: PackedPage) -> Result<(), FormatError> {
-        let id = self.cx.page_head(&page.header);
-        for bytes in page.children {
-            let layer = unpack(&bytes)?;
-            drop(bytes);
-            self.cx.build(&layer, id, Space::default(), None, 0, false);
-        }
-        Ok(())
-    }
-
-    /// The document as it is with the pages added so far, finished on a copy: instances of
-    /// components on pages not added yet stay frames. The import goes on with the original.
-    pub(crate) fn preview(&self) -> Result<Document, FormatError> {
-        let mut copy = Self { cx: self.cx.clone(), blank: self.blank, contexts: Vec::new(), deferred: Vec::new() };
-        copy.finish_with(&self.contexts)?;
-        Ok(copy.cx.doc)
-    }
-
-    /// The whole document, with the warnings. `file`: the file JSON as mapped with every page.
-    pub(crate) fn finish(mut self, file: &Value) -> Result<(Document, Vec<String>), FormatError> {
-        self.cx.collect_meta(file);
-        self.cx.capped_mains =
-            file.get(FIG_CAPPED_MAINS_FIELD).and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
-        let contexts = std::mem::take(&mut self.contexts);
-        for page in std::mem::take(&mut self.deferred) {
-            self.add_page(page)?;
-        }
-        let mut done = self;
-        done.finish_with(&contexts)?;
-        let warnings = done.cx.warnings.finish();
-        Ok((done.cx.doc, warnings))
-    }
-
-    fn finish_with(&mut self, contexts: &[Vec<u8>]) -> Result<(), FormatError> {
-        let cx = &mut self.cx;
-        for bytes in contexts {
-            let context = unpack(bytes)?;
-            let store = cx.doc.ensure_library_store();
-            cx.build(&context, store, Space::default(), None, 0, false);
-        }
-        if let Some(p) = self.blank
-            && cx.doc.pages.len() > 1
-        {
-            let _ = cx.doc.remove(p);
-        }
-        cx.doc.current_page = cx.doc.first_page();
-        cx.styles_take_bindings();
-        cx.finish();
-        Ok(())
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
 fn import_parts(
     v: &Value,
     variables: Option<&Value>,
@@ -363,7 +213,6 @@ fn import_parts(
     networks: Vec<Option<VectorNetwork>>,
     max_nodes: usize,
     fig_sources: bool,
-    packed: Option<Packed>,
 ) -> Result<(Document, Vec<String>), FormatError> {
     let entries: Vec<&Value> = if is_document(v) { vec![v] } else { nodes_entries(v).collect() };
     if entries.is_empty() {
@@ -390,13 +239,11 @@ fn import_parts(
     // The `.fig` mapper already kept the layers, library copies included, within the cap; each
     // library copy's wrapper frame is the one layer here it doesn't count (#981).
     let contexts = if fig_sources { v.get(FIG_LIBRARY_CONTEXTS_FIELD).and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default() } else { &[] };
-    let (packed_pages, packed_contexts) = packed.map_or((Vec::new(), Vec::new()), |p| (p.pages, p.contexts));
     if fig_sources {
         cx.capped_mains =
             v.get(FIG_CAPPED_MAINS_FIELD).and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
-        cx.max_nodes = max_nodes.saturating_add(contexts.len() + packed_contexts.len());
+        cx.max_nodes = max_nodes.saturating_add(contexts.len());
     }
-    let mut packed_pages = Some(packed_pages);
     for e in entries {
         let Some(root) = e.get("document") else { continue };
         match text(root, "type") {
@@ -406,15 +253,6 @@ fn import_parts(
                         cx.page(c);
                     } else {
                         cx.warn("document children other than pages were skipped");
-                    }
-                }
-                // Packed pages: each layer is read back, built and freed in turn.
-                for page in packed_pages.take().into_iter().flatten() {
-                    let id = cx.page_head(&page.header);
-                    for bytes in page.children {
-                        let layer = unpack(&bytes)?;
-                        drop(bytes);
-                        cx.build(&layer, id, Space::default(), None, 0, false);
                     }
                 }
             }
@@ -430,12 +268,6 @@ fn import_parts(
     for context in contexts {
         let store = cx.doc.ensure_library_store();
         cx.build(context, store, Space::default(), None, 0, false);
-    }
-    for bytes in packed_contexts {
-        let context = unpack(&bytes)?;
-        drop(bytes);
-        let store = cx.doc.ensure_library_store();
-        cx.build(&context, store, Space::default(), None, 0, false);
     }
     // Drop the empty page the new document started with once real pages exist.
     if let Some(p) = blank
@@ -524,41 +356,6 @@ fn children(v: &Value) -> &[Value] {
     v.get("children").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default()
 }
 
-/// Distinct warnings in first-seen order, with repeat counts. Shared with the `.fig` mapper
-/// (`crate::fig::map`), whose notes repeat per layer in the same way.
-#[derive(Default, Clone)]
-pub(crate) struct Warnings {
-    list: Vec<(String, usize)>,
-    index: BTreeMap<String, usize>,
-}
-
-impl Warnings {
-    pub(crate) fn add(&mut self, msg: String) {
-        if let Some(i) = self.index.get(&msg) {
-            if let Some(e) = self.list.get_mut(*i) {
-                e.1 += 1;
-            }
-        } else if self.list.len() < MAX_WARNINGS {
-            self.index.insert(msg.clone(), self.list.len());
-            self.list.push((msg, 1));
-        }
-    }
-
-    /// The notes met so far, without their counts, for the tests that ask whether one was met
-    /// (the product reads them through [`Self::finish`], with the counts).
-    #[cfg(test)]
-    pub(crate) fn seen(&self) -> impl Iterator<Item = &str> {
-        self.list.iter().map(|(msg, _)| msg.as_str())
-    }
-
-    /// The notes, each with `(×n)` after it where it was met more than once. The import report
-    /// reads that suffix off before it looks the note up in the catalogue, so a counted note is
-    /// still translated (`ui-egui`'s `note_text`).
-    pub(crate) fn finish(self) -> Vec<String> {
-        self.list.into_iter().map(|(m, n)| if n > 1 { format!("{m} (×{n})") } else { m }).collect()
-    }
-}
-
 /// The coordinate spaces a child is placed in: its parent's (`world`) and that of the nearest
 /// ancestor that is not a group or boolean (`frame`), both relative to the page.
 #[derive(Clone, Copy)]
@@ -589,7 +386,6 @@ enum Build<'j> {
     Fit(NodeId),
 }
 
-#[derive(Clone)]
 pub(crate) struct Ctx<'a> {
     doc: Document,
     images: ImageResolver<'a>,
@@ -621,6 +417,8 @@ pub(crate) struct Ctx<'a> {
     set_defs: BTreeMap<NodeId, BTreeMap<String, PropDef>>,
     /// Prototype starting points: (page, name, REST node id).
     flows: Vec<(NodeId, String, String)>,
+    /// Board connectors and labels, resolved once every layer is imported (their ends name layers).
+    pending_boards: Vec<(NodeId, Value)>,
     /// Layers with prototype interactions, resolved once every layer is imported.
     protos: Vec<(NodeId, Value)>,
     /// Layers that carry overlay settings (position, background, outside clicks), by REST id.
@@ -657,6 +455,7 @@ impl<'a> Ctx<'a> {
             swap_defaults: Vec::new(),
             set_defs: BTreeMap::new(),
             flows: Vec::new(),
+            pending_boards: Vec::new(),
             protos: Vec::new(),
             overlay_meta: BTreeMap::new(),
             var_kinds: BTreeMap::new(),
@@ -975,6 +774,9 @@ impl<'a> Ctx<'a> {
             self.overlay_meta.entry(rid.to_string()).or_insert_with(|| shallow(j));
         }
         self.bindings(n, j);
+        if let Some(b) = j.get("board") {
+            self.board_item(n, b);
+        }
         let restored = j.get("outlinedStroke").is_some_and(|original| restore_stroke(n, original));
         // Styles and bindings were read against the stroke: they follow its paints to the fill.
         if outlined && !restored {
@@ -989,6 +791,36 @@ impl<'a> Ctx<'a> {
             if p.is_array() {
                 region.fills = props::paints(self, &serde_json::json!({"fills": p}), "fills");
             }
+        }
+    }
+
+    /// The `board` field (a FigCraft extension): what the object is on a board. A sticky or shape
+    /// is set at once; anything else, or junk, is ignored with a warning.
+    fn board_item(&mut self, n: &mut Node, b: &Value) {
+        // A sticky or shape is a frame holding its layers: on anything else it is ignored.
+        let frame = n.kind.is_frame_like();
+        let item = match text(b, "type") {
+            Some("sticky") if frame => {
+                let author = text(b, "author").unwrap_or("").trim();
+                Some(figcraft_doc::BoardItem::Sticky { author: author.chars().filter(|c| !c.is_control()).take(64).collect() })
+            }
+            Some("shape") if frame => {
+                text(b, "shape").and_then(figcraft_doc::BoardShape::from_id).map(|shape| figcraft_doc::BoardItem::Shape { shape })
+            }
+            _ => None,
+        };
+        match item {
+            Some(item) => n.board = Some(item),
+            None => self.warn(format!("unknown board item on {} was ignored", n.name)),
+        }
+    }
+
+    /// Board items that name other layers (connector ends, a label's connector), once every
+    /// layer is imported and `ids` can resolve them.
+    fn resolve_boards(&mut self) {
+        for (id, _) in std::mem::take(&mut self.pending_boards) {
+            let name = self.doc.node(id).map(|n| n.name.clone()).unwrap_or_default();
+            self.warn(format!("unknown board item on {name} was ignored"));
         }
     }
 
@@ -1310,6 +1142,7 @@ impl<'a> Ctx<'a> {
             }
         }
         self.resolve_instances();
+        self.resolve_boards();
         if let Some(sources) = self.fig_sources.take() {
             let missing = sources.apply(&mut self.doc, &self.ids);
             if missing > 0 {

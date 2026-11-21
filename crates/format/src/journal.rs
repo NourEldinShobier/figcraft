@@ -8,10 +8,9 @@
 
 use super::{
     Arc, BTreeMap, BTreeSet, Deserialize, Document, Finite, FormatError, ImageData, MAX_VERSION_DESCRIPTION, MAX_VERSION_INDEX, MAX_VERSION_NAME,
-    MAX_VERSIONS, Packed, Read, Seek, Serialize, Snapshot, Value, Version, VersionLimits, Write, clip, io_err, is_valid_version_id, json,
-    json_options, put, put_versions, read_member,
+    MAX_VERSIONS, Packed, Serialize, Snapshot, Unpacked, Value, Version, VersionLimits, clip, io_err, is_valid_version_id, put, put_versions,
 };
-use serde_json::Map;
+use serde_json::{Map, json};
 
 /// A keyframe (a full snapshot) at least every this many versions.
 pub(crate) const KEYFRAME_EVERY: usize = 8;
@@ -161,11 +160,9 @@ pub(crate) fn crc32(bytes: &[u8]) -> u32 {
     c.sum()
 }
 
-/// `bytes` as a one-member zip, like a packed snapshot.
+/// `bytes` as a packed snapshot.
 fn pack_bytes(bytes: &[u8]) -> Result<Packed, FormatError> {
-    let mut z = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-    put(&mut z, "v", json_options(), bytes)?;
-    Ok(Packed { zip: z.finish().map_err(io_err)?.into_inner(), size: bytes.len() as u64 })
+    Packed::pack(bytes)
 }
 
 impl Version {
@@ -257,7 +254,7 @@ pub(crate) fn fit_journal<'a>(
 
 /// Write the chosen versions: keyframes where older readers look for them (`versions/`), and,
 /// when there are deltas, those under `history/` with the metadata that ties them together.
-pub(crate) fn put_journal<W: Write + Seek>(z: &mut zip::ZipWriter<W>, entries: &[(&Version, Kind)]) -> Result<(), FormatError> {
+pub(crate) fn put_journal(z: &mut craft_figcraft_format::ArchiveWriter, entries: &[(&Version, Kind)]) -> Result<(), FormatError> {
     let keys: Vec<(&Version, Arc<Packed>)> =
         entries.iter().filter_map(|(v, k)| if let Kind::Key(p) = k { Some((*v, p.clone())) } else { None }).collect();
     put_versions(z, "versions", &keys)?;
@@ -270,8 +267,7 @@ pub(crate) fn put_journal<W: Write + Seek>(z: &mut zip::ZipWriter<W>, entries: &
         let p = match k {
             Kind::Key(p) | Kind::Delta(_, p) => p,
         };
-        let mut packed = zip::ZipArchive::new(std::io::Cursor::new(&p.zip[..])).map_err(io_err)?;
-        let crc = packed.by_index(0).map_err(io_err)?.crc32();
+        let crc = p.crc;
         let images: Vec<&String> = v.images().keys().collect();
         let mut e = json!({"id": v.id, "name": v.name, "description": v.description, "time": v.time, "images": images,
             "parent": parent, "crc": crc, "size": p.size});
@@ -281,28 +277,32 @@ pub(crate) fn put_journal<W: Write + Seek>(z: &mut zip::ZipWriter<W>, entries: &
         if let Kind::Delta(base, _) = k {
             e["kind"] = json!("delta");
             e["base"] = json!(base);
-            z.raw_copy_file_rename(packed.by_index(0).map_err(io_err)?, format!("history/{}.delta", v.id)).map_err(io_err)?;
+            put(z, &format!("history/{}.delta", v.id), craft_figcraft_format::Compression::Level(3), &p.unpack()?)?;
         } else {
             e["kind"] = json!("key");
         }
         meta.push(e);
         parent = Some(&v.id);
     }
-    put(z, META, json_options(), &serde_json::to_vec(&json!({"format": 1, "versions": meta})).map_err(io_err)?)
+    put(z, META, craft_figcraft_format::Compression::Level(3), &serde_json::to_vec(&json!({"format": 1, "versions": meta})).map_err(io_err)?)
 }
 
 /// The main version history from `history/meta.json`, or `None` when the file has none (or it is
 /// unreadable: the keyframes under `versions/` are then read as usual). A version that is damaged
 /// or whose base is gone is dropped, with a message, and so is every delta built on it.
-pub(crate) fn read_journal<R: Read + Seek>(
-    z: &mut zip::ZipArchive<R>,
+pub(crate) fn read_journal(
+    z: &mut impl craft_figcraft_format::NativeArchive,
     images: &BTreeMap<String, ImageData>,
     issues: &mut Vec<String>,
     budget: &mut u64,
     member: u64,
+    unpacked: &mut Unpacked,
 ) -> Option<Vec<Version>> {
-    z.index_for_name(META)?;
-    let meta = match read_member(z, META, MAX_VERSION_INDEX)
+    if !z.contains(META) {
+        return None;
+    }
+    let meta = match unpacked
+        .read(z, META, MAX_VERSION_INDEX)
         .and_then(|b| serde_json::from_slice::<Value>(&b).map_err(|e| FormatError::Corrupt(e.to_string())))
     {
         Ok(v) => v,
@@ -325,7 +325,7 @@ pub(crate) fn read_journal<R: Read + Seek>(
         }
         let delta = e.get("kind").and_then(Value::as_str) == Some("delta");
         let name = if delta { format!("history/{id}.delta") } else { format!("versions/{id}.json") };
-        let data = match read_member(z, &name, (*budget).min(member)) {
+        let data = match unpacked.read(z, &name, (*budget).min(member)) {
             Ok(d) => d,
             Err(err) => {
                 issues.push(format!("version `{id}` was dropped: {err}"));

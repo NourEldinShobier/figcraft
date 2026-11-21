@@ -14,6 +14,10 @@ pub enum EngineError {
     NoNode(NodeId),
     #[error("{0}")]
     Other(String),
+    /// A preview was asked for with no gesture open (something committed it under a held button).
+    /// Not for the user: the canvas drops it, as the drag it belonged to is over.
+    #[error("no gesture in progress")]
+    NoGesture,
     /// A command run in the background sent a request to a server and runs again with the answer
     /// ([`background`]); never returned to other callers.
     #[error("waiting for the server")]
@@ -38,7 +42,9 @@ impl EngineError {
     pub(crate) fn at_step(self, step: usize, command: &str) -> Self {
         match self {
             EngineError::BadParams { cmd, msg } => EngineError::BadParams { cmd, msg: format!("step {step} ({command}): {msg}") },
-            EngineError::Waiting | EngineError::Internal { .. } | EngineError::UnknownCommand(_) => self,
+            EngineError::Disabled(cmd, msg) => EngineError::Disabled(cmd, format!("step {step} ({command}): {msg}")),
+            EngineError::Internal { cmd, msg } => EngineError::Internal { cmd, msg: format!("step {step} ({command}): {msg}") },
+            EngineError::Waiting | EngineError::UnknownCommand(_) => self,
             e => EngineError::Other(format!("step {step} ({command}): {e}")),
         }
     }

@@ -100,16 +100,37 @@ impl<'a> Bounds<'a> {
 }
 
 /// A hash map keyed by node ids, which need no SipHash: they are counters (or a peer's range of
-/// them), and SipHash took a good part of a render.
-type IdMap<K, V> = HashMap<K, V, std::hash::BuildHasherDefault<IdHash>>;
+/// them), and SipHash took a good part of a render. A file can choose its ids, so each map is
+/// seeded at random and the hash mixes its high bits down (ids differing only up high would
+/// otherwise share a bucket).
+type IdMap<K, V> = HashMap<K, V, IdState>;
+
+/// Builds [`IdHash`]es from a per-map random seed.
+#[derive(Clone)]
+pub(crate) struct IdState(u64);
+
+impl Default for IdState {
+    fn default() -> Self {
+        use std::hash::BuildHasher;
+        IdState(std::collections::hash_map::RandomState::new().hash_one(0u8))
+    }
+}
+
+impl std::hash::BuildHasher for IdState {
+    type Hasher = IdHash;
+    fn build_hasher(&self) -> IdHash {
+        IdHash(self.0)
+    }
+}
 
 /// Mixes each word in with a multiply (Fibonacci hashing), so ids that differ in low bits spread.
-#[derive(Default)]
 pub(crate) struct IdHash(u64);
 
 impl Hasher for IdHash {
     fn finish(&self) -> u64 {
-        self.0
+        // The multiply's low bits depend only on the input's low bits: mix the high ones down.
+        let h = (self.0 ^ (self.0 >> 32)).wrapping_mul(0xFF51_AFD7_ED55_8CCD);
+        h ^ (h >> 29)
     }
     fn write(&mut self, bytes: &[u8]) {
         for b in bytes {
@@ -342,17 +363,6 @@ pub fn node_outline(doc: &Document, n: &Node) -> Option<(BezPath, FillRule)> {
     node_outline_at(doc, n, 0)
 }
 
-/// A boolean result with its corners rounded by `radius` (the group's own corner radius; 0 or
-/// below leaves it as is). Points the result runs through smoothly stay as they are.
-fn round_result(path: BezPath, radius: f64, smoothing: f64) -> BezPath {
-    if !(radius > 0.0 && radius.is_finite()) || path.elements().is_empty() {
-        return path;
-    }
-    let mut net = figcraft_doc::VectorNetwork::from_path(&path);
-    net.vertices.iter_mut().for_each(|v| v.radius = radius);
-    net.rounded_smoothed(smoothing).map_or(path, |r| r.fill_path())
-}
-
 /// The result a file stored for boolean group `n`, scaled to its size, while it still matches the
 /// operands (and operation, rounding) it was computed from. The first drawing records the match.
 fn stored_outline(n: &Node, operands: &[(BezPath, figcraft_doc::BoolOp)], radius: f64, smoothing: f64) -> Option<(BezPath, FillRule)> {
@@ -393,8 +403,9 @@ fn node_outline_at(doc: &Document, n: &Node, depth: usize) -> Option<(BezPath, F
             if let Some(stored) = stored_outline(n, &operands, radius, smoothing) {
                 return Some(stored);
             }
-            // Past the path operations' caps the group has no outline: it draws without its result.
-            crate::boolean::fold_cached(&operands).map(|p| (round_result(p, radius, smoothing), FillRule::EvenOdd))
+            // Past the path operations' caps the group has no outline: it draws without its result. The
+            // group's corner radius rounds what is still sharp in the fold.
+            crate::boolean::result_cached(&operands, radius, smoothing).map(|p| (p, FillRule::EvenOdd))
         }
         NodeKind::Text(_) => {
             let (l, dy) = figcraft_text::layout_node(n)?;

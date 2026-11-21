@@ -237,12 +237,12 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         spec!(
-            "inspect.designContext",
-            "Design context",
+            "inspect.codeContext",
+            "Code context",
             "{id? (default the selection), language? (as inspect.code; default html), depth? (0-32; outline depth, default 3), include? (a name or list of: instances|annotations|devResources|status|comments|bindings|interactions|hints|all; default all but comments and interactions)} → {id, name, type, language, code, codeTruncated, properties (as inspect.properties), variables, assets (as inspect.assets), outline} plus the included extras for the layer and its descendants: instances [{id, componentName, mainId, codeConnect? {importPath, name, snippet}}], annotations, devResources [{layer, name, url}], status {status, changed, note?}, comments (open threads pinned inside, text only), bindings [{id, name, bound {property: {variable, collection, value, css: var(--name, raw)}}}], interactions [{id, name, trigger, actions, durationMs}], hints (priority-ordered); lists stop at 100 entries and `truncated` names the cut ones. Mapped instances already show their Code Connect snippet in `code`  everything needed to implement a layer in code",
             false,
             |s, p| {
-                let cmd = "inspect.designContext";
+                let cmd = "inspect.codeContext";
                 let id = layer(cmd, s, p, false)?;
                 let lang = match string(p, "language") {
                     Some(l) => CodeLang::from_id(&l).ok_or_else(|| bad(cmd, "language: css|html|react|leptos|vue|tailwind|swiftui|compose|arkui"))?,

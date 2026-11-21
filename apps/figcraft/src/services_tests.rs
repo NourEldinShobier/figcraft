@@ -159,3 +159,13 @@ fn portable_settings_file_is_used_when_present() {
     let svc = Desktop::load_from(Some(dir.clone()), Arc::new(Mutex::new(None)));
     assert_eq!(svc.prefs.unwrap().recent_files, vec!["b.figcraft".to_string()]);
 }
+
+/// The update prompt's What's new and Download, and the About and Credits links, open through
+/// `ctx.open_url`. eframe drops those with only a log warning unless it is built with `links`.
+#[test]
+fn links_in_the_interface_open_in_the_browser() {
+    let manifest = include_str!("../Cargo.toml");
+    let eframe: Vec<&str> = manifest.lines().filter(|l| l.trim_start().starts_with("eframe =")).collect();
+    assert!(!eframe.is_empty(), "the app depends on eframe");
+    assert!(eframe.iter().any(|l| l.contains("\"links\"")), "eframe is built with `links`: {eframe:?}");
+}

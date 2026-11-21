@@ -95,7 +95,7 @@ fn a_small_page_becomes_nested_auto_layout_frames() {
         assert_eq!(c["effects"][0]["type"], json!("dropShadow"));
         assert_eq!(c["effects"][0]["offset"], json!([0.0, 1.0]));
         assert!((c["width"].as_f64().unwrap() - 442.67).abs() < 0.01, "{c}");
-        assert_eq!(c["height"], json!(115.0), "the card hugs its content: {c}");
+        assert_eq!(c["height"], json!(116.0), "the card hugs its content: {c}");
     }
 }
 

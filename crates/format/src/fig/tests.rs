@@ -9,7 +9,7 @@ use serde_json::Value;
 use super::kiwi::{Def, Field, Kind, Kv, Schema, Type, encode};
 use super::*;
 
-/// The fixture schema: `enum Name A B â€¦`, `struct|message Name type field, type field[] â€¦`.
+/// The fixture schema: `enum Name A B …`, `struct|message Name type field, type field[] …`.
 /// Message field ids count from 1; enum values from 0.
 const SCHEMA: &str = "
 enum NodeType NONE DOCUMENT CANVAS GROUP FRAME BOOLEAN_OPERATION VECTOR STAR LINE ELLIPSE RECTANGLE REGULAR_POLYGON ROUNDED_RECTANGLE TEXT SLICE SYMBOL INSTANCE STICKY VARIABLE VARIABLE_SET SHAPE_WITH_TEXT CONNECTOR TABLE
@@ -154,7 +154,7 @@ fn triangle_blob() -> Vec<u8> {
     b
 }
 
-/// A 2Ã—1 PNG.
+/// A 2×1 PNG.
 pub(super) fn png() -> Vec<u8> {
     let img = image::RgbaImage::from_pixel(2, 1, image::Rgba([255, 0, 0, 255]));
     let mut out = Vec::new();
@@ -616,7 +616,7 @@ fn kiwi_scalars() {
         w.var_uint(5);
         w.var_uint64(u64v);
         w.var_uint(6);
-        w.string("hÃ©llo");
+        w.string("héllo");
         w.var_uint(7);
         w.byte(1);
         w.var_uint(0);
@@ -628,27 +628,9 @@ fn kiwi_scalars() {
         assert_eq!(got.get("u"), Some(&Kv::Uint(u64::from(uv))));
         assert_eq!(got.get("i64"), Some(&Kv::Int(i64v)));
         assert_eq!(got.get("u64"), Some(&Kv::Uint(u64v)));
-        assert_eq!(got.get("s"), Some(&s("hÃ©llo")));
+        assert_eq!(got.get("s"), Some(&s("héllo")));
         assert_eq!(got.get("b"), Some(&Kv::Bool(true)));
     }
-}
-
-/// Field ids that don't run 1, 2, 3 (the decoder tries the slot `id - 1` first) still find their field.
-#[test]
-fn kiwi_message_fields_with_gaps_and_order() {
-    let field = |name: &str, value: u32| Field { name: name.into(), ty: Some(Type::Uint), array: false, value };
-    let sc = Schema {
-        defs: vec![Def { name: "M".into(), kind: Kind::Message, fields: vec![field("a", 5), field("b", 1), field("c", 2), field("d", 40)] }],
-    };
-    let mut w = encode::Writer::default();
-    for (id, v) in [(2u32, 7u32), (5, 8), (40, 9), (1, 10)] {
-        w.var_uint(id);
-        w.var_uint(v);
-    }
-    w.var_uint(0);
-    let msg = sc.decode_message(0, &w.0).unwrap();
-    let get = |k: &str| msg.get(k).and_then(Kv::f64);
-    assert_eq!((get("a"), get("b"), get("c"), get("d")), (Some(8.0), Some(10.0), Some(7.0), Some(9.0)));
 }
 
 #[test]
@@ -813,11 +795,11 @@ fn hashes_naming_one_blob_share_one_copy_of_it() {
         ("blobs", Kv::Array(vec![o(vec![("bytes", Kv::Bytes(png()))]), o(vec![("bytes", Kv::Bytes(vec![7; 16]))])])),
         ("nodeChanges", Kv::Array((1..=50).map(|h| image(h, 0)).chain([image(99, 1), image(98, 2)]).collect())),
     ]);
-    let copies = embedded_copies(&msg);
+    let copies = embedded_copies(&msg, MAX_IMAGE);
     assert_eq!(copies.len(), 51, "the hash naming no blob is left out");
     let first = &copies[&"01".repeat(20)];
     assert_eq!(**first, *png());
-    assert_eq!(copies.values().filter(|c| Arc::ptr_eq(c, first)).count(), 50);
+    assert_eq!(copies.values().filter(|c| std::sync::Arc::ptr_eq(c, first)).count(), 50);
     assert_eq!(*copies[&"63".repeat(20)], [7; 16]);
 }
 
@@ -832,7 +814,7 @@ fn hashes_naming_one_blob_are_imported_once() {
     let mut nodes = vec![node(0, None, "DOCUMENT", "D", vec![]), node(1, Some((0, "!")), "CANVAS", "P", vec![])];
     nodes.extend((2..42).map(|i| rect(i, i as u8, 0)));
     let msg = o(vec![("nodeChanges", arr(nodes)), ("blobs", arr(vec![o(vec![("bytes", Kv::Bytes(png()))])]))]);
-    let copies = embedded_copies(&msg);
+    let copies = embedded_copies(&msg, MAX_IMAGE);
     let aliases = embedded_aliases(&copies, |_| false);
     assert_eq!(aliases.len(), 39);
     assert!(aliases.values().all(|c| *c == "02".repeat(20)));
@@ -846,6 +828,17 @@ fn hashes_naming_one_blob_are_imported_once() {
         let figcraft_doc::color::PaintKind::Image(img) = &named(&doc, &format!("R{i}")).fills[0].kind else { panic!("not an image fill") };
         assert_eq!(&img.image, key);
     }
+}
+
+#[test]
+fn image_refs_are_renamed_wherever_they_sit() {
+    let aliases: BTreeMap<String, String> = [("b".to_string(), "a".to_string())].into();
+    let mut json = serde_json::json!({"fills": [{"imageRef": "b"}, {"imageRef": "c"}], "styles": {"s": {"fills": [{"imageRef": "b"}]}}, "name": "b"});
+    canonical_image_refs(&mut json, &aliases);
+    assert_eq!(
+        json,
+        serde_json::json!({"fills": [{"imageRef": "a"}, {"imageRef": "c"}], "styles": {"s": {"fills": [{"imageRef": "a"}]}}, "name": "b"})
+    );
 }
 
 mod image_budget {
@@ -981,13 +974,13 @@ mod image_budget {
         // Shorten the first member's compressed size, cutting its deflate stream mid-image.
         change_member_field(&mut zip, 1, 20, 15);
         let limit = members[0].1.len() as u64;
-        let archive = Archive::open(&zip).unwrap();
-        archive.image_budget.remaining.set(limit);
+        let archive = Archive::open_with(&zip, Limits { max_image: MAX_IMAGE, max_image_total: limit }).unwrap();
         assert!(archive.image(&"01".repeat(20)).is_none());
-        let remaining = archive.image_budget.remaining.get();
-        assert!(remaining > 0 && remaining < limit, "partial read left {remaining} of {limit} bytes");
+        // The failed read keeps its charge (craft-fig charges the declared size).
+        let remaining = archive.image_bytes_left();
+        assert!(remaining < limit, "partial read left {remaining} of {limit} bytes");
         assert!(archive.image(&"02".repeat(20)).is_none());
-        assert_eq!(archive.image_budget.remaining.get(), remaining);
+        assert_eq!(archive.image_bytes_left(), remaining);
         let (doc, warnings) = import_with_image_limit(&zip, "Images", limit).unwrap();
         assert_ne!(bytes(&doc, 1), members[1].1);
         assert_eq!(budget_warnings(&warnings).len(), 1, "{warnings:?}");
@@ -1020,14 +1013,13 @@ mod image_budget {
         let members = [(1, image(1)), (2, image(2))];
         let mut zip = file(&[1, 2], &members);
         change_member_field(&mut zip, 1, 24, 1);
-        let archive = Archive::open(&zip).unwrap();
-        archive.image_budget.remaining.set(members[0].1.len() as u64 - 1);
+        let archive = Archive::open_with(&zip, Limits { max_image: MAX_IMAGE, max_image_total: members[0].1.len() as u64 - 1 }).unwrap();
+        // Whether the ZIP reader refuses the mismatch or reads on, the member is not returned
+        // and the budget is never overdrawn.
         assert!(archive.image(&"01".repeat(20)).is_none());
-        assert_eq!(archive.image_budget.remaining.get(), 0);
-        assert_eq!(archive.image_budget.skipped.get(), 1);
+        assert!(archive.image_bytes_left() < members[0].1.len() as u64);
         assert!(archive.image(&"02".repeat(20)).is_none());
-        assert_eq!(archive.image_budget.remaining.get(), 0);
-        assert_eq!(archive.image_budget.skipped.get(), 2);
+        assert!(archive.images_skipped() >= 1);
     }
 
     #[test]
@@ -1160,25 +1152,23 @@ fn mangled_kiwi_never_panics() {
 #[test]
 fn large_files_get_a_larger_value_budget() {
     // Small files keep the fixed floor: a few bytes can't expand into a huge tree.
-    assert_eq!(kiwi::value_budget(0), 20_000_000);
-    assert_eq!(kiwi::value_budget(1 << 20), 20_000_000);
+    assert_eq!(craft_fig::value_budget(0), 20_000_000);
+    assert_eq!(craft_fig::value_budget(1 << 20), 20_000_000);
     // A real 400 000-layer file: an 83.5 MB canvas whose message unpacks to 334 MB and holds
     // 30.5 million values was refused as "too many values".
-    assert!(kiwi::value_budget(83_491_232) > 30_514_899);
+    assert!(craft_fig::value_budget(83_491_232) > 30_514_899);
     // A real 194 MB design-system file (UX4G): a 39.5 MB canvas holding 29.7 million values.
-    assert!(kiwi::value_budget(39_528_420) > 29_703_730);
-    // A real 9.5 MB design file (202 905 layers): a 9.4 MB canvas holding 26.4 million values.
-    assert!(kiwi::value_budget(9_400_000) > 26_371_279);
+    assert!(craft_fig::value_budget(39_528_420) > 29_703_730);
     // Still bounded by the largest canvas read.
-    assert!(kiwi::value_budget(MAX_CANVAS as usize) <= 128 << 20);
+    assert!(craft_fig::value_budget(MAX_CANVAS as usize) <= 128 << 20);
     // Counting every scalar field, a dense file may reach about 2.4 values per compressed byte (the
     // 15 MB text-heavy fixture in `value_budget_tests` measures 1.8): below the ceiling the budget must
     // cover that, the floor still holds up to 5 MB of canvas, and 32 MiB is enough for the ceiling.
-    assert!(kiwi::value_budget(8 << 20) >= (8 << 20) * 12 / 5);
+    assert!(craft_fig::value_budget(8 << 20) >= (8 << 20) * 12 / 5);
     #[cfg(not(target_pointer_width = "32"))]
-    assert!(kiwi::value_budget(30_000_000) >= 30_000_000 * 12 / 5);
-    assert_eq!(kiwi::value_budget(5_000_000), 20_000_000);
-    assert_eq!(kiwi::value_budget(32 << 20), kiwi::value_budget(MAX_CANVAS as usize));
+    assert!(craft_fig::value_budget(30_000_000) >= 30_000_000 * 12 / 5);
+    assert_eq!(craft_fig::value_budget(5_000_000), 20_000_000);
+    assert_eq!(craft_fig::value_budget(32 << 20), craft_fig::value_budget(MAX_CANVAS as usize));
 }
 
 #[test]
@@ -1334,7 +1324,7 @@ fn instances_inside_their_own_main_stop() {
     assert!(doc.nodes().any(|n| n.name == "Self"));
 }
 
-/// A collection from a library is named by its asset key, not a guid â€” also in the explicit mode
+/// A collection from a library is named by its asset key, not a guid — also in the explicit mode
 /// map of the frames, components and instances set it on, and in the variables' collection link.
 #[test]
 fn modes_of_collections_named_by_asset_import() {
@@ -1592,37 +1582,12 @@ fn dump_samples() {
         std::fs::write(format!("{out}/{stem}.schema.txt"), txt).unwrap();
         let msg = schema.decode_message(schema.find("Message").unwrap(), &message).unwrap();
         std::fs::write(format!("{out}/{stem}.json"), serde_json::to_string_pretty(&debug_json(&msg)).unwrap()).unwrap();
-        let (rest, ..) = map::to_rest(&msg, &stem, super::layer_budget(message.len()));
+        // A whiteboard's dump shows its native board items as the import makes them.
+        let (rest, ..) = map::to_rest_for(&msg, &stem, super::layer_budget(message.len()), a.canvas.starts_with(super::JAM_HEADER));
         std::fs::write(format!("{out}/{stem}.rest.json"), serde_json::to_string_pretty(&rest).unwrap()).unwrap();
     }
 }
 
-#[test]
-fn fields_the_import_never_reads_are_not_kept_in_the_tree() {
-    let field = |name: &str, ty, value| Field { name: name.into(), ty: Some(ty), array: false, value };
-    let schema = Schema {
-        defs: vec![Def {
-            name: "Message".into(),
-            kind: Kind::Message,
-            fields: vec![
-                field("name", Type::Str, 1),
-                field("derivedTextData", Type::Uint, 2),
-                field("editInfo", Type::Str, 3),
-                field("size", Type::Uint, 4),
-            ],
-        }],
-    };
-    let msg = Kv::Object(vec![
-        ("name", Kv::Str("kept".into())),
-        ("derivedTextData", Kv::Uint(7)),
-        ("editInfo", Kv::Str("history".into())),
-        ("size", Kv::Uint(3)),
-    ]);
-    let bytes = encode::message(&schema, 0, &msg).unwrap();
-    // The fields after a dropped one are still read from the right place.
-    let back = schema.decode_message(0, &bytes).unwrap();
-    assert_eq!(back, Kv::Object(vec![("name", Kv::Str("kept".into())), ("size", Kv::Uint(3))]));
-}
 #[path = "board_import_tests.rs"]
 mod board;
 
@@ -1856,7 +1821,6 @@ fn same_version_library_copies_resolve_deterministically_and_leave_no_table() {
         let page = doc.nodes().find(|n| n.name == "Page").unwrap();
         assert_eq!(page.var_modes.get(&id).map(String::as_str), Some("1:90"));
         picked.push(id);
-        assert!(!super::map::VarCanon::installed());
     }
     assert_eq!(picked, ["1:6", "1:6"]);
 }

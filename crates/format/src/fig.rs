@@ -25,35 +25,30 @@ mod export;
 #[cfg(test)]
 mod export_tests;
 #[cfg(test)]
-mod import_snapshot_tests;
+mod guides_tests;
 #[cfg(test)]
 mod interop_tests;
-pub mod kiwi;
 #[cfg(test)]
 mod layer_cap_tests;
 mod map;
 #[cfg(test)]
 mod missing_image_tests;
-mod network;
 #[cfg(test)]
 mod paste_style_tests;
 #[cfg(test)]
 mod prop_value_tests;
 #[cfg(test)]
-mod scale_factor_tests;
+mod proto_background_tests;
 #[cfg(test)]
-mod scaled_instance_tests;
+mod scale_factor_tests;
 #[cfg(test)]
 mod slot_tests;
 #[cfg(test)]
 mod source_identity_tests;
 #[cfg(test)]
-mod staged_tests;
-#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod text_paragraph_tests;
-mod text_path;
 #[cfg(test)]
 mod text_path_tests;
 #[cfg(test)]
@@ -67,27 +62,22 @@ mod value_budget_tests;
 #[cfg(test)]
 mod vector_scale_tests;
 
-use std::cell::Cell;
 use std::collections::BTreeMap;
-use std::io::Read;
-use std::sync::Arc;
 
 use figcraft_doc::{Document, FileKind};
 
 pub use export::export;
 
 use crate::FormatError;
-use kiwi::{Kv, Schema};
+#[cfg(test)]
+use craft_fig::rest::MAX_FIG_NODES;
+pub(crate) use craft_fig::rest::layer_budget;
+use craft_fig::{Archive, Limits, decode_canvas, embedded_aliases, embedded_copies, kiwi};
+pub use craft_fig::{JAM_HEADER, is_fig};
+#[cfg(test)]
+use craft_fig::{MAX_CANVAS, chunks, network};
+pub(crate) use craft_figma_rest::style_name;
 
-/// Largest `canvas.fig` member read, and largest decompressed chunk.
-const MAX_CANVAS: u64 = 256 * 1024 * 1024;
-const MAX_CHUNK: u64 = 512 * 1024 * 1024;
-/// Largest decompressed schema chunk: Figma's schema unpacks to well under 1 MB, so a schema that
-/// inflates past this is refused before its definitions are decoded.
-const MAX_SCHEMA: u64 = 16 * 1024 * 1024;
-/// Longest image hash (bytes) an image is found by: `images/` names and embedded images both
-/// stop at 64 bytes (128 hex digits).
-pub(crate) const MAX_IMAGE_HASH: usize = 64;
 /// Largest image member read.
 const MAX_IMAGE: u64 = figcraft_doc::ImageData::MAX_BYTES;
 /// Total decompressed ZIP image bytes read per import: the native image budget (`IMAGE_BUDGET`) on
@@ -97,35 +87,6 @@ const MAX_IMAGE: u64 = figcraft_doc::ImageData::MAX_BYTES;
 const MAX_IMAGE_BYTES: u64 = crate::IMAGE_BUDGET.bytes;
 #[cfg(target_pointer_width = "32")]
 const MAX_IMAGE_BYTES: u64 = 1024 * 1024 * 1024;
-/// Most chunks read from `canvas.fig`.
-const MAX_CHUNKS: usize = 16;
-/// Most layers imported from a `.fig` file: one per [`PACKED_BYTES_PER_LAYER`] bytes of its
-/// compressed canvas, at least the REST import's cap and at most [`MAX_FIG_NODES`]. Instances
-/// expand into a layer per layer of their component, and chunks inflate up to [`MAX_CHUNK`], so the
-/// budget follows what the file takes, not what it unpacks to: a small file can't claim a large
-/// count, however it's built; a large one gets room. Design systems are mostly instances, which
-/// pack tightly: a 7.8 MB canvas stopped at 244 248 layers at 32 bytes a layer (#981). At 8, files
-/// under about 1.6 MB keep the floor and the ceiling comes at a 16 MB canvas (about 11 GB and 40 s
-/// to import 2 million synthetic layers; memory grows with the count, about 5.4 KB a layer).
-const PACKED_BYTES_PER_LAYER: usize = 8;
-const MAX_FIG_NODES: usize = 2_000_000;
-
-/// Most layers imported from a `.fig` file whose compressed canvas is `packed` bytes.
-pub(crate) fn layer_budget(packed: usize) -> usize {
-    (packed / PACKED_BYTES_PER_LAYER).clamp(crate::rest::MAX_NODES, MAX_FIG_NODES)
-}
-
-/// The canvas header of a FigJam whiteboard (a `.jam`); a `.fig` has `fig-kiwi`.
-pub const JAM_HEADER: &[u8] = b"fig-jam.";
-
-/// Whether `bytes` look like a `.fig` file: a zip holding `canvas.fig`, or a bare canvas.
-pub fn is_fig(bytes: &[u8]) -> bool {
-    bytes.starts_with(b"fig-") || (bytes.starts_with(b"PK") && zip_has_canvas(bytes))
-}
-
-fn zip_has_canvas(bytes: &[u8]) -> bool {
-    zip::ZipArchive::new(std::io::Cursor::new(bytes)).is_ok_and(|z| z.file_names().any(|n| n == "canvas.fig"))
-}
 
 /// Import `bytes` when they are a `.fig` file; `None` when they are something else.
 pub fn try_import(bytes: &[u8], name: &str) -> Option<Result<(Document, Vec<String>), FormatError>> {
@@ -137,10 +98,9 @@ pub fn try_import(bytes: &[u8], name: &str) -> Option<Result<(Document, Vec<Stri
 pub struct PageFirst {
     /// Fewest node changes in the file.
     pub min_nodes: usize,
-    /// Most of the layers the first page may hold. The first page is built while the decoded
-    /// message is still held, which the plain import never does: the peak memory grows with the
-    /// first page's share (files-modern, first page 51% of 542k layers: 2.3 GB to 3.2 GB), so a
-    /// file whose first page is most of it is better opened whole.
+    /// Most of the layers the first page may hold: the first page is built from a copy of its
+    /// layers while the whole mapped file is still held, so a file whose first page is most of it
+    /// is better opened whole.
     pub max_first_share: f64,
 }
 
@@ -159,17 +119,10 @@ pub fn import(bytes: &[u8], name: &str) -> Result<(Document, Vec<String>), Forma
     import_staged(bytes, name, PageFirst::OFF, &mut |_| {})
 }
 
-/// [`import`] with `image_limit` as the total byte budget of the ZIP's images.
-#[cfg(test)]
-fn import_with_image_limit(bytes: &[u8], name: &str, image_limit: u64) -> Result<(Document, Vec<String>), FormatError> {
-    import_inner(bytes, name, PageFirst::OFF, &mut |_| {}, image_limit)
-}
-
 /// [`import`] that, for a file `page_first` allows (several pages), first hands `first` a document
-/// with only the first page (instances of components on other pages are not linked in it, styles
-/// and variables are the ones met so far) as soon as that page is built, then goes on to the whole
-/// file. The returned document is the one [`import`] gives, whatever `first` did. `first` runs on
-/// the calling thread.
+/// with only the first page (instances of components on other pages are not linked in it) as soon
+/// as the file is mapped, then goes on to build the whole file. The returned document is the one
+/// [`import`] gives, whatever `first` did. `first` runs on the calling thread.
 pub fn import_staged(
     bytes: &[u8],
     name: &str,
@@ -179,6 +132,43 @@ pub fn import_staged(
     import_inner(bytes, name, page_first, first, MAX_IMAGE_BYTES)
 }
 
+/// The layers in `v`'s tree (itself included).
+fn layer_count(v: &serde_json::Value) -> usize {
+    let mut n = 0;
+    let mut pending = vec![v];
+    while let Some(v) = pending.pop() {
+        n += 1;
+        pending.extend(v.get("children").and_then(serde_json::Value::as_array).into_iter().flatten());
+    }
+    n
+}
+
+/// The mapped file with only its first page, when the file has several and the first holds at most
+/// `max_share` of the layers.
+fn first_page_only(json: &serde_json::Value, max_share: f64) -> Option<serde_json::Value> {
+    let pages = json.get("document")?.get("children")?.as_array()?;
+    let (head, rest) = pages.split_first()?;
+    if rest.is_empty() {
+        return None;
+    }
+    let first = layer_count(head);
+    let total = first + rest.iter().map(layer_count).sum::<usize>();
+    if first as f64 > total as f64 * max_share {
+        return None;
+    }
+    let mut mini =
+        json.as_object()?.iter().filter(|(k, _)| k.as_str() != "document").map(|(k, v)| (k.clone(), v.clone())).collect::<serde_json::Map<_, _>>();
+    let mut document = json.get("document")?.as_object()?.clone();
+    document.insert("children".into(), serde_json::Value::Array(vec![head.clone()]));
+    mini.insert("document".into(), serde_json::Value::Object(document));
+    Some(serde_json::Value::Object(mini))
+}
+
+#[cfg(test)]
+fn import_with_image_limit(bytes: &[u8], name: &str, image_limit: u64) -> Result<(Document, Vec<String>), FormatError> {
+    import_inner(bytes, name, PageFirst::OFF, &mut |_| {}, image_limit)
+}
+
 fn import_inner(
     bytes: &[u8],
     name: &str,
@@ -186,88 +176,49 @@ fn import_inner(
     first: &mut dyn FnMut(Document),
     image_limit: u64,
 ) -> Result<(Document, Vec<String>), FormatError> {
-    let mut archive = Archive::open(bytes)?;
-    archive.image_budget.remaining.set(image_limit);
+    let mut archive = Archive::open_with(bytes, Limits { max_image: MAX_IMAGE, max_image_total: image_limit }).map_err(fig_err)?;
     // The budgets follow the compressed canvas, which the file itself bounds (its zip member may
     // inflate too).
     let packed = archive.canvas.len().min(bytes.len());
     // FigJam writes its whiteboards with this header: they open as boards.
-    let board = archive.canvas.starts_with(JAM_HEADER);
+    let board = archive.is_board();
     // Each stage's input is dropped as soon as the next one is built: in a large file every one
     // of them takes gigabytes, and holding them all at once runs out of memory.
-    let (schema, message) = decode_canvas(&std::mem::take(&mut archive.canvas))?;
+    let (schema, message) = decode_canvas(&std::mem::take(&mut archive.canvas)).map_err(fig_err)?;
     let root = schema.find("Message").ok_or_else(|| corrupt("the schema has no Message definition"))?;
-    let msg = schema.decode_message_within(root, &message, kiwi::value_budget(packed)).map_err(|e| corrupt(e.to_string()))?;
+    let msg = schema.decode_message_within(root, &message, craft_fig::value_budget(packed)).map_err(|e| corrupt(e.to_string()))?;
     let max_nodes = layer_budget(packed);
+    let nodes = msg.get("nodeChanges").map_or(0, |changes| changes.list().len());
     drop(message);
     let file_name = archive.file_name.as_deref().filter(|n| !n.trim().is_empty()).unwrap_or(name);
+    let (mut json, mut warnings, networks) = map::to_rest_for(&msg, file_name, max_nodes, board);
+    let keys = layer_keys(&msg);
+    if !keys.is_empty() {
+        apply_layer_keys(&mut json, &keys);
+    }
     // The message goes before the layers are built, so the images it carries are copied out first.
-    let embedded = embedded_copies(&msg);
-    // Hashes naming one blob map to the first of them, so the blob is copied and hashed once.
-    let _aliases = ImageAliases::install(embedded_aliases(&embedded, |hash| archive.has_image(hash)));
+    let embedded = embedded_copies(&msg, MAX_IMAGE);
+    drop(msg);
+    let aliases = embedded_aliases(&embedded, |hash| archive.has_image(hash));
+    if !aliases.is_empty() {
+        canonical_image_refs(&mut json, &aliases);
+    }
     let images = |r: &str| archive.image(r).or_else(|| embedded.get(r).map(|b| b.to_vec()));
-    let nodes = msg.get("nodeChanges").map_or(0, |changes| changes.list().len());
-    let staging = (nodes >= page_first.min_nodes).then_some((page_first.max_first_share, first));
-    let (doc, mut warnings) = import_message(msg, file_name, max_nodes, &images, staging, board)?;
-    let skipped = archive.image_budget.skipped.get();
+    if nodes >= page_first.min_nodes
+        && let Some(mini) = first_page_only(&json, page_first.max_first_share)
+        && let Ok((mut early, _)) = crate::rest::import_with_networks(&mini, &images, networks.clone(), max_nodes)
+    {
+        drop(mini);
+        if board {
+            early.kind = FileKind::Board;
+        }
+        first(early);
+    }
+    let (mut doc, more) = crate::rest::import_with_networks(&json, &images, networks, max_nodes)?;
+    let skipped = archive.images_skipped();
     if skipped > 0 {
         warnings.push(format!("{skipped} ZIP image(s) skipped by the total ZIP image byte budget ({image_limit} bytes)"));
     }
-    Ok((doc, warnings))
-}
-
-/// Pages built as they are mapped, with the first one offered early (see [`import_staged`]).
-pub(crate) type Staging<'f> = (f64, &'f mut dyn FnMut(Document));
-
-/// The part of the import after the message is decoded. With `staging` and several pages whose
-/// first holds at most the given share of the layers, the pages are built as the mapper makes them
-/// (the first one is handed over at once, as a copy that is finished on its own) instead of being
-/// kept packed until all are mapped; the document is the same.
-pub(crate) fn import_message(
-    msg: Kv,
-    file_name: &str,
-    max_nodes: usize,
-    images: crate::rest::ImageResolver,
-    staging: Option<Staging>,
-    board: bool,
-) -> Result<(Document, Vec<String>), FormatError> {
-    let mut built: Option<crate::rest::Incremental> = None;
-    let mut failed: Option<FormatError> = None;
-    let (json, packed, mut warnings, networks, staged) = match staging {
-        Some((max_share, first)) => {
-            let mut sink = |event: map::Staged| match event {
-                map::Staged::First { file, page, contexts, networks } => {
-                    let mut inc = crate::rest::Incremental::start(&file, contexts, images, networks, max_nodes);
-                    match inc.add_page(page).and_then(|()| inc.preview()) {
-                        Ok(doc) => {
-                            first(doc);
-                            built = Some(inc);
-                        }
-                        Err(e) => failed = Some(e),
-                    }
-                }
-                map::Staged::Page { page, networks } => {
-                    if let Some(inc) = built.as_mut() {
-                        inc.defer_page(page, networks);
-                    }
-                }
-            };
-            map::to_rest_packed_staged(&msg, file_name, max_nodes, max_share, &mut sink)
-        }
-        None => {
-            let (json, packed, warnings, networks) = map::to_rest_packed(&msg, file_name, max_nodes);
-            (json, packed, warnings, networks, false)
-        }
-    };
-    drop(msg);
-    if let Some(e) = failed {
-        return Err(e);
-    }
-    let (mut doc, more) = match built {
-        Some(inc) if staged => inc.finish(&json)?,
-        _ => crate::rest::import_packed(&json, packed, images, networks, max_nodes)?,
-    };
-    drop_later(json);
     if board {
         doc.kind = FileKind::Board;
     }
@@ -281,33 +232,44 @@ pub(crate) fn import_message(
     Ok((doc, warnings))
 }
 
-/// Free the REST JSON (millions of small allocations) on another thread: the caller doesn't wait
-/// for it. Plain drop on wasm.
-fn drop_later(json: serde_json::Value) {
-    #[cfg(not(target_arch = "wasm32"))]
-    let _ = std::thread::Builder::new().spawn(move || drop(json)); // a failed spawn drops it here
-    #[cfg(target_arch = "wasm32")]
-    drop(json);
+/// The layer keys the message carries (plugin data of this app, see `export::KEY`) by the id the
+/// mapping gives the layer.
+fn layer_keys(msg: &kiwi::Kv) -> BTreeMap<String, String> {
+    let (plugin, key) = export::KEY;
+    let mut out = BTreeMap::new();
+    for node in msg.get("nodeChanges").map_or(&[][..], kiwi::Kv::list) {
+        let Some(guid) = node.get("guid") else { continue };
+        let (Some(session), Some(local)) = (guid.get("sessionID").and_then(kiwi::Kv::f64), guid.get("localID").and_then(kiwi::Kv::f64)) else {
+            continue;
+        };
+        let entry = node
+            .get("pluginData")
+            .map_or(&[][..], kiwi::Kv::list)
+            .iter()
+            .find(|p| p.get("pluginID").and_then(kiwi::Kv::str) == Some(plugin) && p.get("key").and_then(kiwi::Kv::str) == Some(key));
+        if let Some(k) = entry.and_then(|p| p.get("value")).and_then(kiwi::Kv::str) {
+            out.insert(format!("{}:{}", session as u64, local as u64), k.to_string());
+        }
+    }
+    out
 }
 
-/// A font style under the name the format uses: the standard weight names as words ("SemiBold"
-/// → "Semi Bold", "ExtraBoldItalic" → "Extra Bold Italic", "Regular Italic" → "Italic"). Other
-/// names stay as they are.
-pub(crate) fn style_name(style: &str) -> String {
-    const WEIGHTS: [&str; 12] =
-        ["Thin", "Extra Light", "Ultra Light", "Light", "Regular", "Medium", "Semi Bold", "Demi Bold", "Bold", "Extra Bold", "Ultra Bold", "Black"];
-    let compact = |s: &str| s.chars().filter(|c| !matches!(c, ' ' | '-' | '_')).flat_map(char::to_lowercase).collect::<String>();
-    let key = compact(style);
-    let (base, italic) = match key.strip_suffix("italic") {
-        Some(b) => (b, true),
-        None => (key.as_str(), false),
-    };
-    let weight = if base.is_empty() && italic { Some("Regular") } else { WEIGHTS.into_iter().find(|w| compact(w) == base) };
-    match (weight, italic) {
-        (None, _) => style.to_string(),
-        (Some("Regular"), true) => "Italic".into(),
-        (Some(w), true) => format!("{w} Italic"),
-        (Some(w), false) => w.into(),
+/// Put the layer keys on the mapped layers (`figcraftKey`, our extension of the file JSON).
+fn apply_layer_keys(json: &mut serde_json::Value, keys: &BTreeMap<String, String>) {
+    let mut pending = vec![json];
+    while let Some(v) = pending.pop() {
+        let Some(o) = v.as_object_mut() else { continue };
+        let key = o.get("id").and_then(serde_json::Value::as_str).and_then(|id| keys.get(id)).cloned();
+        if let Some(k) = key {
+            o.insert("figcraftKey".into(), serde_json::Value::String(k));
+        }
+        for (name, child) in o.iter_mut() {
+            match (name.as_str(), child) {
+                ("children", serde_json::Value::Array(list)) => pending.extend(list.iter_mut()),
+                ("document", doc) => pending.push(doc),
+                _ => {}
+            }
+        }
     }
 }
 
@@ -315,236 +277,36 @@ fn corrupt(msg: impl Into<String>) -> FormatError {
     FormatError::Corrupt(format!(".fig file: {}", msg.into()))
 }
 
-/// Image bytes that travel inside the message, by image hash (lowercase hex): a paint's
-/// `image.dataBlob` indexes the message's `blobs`. Copies written by plugins and other tools embed
-/// their images this way, and a bare canvas (what the clipboard carries) has no `images/`. The
-/// walk is iterative (no recursion on nested data) and skips blobs larger than [`MAX_IMAGE`].
-/// Returns the index of each hash's blob.
-fn embedded_images(msg: &Kv) -> BTreeMap<String, usize> {
-    let blobs = msg.get("blobs").map(Kv::list).unwrap_or_default();
-    let mut found = BTreeMap::new();
-    let mut pending = vec![msg];
+/// A `.fig` read or write failure as the app reports it (`Corrupt` already says `.fig file:`).
+pub(crate) fn fig_err(e: craft_fig::Error) -> FormatError {
+    match e {
+        craft_fig::Error::Corrupt(_) => FormatError::Corrupt(e.to_string()),
+        craft_fig::Error::TooLarge | craft_fig::Error::Io(_) => FormatError::Io(e.to_string()),
+    }
+}
+
+/// Rename every `imageRef` in REST `json` found in `aliases` to the name it maps to.
+fn canonical_image_refs(json: &mut serde_json::Value, aliases: &BTreeMap<String, String>) {
+    use serde_json::Value;
+    let mut pending = vec![json];
     while let Some(value) = pending.pop() {
         match value {
-            Kv::Object(fields) => {
-                if let Some((hash, index)) = value.get("image").and_then(|image| embedded_image(image, blobs)) {
-                    found.entry(hash).or_insert(index);
+            Value::Object(fields) => {
+                for (key, field) in fields.iter_mut() {
+                    match field {
+                        Value::String(r) if key == "imageRef" => {
+                            if let Some(canonical) = aliases.get(r.as_str()) {
+                                r.clone_from(canonical);
+                            }
+                        }
+                        _ => pending.push(field),
+                    }
                 }
-                pending.extend(fields.iter().filter(|(name, _)| *name != "blobs").map(|(_, field)| field));
             }
-            Kv::Array(items) => pending.extend(items),
+            Value::Array(items) => pending.extend(items.iter_mut()),
             _ => {}
         }
     }
-    found
-}
-
-/// The images that travel inside the message ([`embedded_images`]), copied out of it once per
-/// blob: every hash naming the same blob shares its copy. A file can point any number of hashes
-/// at one large blob, and a copy for each would multiply it (#1059).
-fn embedded_copies(msg: &Kv) -> BTreeMap<String, Arc<[u8]>> {
-    let blobs = msg.get("blobs").map(Kv::list).unwrap_or_default();
-    let mut copies: BTreeMap<usize, Arc<[u8]>> = BTreeMap::new();
-    let mut out = BTreeMap::new();
-    for (hash, index) in embedded_images(msg) {
-        let Some(bytes) = blob(blobs, index) else { continue };
-        out.insert(hash, Arc::clone(copies.entry(index).or_insert_with(|| Arc::from(bytes))));
-    }
-    out
-}
-
-/// Embedded images ([`embedded_copies`]) whose blob an earlier hash already names, each with that
-/// hash. Hashes that also have an `images/` member keep their own name: the member is read first.
-/// Pointing every alias at one name has the import copy and hash each blob once, however many
-/// hashes a file points at it.
-fn embedded_aliases(embedded: &BTreeMap<String, Arc<[u8]>>, in_zip: impl Fn(&str) -> bool) -> BTreeMap<String, String> {
-    let mut first: BTreeMap<usize, &String> = BTreeMap::new();
-    let mut out = BTreeMap::new();
-    for (hash, bytes) in embedded {
-        if in_zip(hash) {
-            continue;
-        }
-        // Hashes naming one blob share its copy, so the copy's address tells the blob.
-        let canonical = *first.entry(bytes.as_ptr() as usize).or_insert(hash);
-        if canonical != hash {
-            out.insert(hash.clone(), canonical.clone());
-        }
-    }
-    out
-}
-
-thread_local! {
-    static IMAGE_ALIASES: std::cell::RefCell<BTreeMap<String, String>> = const { std::cell::RefCell::new(BTreeMap::new()) };
-}
-
-/// The image hash aliases ([`embedded_aliases`]) of the import running on this thread, for as long
-/// as it lives: the mapper names every image paint by [`canonical_image_ref`].
-struct ImageAliases;
-
-impl ImageAliases {
-    fn install(aliases: BTreeMap<String, String>) -> Self {
-        IMAGE_ALIASES.with(|a| *a.borrow_mut() = aliases);
-        Self
-    }
-}
-
-impl Drop for ImageAliases {
-    fn drop(&mut self) {
-        IMAGE_ALIASES.with(|a| a.borrow_mut().clear());
-    }
-}
-
-/// The name an image paint's hash goes by: the first hash naming the same blob, else itself.
-pub(crate) fn canonical_image_ref(hash: String) -> String {
-    IMAGE_ALIASES.with(|a| a.borrow().get(&hash).cloned()).unwrap_or(hash)
-}
-
-/// The hash and blob index of an `Image` value whose `dataBlob` points at a usable blob.
-fn embedded_image(image: &Kv, blobs: &[Kv]) -> Option<(String, usize)> {
-    let hash = image.get("hash").and_then(Kv::bytes).filter(|h| !h.is_empty() && h.len() <= MAX_IMAGE_HASH)?;
-    let Some(Kv::Uint(index)) = image.get("dataBlob") else { return None };
-    let index = usize::try_from(*index).ok()?;
-    let bytes = blob(blobs, index)?;
-    if bytes.is_empty() || bytes.len() as u64 > MAX_IMAGE {
-        return None;
-    }
-    Some((hash.iter().map(|b| format!("{b:02x}")).collect(), index))
-}
-
-/// The bytes of blob `index`.
-fn blob<'k>(blobs: &'k [Kv], index: usize) -> Option<&'k [u8]> {
-    blobs.get(index)?.get("bytes").and_then(Kv::bytes)
-}
-
-/// Bytes left for ZIP image reads, including damaged images. The REST resolver caches references,
-/// including failures, so each referenced member is read or counted as skipped only once.
-struct ZipImageBudget {
-    remaining: Cell<u64>,
-    skipped: Cell<usize>,
-}
-
-/// The parts of a `.fig` archive the import reads.
-struct Archive<'b> {
-    canvas: Vec<u8>,
-    file_name: Option<String>,
-    /// `images/<hash>` members (or nothing for a bare canvas).
-    zip: Option<zip::ZipArchive<std::io::Cursor<&'b [u8]>>>,
-    image_budget: ZipImageBudget,
-}
-
-impl<'b> Archive<'b> {
-    fn open(bytes: &'b [u8]) -> Result<Self, FormatError> {
-        let image_budget = ZipImageBudget { remaining: Cell::new(MAX_IMAGE_BYTES), skipped: Cell::new(0) };
-        if bytes.starts_with(b"fig-") {
-            return Ok(Archive { canvas: bytes.to_vec(), file_name: None, zip: None, image_budget });
-        }
-        let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| corrupt(e.to_string()))?;
-        let canvas = crate::read_member(&mut z, "canvas.fig", MAX_CANVAS)?;
-        let file_name = crate::read_member(&mut z, "meta.json", 1 << 20)
-            .ok()
-            .and_then(|m| serde_json::from_slice::<serde_json::Value>(&m).ok())
-            .and_then(|m| m.get("file_name").and_then(serde_json::Value::as_str).map(str::to_string));
-        Ok(Archive { canvas, file_name, zip: Some(z), image_budget })
-    }
-
-    /// Whether `images/` has a member for image `hash`.
-    fn has_image(&self, hash: &str) -> bool {
-        self.zip.as_ref().is_some_and(|z| z.index_for_name(&format!("images/{hash}")).is_some())
-    }
-
-    /// Bytes of image `hash` (lowercase hex) from `images/`.
-    fn image(&self, hash: &str) -> Option<Vec<u8>> {
-        let budget = &self.image_budget;
-        if hash.is_empty() || hash.len() > 2 * MAX_IMAGE_HASH || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return None;
-        }
-        // A clone shares the parsed directory and the bytes; the resolver only has shared access.
-        let mut z = self.zip.clone()?;
-        let f = z.by_name(&format!("images/{hash}")).ok()?;
-        let size = f.size();
-        if size > MAX_IMAGE {
-            return None;
-        }
-        let remaining = budget.remaining.get();
-        if size > remaining {
-            budget.skipped.set(budget.skipped.get() + 1);
-            return None;
-        }
-        let checksum = f.crc32();
-        let mut data = Vec::new();
-        // Probe past the per-image cap only when the total budget has room. Even a dishonest
-        // size cannot make the read exceed the remaining total; failed reads keep their charge.
-        let limit = remaining.min(MAX_IMAGE + 1);
-        let read = f.take(limit).read_to_end(&mut data);
-        let used = data.len() as u64;
-        budget.remaining.set(remaining - used);
-        if used > size && used == remaining {
-            budget.skipped.set(budget.skipped.get() + 1);
-        }
-        if read.is_err() || used != size {
-            return None;
-        }
-        // `take` can stop exactly at the budget without asking ZIP for EOF (where it checks CRC).
-        // Check it here too, without spending an extra byte on an overflow probe.
-        if used == limit {
-            let mut crc = flate2::Crc::new();
-            crc.update(&data);
-            if crc.sum() != checksum {
-                return None;
-            }
-        }
-        Some(data)
-    }
-}
-
-/// The schema and the raw message of a `canvas.fig`.
-fn decode_canvas(canvas: &[u8]) -> Result<(Schema, Vec<u8>), FormatError> {
-    let chunks = chunks(canvas)?;
-    let mut it = chunks.into_iter();
-    let (Some(schema), Some(message)) = (it.next(), it.next()) else {
-        return Err(corrupt("canvas.fig needs a schema and a message chunk"));
-    };
-    let schema = Schema::decode(&inflate_within(schema, MAX_SCHEMA)?).map_err(|e| corrupt(e.to_string()))?;
-    Ok((schema, inflate(message)?))
-}
-
-/// The length-prefixed chunks after the 12-byte header.
-fn chunks(canvas: &[u8]) -> Result<Vec<&[u8]>, FormatError> {
-    if canvas.len() < 12 || !canvas.starts_with(b"fig-") {
-        return Err(corrupt("canvas.fig has no header"));
-    }
-    let mut out = Vec::new();
-    let mut pos = 12usize;
-    while pos < canvas.len() && out.len() < MAX_CHUNKS {
-        let len = canvas.get(pos..pos + 4).and_then(|b| b.try_into().ok()).map(u32::from_le_bytes).ok_or_else(|| corrupt("truncated chunk"))?;
-        let start = pos + 4;
-        let end = start.checked_add(len as usize).filter(|e| *e <= canvas.len()).ok_or_else(|| corrupt("truncated chunk"))?;
-        out.push(canvas.get(start..end).unwrap_or_default());
-        pos = end;
-    }
-    Ok(out)
-}
-
-/// Decompress a chunk: zstd (by its magic number), else raw deflate, else zlib.
-fn inflate(data: &[u8]) -> Result<Vec<u8>, FormatError> {
-    inflate_within(data, MAX_CHUNK)
-}
-
-/// [`inflate`] refusing a chunk that unpacks to more than `max` bytes.
-fn inflate_within(data: &[u8], max: u64) -> Result<Vec<u8>, FormatError> {
-    let capped = |r: &mut dyn Read| -> Option<Vec<u8>> {
-        let mut out = Vec::new();
-        r.take(max.saturating_add(1)).read_to_end(&mut out).ok()?;
-        (out.len() as u64 <= max).then_some(out)
-    };
-    if data.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]) {
-        let mut src = data;
-        let mut dec = ruzstd::decoding::StreamingDecoder::new(&mut src).map_err(|e| corrupt(format!("zstd: {e}")))?;
-        return capped(&mut dec).ok_or_else(|| corrupt("damaged or oversized zstd chunk"));
-    }
-    capped(&mut flate2::read::DeflateDecoder::new(data))
-        .or_else(|| capped(&mut flate2::read::ZlibDecoder::new(data)))
-        .ok_or_else(|| corrupt("damaged or oversized deflate chunk"))
 }
 
 /// Decoded message `msg` as JSON (byte arrays as their length), for looking at files.

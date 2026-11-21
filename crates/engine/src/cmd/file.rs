@@ -29,8 +29,8 @@ pub(crate) use export::FORBIDDEN_FILE_NAME_CHARS;
 use export::add_member;
 pub(super) use export::export_setting;
 pub use export::{
-    ExportJob, copy_png, drawn_layers, export_area, export_bytes, export_bytes_with, export_jobs, export_scale, exportable_layers, fig_bytes,
-    frames_pdf, jobs_for, penpot_bytes, safe_file_name,
+    ExportJob, backdrop_layers, copy_png, drawn_layers, export_area, export_bytes, export_bytes_with, export_jobs, export_scale, exportable_layers,
+    fig_bytes, frames_pdf, jobs_for, penpot_bytes, safe_file_name,
 };
 use export::{export, export_assets, export_frames_pdf, export_layers, export_many, pdf_bytes};
 use load::font_report;
@@ -44,7 +44,7 @@ pub(crate) use open::open;
 pub use open::{LoadingDone, MAX_RECENT, Preloaded, preload, preload_staged};
 use open::{import, open_recent, revert};
 pub(crate) use save::save_ends_preview;
-pub use save::{FileSnapshot, file_bytes, thumbnail};
+pub use save::{FileSnapshot, file_bytes, file_bytes_at, thumbnail};
 use save::{color_profile, mark_saved, save, save_as};
 pub use version::MAX_AUTOSAVES;
 pub(crate) use version::{add_version, keep_in_history, read_version, unique_id, version_index};
@@ -123,7 +123,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.export",
             "Export",
-            "{ids? (default selection, else the page), format? (png|jpg|svg|pdf|webp|xml (an Android Vector Drawable, with `warnings` for what it changed or left out), or fig: the whole file as .fig, experimental, with `warnings` for what was left out; other apps may not open every file; or penpot: the whole file as a Penpot 2.x archive, with warnings for unsupported content), scale? (default 1) | size? (2x|512w|512h or {by: scale|width|height, value}: a scale, or a width or height in pixels), path? (else returns base64 `data`), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options), contentsOnly? (default true; false also draws the layers that show in their area), includeBoundingBox? (true: only the layers' own boxes, cutting off shadows and outside strokes), svgOutlineText? (default true), svgSimplifyStroke? (default true), svgIdAttribute? (SVG ids, XML android:name), iconPreset? (SVG as an icon: transforms baked, no needless groups or view clips, 3 decimals, the layers' box as view box), currentColor? (with iconPreset: true = the icon's only colour, or a hex colour, becomes `currentColor`), cvd? (protanopia|deuteranopia|tritanopia|achromatopsia: PNG as seen with that colour-vision deficiency), vdCompat? (XML: bestEffort (default: approximate with a warning)|exact (leave out what can't be exact, with a warning)|ignore (no warnings)), colorProfile? (PNG, JPG and WebP: sameAsFile (default: the document's profile)|srgb|displayP3; colors convert, out-of-gamut ones clip; SVG, PDF and XML are always sRGB), quality? (JPG: 1-100, default 90)}",
+            "{ids? (default selection, else the page), format? (png|jpg|svg|pdf|webp|xml (an Android Vector Drawable, with `warnings` for what it changed or left out), or fig: the whole file as .fig, experimental, with `warnings` for what was left out; other apps may not open every file; or penpot: the whole file as a Penpot 2.x archive, with warnings for unsupported content), scale? (default 1) | size? (2x|512w|512h or {by: scale|width|height, value}: a scale, or a width or height in pixels), path? (else returns base64 `data`), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options), contentsOnly? (default true; false also draws the layers that show in their area), includeBoundingBox? (true: only the layers' own boxes, cutting off shadows and outside strokes), svgOutlineText? (default true), svgSimplifyStroke? (default true), svgIdAttribute? (SVG ids, XML android:name), iconPreset? (SVG as an icon: transforms baked, no needless groups or view clips, 3 decimals, the layers' box as view box), currentColor? (with iconPreset: true = the icon's only colour, or a hex colour, becomes `currentColor`), cvd? (protanopia|deuteranopia|tritanopia|achromatopsia: PNG as seen with that colour-vision deficiency), vdCompat? (XML: bestEffort (default: approximate with a warning)|exact (leave out what can't be exact, with a warning)|ignore (no warnings)), colorProfile? (PNG, JPG and WebP: sameAsFile (default: the document's profile)|srgb|displayP3; colors convert, out-of-gamut ones clip; SVG, XML and RGB PDF output are always sRGB; PDF with cmyk is DeviceCMYK), quality? (JPG: 1-100, default 90)}",
             false,
             export
         ),
@@ -389,7 +389,8 @@ pub fn export_file(doc: &Document, ids: &[NodeId], setting: &ExportSetting, scal
         && !setting.include_bounding_box
         && !ids.iter().any(|i| doc.node(*i).is_some_and(|n| matches!(n.kind, NodeKind::Slice)));
     match setting.format {
-        // SVG and PDF colours are sRGB: a Display P3 file exports converted (out-of-gamut colours clip).
+        // SVG and RGB PDF colors are sRGB: a Display P3 file exports converted (out-of-gamut colours clip).
+        // PDF with `cmyk` converts from those sRGB colors to DeviceCMYK.
         ExportFormat::Svg => {
             let opts = figcraft_svg::SvgOptions {
                 include_ids: setting.svg_id_attribute,
@@ -425,7 +426,10 @@ pub fn export_file(doc: &Document, ids: &[NodeId], setting: &ExportSetting, scal
             Ok((pdf_bytes(doc, &groups, &setting.print, (!own_area).then_some(area))?, Vec::new()))
         }
         _ => {
-            let mut pix = figcraft_render::render_area(doc, &drawn, area, scale)
+            // Layers exported on their own still read the page beneath them for a background blur
+            // or glass (#2213); a "contents only" off export already draws the whole page.
+            let page = if setting.contents_only { backdrop_layers(doc, ids) } else { Vec::new() };
+            let mut pix = figcraft_render::render_area_over(doc, &drawn, &page, area, scale)
                 .ok_or_else(|| EngineError::Other("render failed (empty or too large)".into()))?;
             // The render is in the document's profile; the setting's profile converts the pixels
             // (out-of-gamut colors clip) and tags the file.
